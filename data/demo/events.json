@@ -1,0 +1,86 @@
+[
+  {
+    "event_id": "us-cpi-hot",
+    "timestamp": "2026-03-06T09:00:00+00:00",
+    "source": "gov_report",
+    "source_type": "official_release",
+    "category": "inflation",
+    "title": "美国CPI高于预期",
+    "summary": "核心通胀继续偏黏，市场对美联储降息时点重新定价。",
+    "country": "US",
+    "importance": "high",
+    "actual": "3.4%",
+    "forecast": "3.2%",
+    "previous": "3.1%",
+    "surprise": "+0.2pp",
+    "tags": ["cpi", "inflation", "fed"],
+    "references": [
+      {
+        "title": "US CPI release",
+        "url": "https://example.com/us-cpi",
+        "source": "gov_report",
+        "excerpt": "核心通胀高于预期，利率路径重新定价。"
+      }
+    ]
+  },
+  {
+    "event_id": "pboc-support",
+    "timestamp": "2026-03-06T06:00:00+00:00",
+    "source": "gov_report",
+    "source_type": "official_release",
+    "category": "policy",
+    "title": "人民银行释放稳增长信号",
+    "summary": "公开市场操作维持流动性平稳，政策语气偏支持实体经济。",
+    "country": "CN",
+    "importance": "high",
+    "tags": ["pboc", "liquidity", "china"],
+    "references": [
+      {
+        "title": "PBOC policy note",
+        "url": "https://example.com/pboc-policy",
+        "source": "gov_report",
+        "excerpt": "政策表态强调流动性合理充裕。"
+      }
+    ]
+  },
+  {
+    "event_id": "eu-pmi-soft",
+    "timestamp": "2026-03-05T23:00:00+00:00",
+    "source": "news",
+    "source_type": "market_news",
+    "category": "growth",
+    "title": "欧洲制造业景气仍偏弱",
+    "summary": "制造业景气改善有限，全球需求复苏斜率仍然偏缓。",
+    "country": "EU",
+    "importance": "medium",
+    "tags": ["pmi", "growth"],
+    "references": [
+      {
+        "title": "PMI coverage",
+        "url": "https://example.com/eu-pmi",
+        "source": "news",
+        "excerpt": "全球制造业复苏节奏仍不稳。"
+      }
+    ]
+  },
+  {
+    "event_id": "rates-volatility",
+    "timestamp": "2026-03-06T11:00:00+00:00",
+    "source": "news",
+    "source_type": "market_news",
+    "category": "market",
+    "title": "美债收益率上行压制风险偏好",
+    "summary": "10年期美债收益率走高，成长资产估值承压。",
+    "country": "US",
+    "importance": "medium",
+    "tags": ["rates", "risk"],
+    "references": [
+      {
+        "title": "Rates market wrap",
+        "url": "https://example.com/rates-wrap",
+        "source": "news",
+        "excerpt": "长端利率上行带来估值压力。"
+      }
+    ]
+  }
+]

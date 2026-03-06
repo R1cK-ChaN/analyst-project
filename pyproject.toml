@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "analyst-project"
+version = "0.1.0"
+description = "Standalone Analyst product scaffold"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+analyst-cli = "analyst.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

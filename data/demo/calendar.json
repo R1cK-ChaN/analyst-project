@@ -1,0 +1,31 @@
+[
+  {
+    "event_id": "us-nfp-upcoming",
+    "release_time": "2026-03-06T20:30:00+00:00",
+    "indicator": "美国非农就业",
+    "country": "US",
+    "importance": "high",
+    "expected": "18.5万",
+    "previous": "16.7万",
+    "notes": "若就业和薪资同时偏强，市场会继续交易降息推后。",
+    "references": [
+      {
+        "title": "Payroll calendar",
+        "url": "https://example.com/nfp-calendar",
+        "source": "calendar",
+        "excerpt": "非农是今晚最关键的数据点。"
+      }
+    ]
+  },
+  {
+    "event_id": "cn-cpi-upcoming",
+    "release_time": "2026-03-07T02:00:00+00:00",
+    "indicator": "中国CPI",
+    "country": "CN",
+    "importance": "medium",
+    "expected": "0.4%",
+    "previous": "0.3%",
+    "notes": "关注内需修复和政策预期的交叉验证。",
+    "references": []
+  }
+]
