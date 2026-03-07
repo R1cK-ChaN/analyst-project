@@ -8,6 +8,7 @@ Current WS1 status on March 7, 2026:
 - local live commands now cover refresh, flash commentary, briefing, wrap, regime refresh, calendar inspection, and news inspection
 - the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, yfinance, and macro-finance RSS news ingestion
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
+- the current memory implementation is pipeline-shaped: research publishes into `research_artifacts`, trader state/artifacts have FK lineage, and sales uses `client_profiles`, `conversation_messages`, and `delivery_queue`
 - China-specific ingestion, live end-to-end provider verification, and delivery integration are still pending
 
 ## What's Inside
@@ -69,7 +70,8 @@ analyst-project/
 │   ├── information/                Local information layer using bundled demo data
 │   ├── runtime/                    Runtime and prompt profiles
 │   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
-│   ├── storage/                    SQLite store (calendar, prices, comms, indicators, news, regime, notes)
+│   ├── storage/                    SQLite store (market state, research artifacts, trader state, sales memory)
+│   ├── memory/                     Context builders and sales profile extraction
 │   ├── ingestion/                  Source adapters (Investing.com, ForexFactory, FRED, Fed RSS, yfinance, RSS news)
 │   ├── delivery/                   WeCom/Telegram formatting and Telegram bot shell
 │   └── integration/                Message routing

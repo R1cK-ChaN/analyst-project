@@ -2,7 +2,7 @@
 
 ## Status Update
 
-As of March 6, 2026, this migration plan has been partially implemented.
+As of March 7, 2026, this migration plan has been partially implemented.
 
 What is now true:
 
@@ -11,6 +11,7 @@ What is now true:
 - local demo data lives under `data/demo/`
 - smoke tests live under `tests/`
 - the standalone project no longer imports from the sibling `information/` repo at runtime
+- the standalone project no longer depends on `agent_maxwell` memory primitives; memory is now product-owned under `src/analyst/memory/` and `src/analyst/storage/`
 
 What remains true:
 
@@ -37,12 +38,11 @@ So the goal is **not** to dump all Analyst logic into the generic foundations. T
 
 ### Agent side today
 
-`agent_maxwell/` already provides:
+`agent_maxwell/` historically provided:
 
 - the agent loop
 - model/provider abstraction
 - tool execution
-- memory primitives
 - CLI and UI surfaces
 
 What it does **not** yet provide as Analyst product code:
@@ -192,7 +192,7 @@ What to build:
 - Analyst agent configuration layer
 - system prompts for Analyst and Sales modes
 - tool registration for macro questions, draft generation, meeting prep, and regime summaries
-- memory policy for RM-facing workflows
+- pipeline-shaped context builders for Research / Trader / Sales workflows
 - output renderers for Chinese research and channel-safe drafts
 
 Where it should live:
@@ -216,7 +216,7 @@ What should not be added to `agent_maxwell/`:
 Exit criteria:
 
 - Analyst runtime can run the same agent loop using `@maxwell/agent-core`
-- switching models or memory implementations does not require editing Analyst business logic
+- switching models does not require editing Analyst business logic; the current memory implementation is already product-owned inside `src/analyst/`
 
 ---
 
@@ -387,7 +387,7 @@ Do **not** begin by moving `agent_maxwell/` or `information/` wholesale under `a
 | Current area | Current role | Future role |
 |---|---|---|
 | `agent_maxwell/packages/agent-core` | generic loop/runtime | dependency of `analyst-runtime/` |
-| `agent_maxwell/packages/memory` | generic memory system | dependency of `analyst-runtime/` |
+| `agent_maxwell/packages/memory` | generic memory system | historical reference only; not used by current `analyst-project/` |
 | `information/data/macro_data_layer` | structured time-series source | dependency of `analyst-information/` |
 | `information/gov_report` | official report ingestion | dependency of `analyst-information/` |
 | `information/news` | news ingestion and classification | dependency of `analyst-information/` |

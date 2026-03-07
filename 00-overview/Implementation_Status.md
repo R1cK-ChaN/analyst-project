@@ -1,6 +1,6 @@
 # Analyst — Implementation Status
 
-**Status date:** March 7, 2026 (updated after ws1/news merge)
+**Status date:** March 7, 2026 (updated after pipeline-shaped memory refactor)
 
 This document is the current implementation snapshot for `analyst-project/`.
 
@@ -68,11 +68,12 @@ Implemented in `src/analyst/runtime/`:
 
 - prompt profiles for core interaction modes
 - deterministic template runtime
-- runtime request/response context objects
+- OpenRouter-backed runtime for generated responses
+- runtime request/response context objects with injected delivery-time memory context
 
 Current limitation:
 
-- this is not yet connected to a real agent loop or external model provider
+- the delivery runtime still uses demo information inputs rather than the live WS1 store
 
 ### Engine layer
 
@@ -98,14 +99,19 @@ Implemented in `src/analyst/engine/`:
 Implemented in `src/analyst/storage/`:
 
 - SQLite store (`sqlite.py`) with managed connection context manager (commit/rollback/close)
-- seven tables: `calendar_events`, `market_prices`, `central_bank_comms`, `indicators`, `news_articles`, `regime_snapshots`, `generated_notes`
+- typed pipeline tables for:
+  - market state: `calendar_events`, `market_prices`, `central_bank_comms`, `indicators`, `news_articles`
+  - research: `regime_snapshots`, `generated_notes`, `analytical_observations`, `research_artifacts`
+  - trader: `trade_signals`, `decision_log`, `position_state`, `performance_records`, `trading_artifacts`
+  - sales: `client_profiles`, `conversation_threads`, `conversation_messages`, `delivery_queue`
 - frozen dataclass records for all table types
 - calendar event enrichment fields including `revised_previous` and `currency`
 - news article metadata fields for institution/country/market/asset class/sector/document type/event type/subject/data period/commentary/language/authors/provider
 - FTS-backed `news_fts` index with LIKE fallback for SQLite builds without FTS5
 - time-decay + impact-weight news ranking via `get_news_context()`
-- query methods: recent/upcoming events, date-range queries, today's events, indicator release history, latest prices, indicator history, news listing/search/context, regime snapshots
+- query methods for market state, typed research publication, trader lineage, and sales profile/thread/delivery retrieval
 - upsert semantics with UNIQUE constraints for deduplication
+- foreign-key-enforced lineage from trader outputs back to `research_artifacts`
 
 ### Ingestion layer
 
@@ -143,6 +149,7 @@ Implemented in `src/analyst/delivery/`:
 - compliance disclaimers
 - calendar reply formatting
 - Telegram-safe 4096-character truncation that preserves disclaimers
+- SQLite-backed sales memory hydration for Telegram validation (`client_profiles`, `conversation_messages`, `delivery_queue`)
 
 ### Integration layer
 
@@ -152,6 +159,7 @@ Implemented in `src/analyst/integration/`:
 - message routing to engine methods
 - channel-agnostic formatter protocol
 - generic formatted reply generation
+- optional `memory_context` injection for delivery-time personalization
 - backward-compatible `handle_wecom_message()` alias
 
 ### Tests
@@ -159,6 +167,7 @@ Implemented in `src/analyst/integration/`:
 Implemented in `tests/`:
 
 - `test_news_ingestion.py` for RSS feed registry, classifier utility, article fetcher, SQLite news storage, extraction fallback behavior, and news ingestion/retrieval regressions
+- `test_memory.py` for research/trader/sales pipeline memory behavior, client isolation, delivery gating, profile accumulation, and trader lineage constraints
 - `test_product_layer.py` for product-layer smoke tests
 - `test_telegram.py` for Telegram formatter, truncation, routing, and bot wiring
 - `test_ws1_engine.py` for WS1 live engine and calendar paths: store CRUD/upsert/filter/range queries, scraper retry behavior, flash commentary tool-calling loop with persistence, no-event error path, regime payload parsing with malformed JSON, env fallback chain, and CLI routing for refresh/flash/regime-refresh/live-calendar
@@ -181,21 +190,20 @@ Note: calendar scraping (Investing.com, ForexFactory), FRED series, Fed RSS, yfi
 
 Not yet implemented:
 
-- memory store / user personalization
 - prompt/version management beyond local code
 - retry/backoff for LLM provider errors
 - multi-model comparison (DeepSeek, Qwen alternatives)
 
-Note: OpenRouter LLM integration and a Python agent loop with tool calling are now implemented in `src/analyst/engine/`.
+Note: OpenRouter LLM integration, a Python agent loop with tool calling, and product-owned memory/context assembly are now implemented in `src/analyst/engine/`, `src/analyst/memory/`, and `src/analyst/storage/`.
 
 ### Product storage (remaining)
 
 Not yet implemented:
 
-- interaction log store
-- user context store
+- CRM sync / external profile store
+- production audit export / compliance reporting surface
 
-Note: SQLite-backed research store (generated notes), market state store (prices, indicators), and regime snapshot persistence are now implemented in `src/analyst/storage/`.
+Note: SQLite-backed research, trader, and sales memory stores are now implemented in `src/analyst/storage/`.
 
 ### Delivery infrastructure
 
@@ -229,7 +237,7 @@ Done:
 
 - engine contract layer
 - regime summary, pre-market briefing, Q&A, draft, and meeting-prep paths (demo)
-- SQLite store with 7 tables and managed connections
+- SQLite store with typed market/research/trader/sales tables and managed connections
 - ingestion adapters: Investing.com calendar, ForexFactory calendar, FRED API (25+ series), Fed RSS, yfinance market prices, RSS news ingestion
 - enriched calendar event storage with `revised_previous` and `currency`
 - news article storage with structured metadata, provider tracking, and FTS-backed retrieval
@@ -245,6 +253,8 @@ Done:
 - environment resolver with multi-file `.env` fallback
 - CLI commands: refresh, schedule, flash, briefing, wrap, regime-refresh, live-calendar, news-refresh, news-latest, news-search, news-feeds
 - agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, surprise summaries, recent news, and news search
+- research publication into `research_artifacts` plus `analytical_observations`
+- typed trader-state schema with FK lineage ready for a future trader runtime
 - focused WS1 tests covering store, scraper retry paths, loop, env, CLI, calendar query behavior, news ingestion, search, and ranking regressions
 
 Missing:
@@ -253,7 +263,7 @@ Missing:
 - China-specific ingestion (PBOC, NBS, Xinhua, Caixin)
 - non-RSS premium/news API sources (Finnhub, Alpha Vantage) if broader coverage is needed
 - evaluation harness and quality benchmarking against real sell-side notes
-- Sales agent Month 2 scope (user personalization, memory)
+- live trader runtime on top of the implemented trader tables
 
 ### WS2 Delivery Shell
 
@@ -267,17 +277,20 @@ Done:
 - command handlers: `/start`, `/help`, `/regime`, `/calendar`, `/premarket`
 - free-text intent routing via regex-based `detect_mode()` (draft, meeting-prep, regime, calendar, QA fallback)
 - Telegram-safe 4096-character truncation that preserves disclaimer suffix
+- structured sales memory for Telegram validation:
+  - `client_profiles`
+  - `conversation_threads` / `conversation_messages`
+  - `delivery_queue`
+  - delivery-time context injection into runtime requests
 - 26 tests covering formatter correctness, truncation edge cases, integration routing, and bot handler wiring
 
-Current limitation: the Telegram bot uses the demo stack (`FileBackedInformationRepository` + `TemplateAgentRuntime`), not the live WS1 engine. Connecting it to the live engine is a WS4 integration task.
+Current limitation: the Telegram bot uses the OpenRouter delivery runtime but still reads the demo information layer (`FileBackedInformationRepository`) rather than the live WS1 market/research store.
 
 Missing:
 
 - real WeCom integration (account, self-built app, callback endpoint)
 - connection to live WS1 engine for real-time macro data
 - push scheduling (早盘速递 at 7:30am, event-driven 快评)
-- per-user memory and context
-- interaction logging
 - official account and mini-program delivery surfaces
 - webhook/server deployment and production operations
 
@@ -303,7 +316,7 @@ Missing:
 - WeCom transport/server layer
 - logging/tracing
 - retries and failure handling
-- per-user state
+- live WS1-backed delivery instead of the current demo information layer
 
 ### WS5 Go-To-Market
 
