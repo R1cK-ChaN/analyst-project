@@ -27,10 +27,22 @@ DISCLAIMERS: dict[InteractionMode, str] = {
 MAX_TELEGRAM_MESSAGE_LENGTH = 4096
 
 
-def _truncate(text: str, limit: int = MAX_TELEGRAM_MESSAGE_LENGTH) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 4] + "\n..."
+def _strip_markdown(text: str) -> str:
+    """Remove lightweight markdown markers for plain-text output."""
+    return text.replace("#", "").replace("*", "").replace("`", "").strip()
+
+
+def _truncate_body(body: str, suffix: str, limit: int = MAX_TELEGRAM_MESSAGE_LENGTH) -> str:
+    """Truncate *body* so that body + suffix fits within *limit*.
+
+    The suffix (compliance disclaimer) is never truncated.
+    """
+    available = limit - len(suffix)
+    if available < 0:
+        return suffix[:limit]
+    if len(body) <= available:
+        return body + suffix
+    return body[: available - 4] + "\n..." + suffix
 
 
 class TelegramFormatter:
@@ -38,14 +50,16 @@ class TelegramFormatter:
 
     def format_draft(self, response: DraftResponse) -> ChannelMessage:
         disclaimer = DISCLAIMERS.get(response.mode, DISCLAIMERS[InteractionMode.QA])
-        markdown = f"{response.markdown}\n\n*合规提示*\n{disclaimer}"
-        plain_text = f"{response.plain_text}\n\n合规提示: {disclaimer}"
+        md_suffix = f"\n\n*合规提示*\n{disclaimer}"
+        pt_suffix = f"\n\n合规提示: {disclaimer}"
+        markdown = _truncate_body(response.markdown, md_suffix)
+        plain_text = _truncate_body(response.plain_text, pt_suffix)
         return ChannelMessage(
             message_id=response.request_id,
             channel="telegram",
             mode=response.mode,
-            markdown=_truncate(markdown),
-            plain_text=_truncate(plain_text),
+            markdown=markdown,
+            plain_text=plain_text,
             citations=response.citations,
             metadata=response.metadata,
         )
@@ -56,14 +70,18 @@ class TelegramFormatter:
         mode: InteractionMode = InteractionMode.REGIME,
     ) -> ChannelMessage:
         disclaimer = DISCLAIMERS.get(mode, DISCLAIMERS[InteractionMode.REGIME])
-        markdown = f"*{note.title}*\n\n{note.body_markdown}\n\n*合规提示*\n{disclaimer}"
-        plain_text = f"{note.title}\n\n{note.summary}\n\n合规提示: {disclaimer}"
+        md_suffix = f"\n\n*合规提示*\n{disclaimer}"
+        pt_suffix = f"\n\n合规提示: {disclaimer}"
+        md_body = f"*{note.title}*\n\n{note.body_markdown}"
+        pt_body = f"{note.title}\n\n{_strip_markdown(note.body_markdown)}"
+        markdown = _truncate_body(md_body, md_suffix)
+        plain_text = _truncate_body(pt_body, pt_suffix)
         return ChannelMessage(
             message_id=note.note_id,
             channel="telegram",
             mode=mode,
-            markdown=_truncate(markdown),
-            plain_text=_truncate(plain_text),
+            markdown=markdown,
+            plain_text=plain_text,
             citations=note.citations,
             metadata={"note_type": note.note_type},
         )
@@ -74,19 +92,19 @@ class TelegramFormatter:
             for item in items
         ]
         disclaimer = DISCLAIMERS[InteractionMode.CALENDAR]
-        markdown = (
-            "*今日/近期数据日历*\n\n"
-            + "\n".join(lines)
-            + f"\n\n*合规提示*\n{disclaimer}"
-        )
-        plain_text = "近期数据日历\n" + "\n".join(lines)
+        md_suffix = f"\n\n*合规提示*\n{disclaimer}"
+        pt_suffix = f"\n\n合规提示: {disclaimer}"
+        md_body = "*今日/近期数据日历*\n\n" + "\n".join(lines)
+        pt_body = "近期数据日历\n" + "\n".join(lines)
+        markdown = _truncate_body(md_body, md_suffix)
+        plain_text = _truncate_body(pt_body, pt_suffix)
         citations = [ref for item in items for ref in item.references]
         return ChannelMessage(
             message_id="calendar-reply",
             channel="telegram",
             mode=InteractionMode.CALENDAR,
-            markdown=_truncate(markdown),
-            plain_text=_truncate(plain_text),
+            markdown=markdown,
+            plain_text=plain_text,
             citations=citations,
             metadata={"items": str(len(items))},
         )

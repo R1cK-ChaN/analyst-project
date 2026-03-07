@@ -12,7 +12,6 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -27,27 +26,32 @@ from analyst.contracts import (
     SourceReference,
     utc_now,
 )
-from analyst.delivery.telegram import MAX_TELEGRAM_MESSAGE_LENGTH, TelegramFormatter, _truncate
+from analyst.delivery.telegram import MAX_TELEGRAM_MESSAGE_LENGTH, TelegramFormatter, _truncate_body
 from analyst.engine import AnalystEngine
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.integration import AnalystIntegrationService, detect_mode
 from analyst.runtime import TemplateAgentRuntime
 
 
-class TestTruncate(unittest.TestCase):
-    def test_short_text_unchanged(self) -> None:
-        text = "hello"
-        self.assertEqual(_truncate(text), text)
+class TestTruncateBody(unittest.TestCase):
+    def test_short_body_unchanged(self) -> None:
+        result = _truncate_body("hello", "\nfooter")
+        self.assertEqual(result, "hello\nfooter")
 
-    def test_exact_limit_unchanged(self) -> None:
-        text = "a" * MAX_TELEGRAM_MESSAGE_LENGTH
-        self.assertEqual(_truncate(text), text)
+    def test_body_plus_suffix_at_limit(self) -> None:
+        suffix = "\nfooter"
+        body = "a" * (MAX_TELEGRAM_MESSAGE_LENGTH - len(suffix))
+        result = _truncate_body(body, suffix)
+        self.assertEqual(len(result), MAX_TELEGRAM_MESSAGE_LENGTH)
+        self.assertTrue(result.endswith(suffix))
 
-    def test_long_text_truncated(self) -> None:
-        text = "a" * (MAX_TELEGRAM_MESSAGE_LENGTH + 100)
-        result = _truncate(text)
+    def test_long_body_truncated_but_suffix_preserved(self) -> None:
+        suffix = "\n\n合规提示: disclaimer"
+        body = "a" * (MAX_TELEGRAM_MESSAGE_LENGTH + 500)
+        result = _truncate_body(body, suffix)
         self.assertLessEqual(len(result), MAX_TELEGRAM_MESSAGE_LENGTH)
-        self.assertTrue(result.endswith("\n..."))
+        self.assertTrue(result.endswith(suffix))
+        self.assertIn("\n...", result)
 
 
 class TestTelegramFormatter(unittest.TestCase):
@@ -131,6 +135,37 @@ class TestTelegramFormatter(unittest.TestCase):
         items = app.engine.get_calendar(limit=3)
         msg = self.formatter.format_calendar(items)
         self.assertEqual(msg.metadata["items"], str(len(items)))
+
+    def test_format_calendar_plain_text_includes_compliance(self) -> None:
+        """Finding 3: calendar plain_text must include the disclaimer."""
+        app = build_demo_app()
+        items = app.engine.get_calendar(limit=2)
+        msg = self.formatter.format_calendar(items)
+        self.assertIn("合规提示", msg.plain_text)
+
+    def test_format_research_note_plain_text_includes_body(self) -> None:
+        """Finding 2: plain_text must include the full body, not just summary."""
+        note = self._make_research_note()
+        msg = self.formatter.format_research_note(note)
+        self.assertIn("Content here", msg.plain_text)
+
+    def test_format_draft_disclaimer_survives_truncation(self) -> None:
+        """Finding 1: compliance disclaimer must survive even on oversized messages."""
+        long_response = DraftResponse(
+            request_id="long-001",
+            created_at=utc_now(),
+            mode=InteractionMode.DRAFT,
+            audience="client_draft",
+            markdown="x" * 5000,
+            plain_text="x" * 5000,
+            citations=[],
+            metadata={},
+        )
+        msg = self.formatter.format_draft(long_response)
+        self.assertLessEqual(len(msg.plain_text), MAX_TELEGRAM_MESSAGE_LENGTH)
+        self.assertIn("合规提示", msg.plain_text)
+        self.assertLessEqual(len(msg.markdown), MAX_TELEGRAM_MESSAGE_LENGTH)
+        self.assertIn("合规提示", msg.markdown)
 
 
 class TestIntegrationWithTelegramFormatter(unittest.TestCase):
