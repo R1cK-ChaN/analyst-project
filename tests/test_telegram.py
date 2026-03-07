@@ -5,6 +5,7 @@ Covers:
 - Truncation for oversized messages
 - Integration routing via handle_message (channel-agnostic)
 - Bot handler wiring (build_application returns correct handlers)
+- Agent-loop chat reply flow (persona, history, tools, truncation, errors)
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -29,6 +30,7 @@ from analyst.contracts import (
 )
 from analyst.delivery.telegram import MAX_TELEGRAM_MESSAGE_LENGTH, TelegramFormatter, _truncate_body
 from analyst.engine import AnalystEngine
+from analyst.engine.live_types import AgentLoopResult, ConversationMessage
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.integration import AnalystIntegrationService, detect_mode
 from analyst.runtime import TemplateAgentRuntime
@@ -216,7 +218,6 @@ class TestBuildApplication(unittest.TestCase):
     """Verify bot wiring without actually starting polling."""
 
     def test_build_application_registers_handlers(self) -> None:
-        # Import locally to avoid import errors if telegram is not installed
         try:
             from analyst.delivery.bot import build_application
             from analyst.engine.live_provider import OpenRouterConfig
@@ -231,11 +232,110 @@ class TestBuildApplication(unittest.TestCase):
             ),
         ):
             app = build_application("fake-token-for-test")
-        # python-telegram-bot stores handlers in handler groups
-        # group 0 is the default
         handlers = app.handlers.get(0, [])
-        # We expect 5 command handlers + 1 message handler = 6
+        # 5 command handlers + 1 message handler = 6
         self.assertEqual(len(handlers), 6)
+
+
+class TestChatReply(unittest.IsolatedAsyncioTestCase):
+    """Test _chat_reply — the core agent-loop chat function."""
+
+    def setUp(self) -> None:
+        self.mock_loop = MagicMock()
+        self.mock_tools = []
+        self.mock_context = MagicMock()
+        self.mock_context.user_data = {}
+
+    def _set_loop_response(self, text: str) -> None:
+        self.mock_loop.run.return_value = AgentLoopResult(
+            messages=[
+                ConversationMessage(role="user", content="test"),
+                ConversationMessage(role="assistant", content=text),
+            ],
+            final_text=text,
+            events=[],
+        )
+
+    async def test_calls_agent_loop_with_soul_prompt(self) -> None:
+        from analyst.delivery.bot import _chat_reply
+        from analyst.delivery.soul import SOUL_SYSTEM_PROMPT
+
+        self._set_loop_response("你好！")
+        await _chat_reply("hi", self.mock_context, self.mock_loop, self.mock_tools)
+
+        call_kwargs = self.mock_loop.run.call_args.kwargs
+        self.assertEqual(call_kwargs["system_prompt"], SOUL_SYSTEM_PROMPT)
+        self.assertIn("陈襄", call_kwargs["system_prompt"])
+
+    async def test_passes_tools_to_agent_loop(self) -> None:
+        from analyst.delivery.bot import _chat_reply
+
+        fake_tools = [MagicMock(), MagicMock()]
+        self._set_loop_response("ok")
+        await _chat_reply("hi", self.mock_context, self.mock_loop, fake_tools)
+
+        call_kwargs = self.mock_loop.run.call_args.kwargs
+        self.assertIs(call_kwargs["tools"], fake_tools)
+
+    async def test_includes_conversation_history(self) -> None:
+        from analyst.delivery.bot import _chat_reply
+
+        self.mock_context.user_data["history"] = [
+            {"role": "user", "content": "first message"},
+            {"role": "assistant", "content": "first reply"},
+        ]
+        self._set_loop_response("second reply")
+        await _chat_reply("second message", self.mock_context, self.mock_loop, self.mock_tools)
+
+        call_kwargs = self.mock_loop.run.call_args.kwargs
+        history = call_kwargs["history"]
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0].content, "first message")
+        self.assertEqual(history[1].content, "first reply")
+        self.assertEqual(call_kwargs["user_prompt"], "second message")
+
+    async def test_appends_to_history(self) -> None:
+        from analyst.delivery.bot import _chat_reply
+
+        self._set_loop_response("hello back")
+        await _chat_reply("hello", self.mock_context, self.mock_loop, self.mock_tools)
+
+        history = self.mock_context.user_data["history"]
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0], {"role": "user", "content": "hello"})
+        self.assertEqual(history[1], {"role": "assistant", "content": "hello back"})
+
+    async def test_truncates_long_response(self) -> None:
+        from analyst.delivery.bot import MAX_TELEGRAM_LENGTH, _chat_reply
+
+        self._set_loop_response("x" * 5000)
+        result = await _chat_reply("hi", self.mock_context, self.mock_loop, self.mock_tools)
+
+        self.assertLessEqual(len(result), MAX_TELEGRAM_LENGTH)
+        self.assertTrue(result.endswith("..."))
+
+    async def test_history_trimming(self) -> None:
+        from analyst.delivery.bot import MAX_HISTORY_TURNS, _chat_reply
+
+        self.mock_context.user_data["history"] = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg-{i}"}
+            for i in range(MAX_HISTORY_TURNS * 2 + 10)
+        ]
+        self._set_loop_response("ok")
+        await _chat_reply("new msg", self.mock_context, self.mock_loop, self.mock_tools)
+
+        history = self.mock_context.user_data["history"]
+        self.assertLessEqual(len(history), MAX_HISTORY_TURNS * 2)
+
+    async def test_agent_loop_error_fallback(self) -> None:
+        from analyst.delivery.bot import _chat_reply
+
+        self.mock_loop.run.side_effect = RuntimeError("API down")
+        result = await _chat_reply("hello", self.mock_context, self.mock_loop, self.mock_tools)
+
+        self.assertIn("抱歉", result)
+        history = self.mock_context.user_data["history"]
+        self.assertEqual(len(history), 2)
 
 
 if __name__ == "__main__":

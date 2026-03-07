@@ -71,7 +71,7 @@ analyst-project/
 │   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
 │   ├── storage/                    SQLite store (calendar, prices, comms, indicators, news, regime, notes)
 │   ├── ingestion/                  Source adapters (Investing.com, ForexFactory, FRED, Fed RSS, yfinance, RSS news)
-│   ├── delivery/                   WeCom/Telegram formatting and Telegram bot shell
+│   ├── delivery/                   Persona-driven Telegram agent bot (陈襄) + WeCom/Telegram formatting
 │   └── integration/                Message routing
 │
 ├── data/demo/                      ← LOCAL DEMO DATA
@@ -173,7 +173,7 @@ This validates the current standalone implementation:
 - bundled demo data + demo engine path
 - WS1 live engine: SQLite store, ingestion adapters, calendar/news query surface, agent loop, OpenRouter provider
 - WeCom and Telegram formatters
-- Telegram polling bot shell
+- Telegram agent bot with persona (陈襄) and autonomous tool access
 - integration router
 
 ## Source Of Truth

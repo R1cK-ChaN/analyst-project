@@ -3,29 +3,29 @@
 Uses python-telegram-bot (v20+) async API.
 Reads ANALYST_TELEGRAM_TOKEN from the environment.
 
-The bot is a thin delivery shell: it receives messages, routes them
-through the existing AnalystIntegrationService (keyword detection ->
-engine -> formatter), and replies with the formatted output.
+All user messages are routed through a persona-driven agent loop (陈襄).
+The agent can autonomously decide when to fetch macro data, calendar events,
+or briefings using tools backed by the analyst engine.
 
 Commands
 --------
-/start      - welcome message
+/start      - persona greeting
 /regime     - current macro regime summary
 /calendar   - upcoming data releases
 /premarket  - pre-market briefing
-/help       - list available commands
-
-Any other text is routed through the integration service (auto-detects
-draft / meeting-prep / regime / calendar / Q&A).
+/help       - explain capabilities
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -41,61 +41,144 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(_PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
-from analyst.contracts import InteractionMode  # noqa: E402
-from analyst.delivery.telegram import TelegramFormatter  # noqa: E402
 from analyst.engine import OpenRouterAnalystEngine  # noqa: E402
-from analyst.engine.live_provider import OpenRouterConfig  # noqa: E402
+from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop  # noqa: E402
+from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider  # noqa: E402
+from analyst.engine.live_types import AgentTool, ConversationMessage  # noqa: E402
 from analyst.env import get_env_value  # noqa: E402
 from analyst.information import (  # noqa: E402
     AnalystInformationService,
     FileBackedInformationRepository,
 )
-from analyst.integration import AnalystIntegrationService  # noqa: E402
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig  # noqa: E402
+
+from .soul import SOUL_SYSTEM_PROMPT  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-WELCOME_TEXT = (
-    "你好！我是 Analyst 宏观助手。\n\n"
-    "你可以直接用中文提问，我会自动识别你的意图：\n"
-    "- 帮我写一段… → 客户消息初稿\n"
-    "- 准备要点… → 客户沟通准备\n"
-    "- 宏观状态 → 当前宏观框架\n"
-    "- 今天有什么 → 数据日历\n"
-    "- 其他问题 → 宏观问答\n\n"
-    "也可以使用命令：\n"
-    "/regime - 宏观状态\n"
-    "/calendar - 数据日历\n"
-    "/premarket - 早盘速递\n"
-    "/help - 帮助"
-)
-
-HELP_TEXT = (
-    "*Analyst 宏观助手 - 使用指南*\n\n"
-    "*命令*\n"
-    "/regime - 查看当前宏观状态评分\n"
-    "/calendar - 查看近期数据日历\n"
-    "/premarket - 查看早盘速递\n"
-    "/help - 显示此帮助\n\n"
-    "*自然语言*\n"
-    "直接发送中文消息即可，系统自动识别意图。\n"
-    "例如：「帮我写一段关于今晚非农数据的客户消息」"
-)
+MAX_TELEGRAM_LENGTH = 4096
+MAX_HISTORY_TURNS = 20
 
 
-def _build_services() -> tuple[OpenRouterAnalystEngine, TelegramFormatter, AnalystIntegrationService]:
-    """Wire up the analyst service stack."""
+# ---------------------------------------------------------------------------
+# Conversation history helpers
+# ---------------------------------------------------------------------------
+
+def _get_history(context: ContextTypes.DEFAULT_TYPE) -> list[dict[str, str]]:
+    if "history" not in context.user_data:
+        context.user_data["history"] = []
+    return context.user_data["history"]
+
+
+def _append_history(context: ContextTypes.DEFAULT_TYPE, role: str, content: str) -> None:
+    history = _get_history(context)
+    history.append({"role": role, "content": content})
+    max_messages = MAX_HISTORY_TURNS * 2
+    if len(history) > max_messages:
+        del history[: len(history) - max_messages]
+
+
+# ---------------------------------------------------------------------------
+# Tool definitions
+# ---------------------------------------------------------------------------
+
+def _build_tools(engine: OpenRouterAnalystEngine) -> list[AgentTool]:
+    """Create agent tools that wrap engine data-fetching methods."""
+
+    def get_regime(arguments: dict[str, Any]) -> str:
+        note = engine.get_regime_summary()
+        return note.body_markdown
+
+    def get_calendar(arguments: dict[str, Any]) -> str:
+        items = engine.get_calendar(limit=5)
+        if not items:
+            return "No upcoming calendar events."
+        return "\n".join(
+            f"- {item.indicator} ({item.country}) | "
+            f"预期 {item.expected or '待定'} | 前值 {item.previous or '未知'} | {item.notes}"
+            for item in items
+        )
+
+    def get_premarket(arguments: dict[str, Any]) -> str:
+        note = engine.build_premarket_briefing()
+        return note.body_markdown
+
+    return [
+        AgentTool(
+            name="get_regime_summary",
+            description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
+            parameters={"type": "object", "properties": {}, "required": []},
+            handler=get_regime,
+        ),
+        AgentTool(
+            name="get_calendar",
+            description="Fetch upcoming economic data releases (calendar events).",
+            parameters={"type": "object", "properties": {}, "required": []},
+            handler=get_calendar,
+        ),
+        AgentTool(
+            name="get_premarket_briefing",
+            description="Fetch the pre-market briefing including overnight highlights and today's key data.",
+            parameters={"type": "object", "properties": {}, "required": []},
+            handler=get_premarket,
+        ),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Core agent chat function
+# ---------------------------------------------------------------------------
+
+async def _chat_reply(
+    user_text: str,
+    context: ContextTypes.DEFAULT_TYPE,
+    agent_loop: PythonAgentLoop,
+    tools: list[AgentTool],
+) -> str:
+    """Send user_text through the agent loop with persona, history, and tools."""
+    history = _get_history(context)
+    history_messages = [ConversationMessage(role=msg["role"], content=msg["content"]) for msg in history]
+
+    try:
+        result = await asyncio.to_thread(
+            agent_loop.run,
+            system_prompt=SOUL_SYSTEM_PROMPT,
+            user_prompt=user_text,
+            tools=tools,
+            history=history_messages,
+        )
+        response_text = result.final_text
+    except Exception:
+        logger.exception("Agent loop error")
+        response_text = "抱歉，我这边出了点小状况，稍后再试试？"
+
+    _append_history(context, "user", user_text)
+    _append_history(context, "assistant", response_text)
+
+    if len(response_text) > MAX_TELEGRAM_LENGTH:
+        response_text = response_text[: MAX_TELEGRAM_LENGTH - 3] + "..."
+
+    return response_text
+
+
+# ---------------------------------------------------------------------------
+# Service wiring
+# ---------------------------------------------------------------------------
+
+def _build_services() -> tuple[PythonAgentLoop, list[AgentTool]]:
+    """Wire up the agent loop and tools."""
     repository = FileBackedInformationRepository()
     info_service = AnalystInformationService(repository)
-    runtime = OpenRouterAgentRuntime(
-        provider_config=OpenRouterConfig.from_env(
-            model_keys=(
-                "ANALYST_TELEGRAM_OPENROUTER_MODEL",
-                "ANALYST_OPENROUTER_MODEL",
-                "LLM_MODEL",
-            ),
-            default_model="google/gemini-3.1-flash-lite-preview",
+    or_config = OpenRouterConfig.from_env(
+        model_keys=(
+            "ANALYST_TELEGRAM_OPENROUTER_MODEL",
+            "ANALYST_OPENROUTER_MODEL",
+            "LLM_MODEL",
         ),
+        default_model="google/gemini-3.1-flash-lite-preview",
+    )
+    runtime = OpenRouterAgentRuntime(
+        provider_config=or_config,
         config=OpenRouterRuntimeConfig(
             model_keys=(
                 "ANALYST_TELEGRAM_OPENROUTER_MODEL",
@@ -106,113 +189,126 @@ def _build_services() -> tuple[OpenRouterAnalystEngine, TelegramFormatter, Analy
         ),
     )
     engine = OpenRouterAnalystEngine(info_service=info_service, runtime=runtime)
-    formatter = TelegramFormatter()
-    integration = AnalystIntegrationService(engine=engine, formatter=formatter)
-    return engine, formatter, integration
+    provider = OpenRouterProvider(or_config)
+    agent_loop = PythonAgentLoop(
+        provider=provider,
+        config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
+    )
+    tools = _build_tools(engine)
+    return agent_loop, tools
 
 
 # ---------------------------------------------------------------------------
-# Handler factories — each returns an async callback for python-telegram-bot
+# Handler factories
 # ---------------------------------------------------------------------------
 
-def _make_start_handler(
-    _engine: OpenRouterAnalystEngine,
-    _formatter: TelegramFormatter,
-    _integration: AnalystIntegrationService,
-):
+def _make_start_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.effective_message is not None:
-            await update.effective_message.reply_text(WELCOME_TEXT)
+        if update.effective_message is None:
+            return
+        context.user_data["history"] = []
+        await update.effective_chat.send_action(ChatAction.TYPING)
+        reply = await _chat_reply(
+            "(A new user just opened a conversation with you. Greet them and introduce yourself briefly.)",
+            context,
+            agent_loop,
+            tools,
+        )
+        await update.effective_message.reply_text(reply)
 
     return start
 
 
-def _make_help_handler(
-    _engine: OpenRouterAnalystEngine,
-    _formatter: TelegramFormatter,
-    _integration: AnalystIntegrationService,
-):
+def _make_help_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.effective_message is not None:
-            await update.effective_message.reply_text(HELP_TEXT, parse_mode="Markdown")
+        if update.effective_message is None:
+            return
+        await update.effective_chat.send_action(ChatAction.TYPING)
+        reply = await _chat_reply(
+            "(The user wants to know what you can help with. Explain naturally.)",
+            context,
+            agent_loop,
+            tools,
+        )
+        await update.effective_message.reply_text(reply)
 
     return help_command
 
 
-def _make_regime_handler(
-    engine: OpenRouterAnalystEngine,
-    formatter: TelegramFormatter,
-    _integration: AnalystIntegrationService,
-):
+def _make_regime_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
     async def regime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
             return
-        note = engine.get_regime_summary()
-        msg = formatter.format_research_note(note, mode=InteractionMode.REGIME)
-        await update.effective_message.reply_text(msg.plain_text)
+        await update.effective_chat.send_action(ChatAction.TYPING)
+        reply = await _chat_reply(
+            "请展示当前宏观状态。",
+            context,
+            agent_loop,
+            tools,
+        )
+        await update.effective_message.reply_text(reply)
 
     return regime
 
 
-def _make_calendar_handler(
-    engine: OpenRouterAnalystEngine,
-    formatter: TelegramFormatter,
-    _integration: AnalystIntegrationService,
-):
+def _make_calendar_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
     async def calendar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
             return
-        msg = formatter.format_calendar(engine.get_calendar(limit=5))
-        await update.effective_message.reply_text(msg.plain_text)
+        await update.effective_chat.send_action(ChatAction.TYPING)
+        reply = await _chat_reply(
+            "请展示近期经济数据日历。",
+            context,
+            agent_loop,
+            tools,
+        )
+        await update.effective_message.reply_text(reply)
 
     return calendar
 
 
-def _make_premarket_handler(
-    engine: OpenRouterAnalystEngine,
-    formatter: TelegramFormatter,
-    _integration: AnalystIntegrationService,
-):
+def _make_premarket_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
     async def premarket(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
             return
-        note = engine.build_premarket_briefing()
-        msg = formatter.format_research_note(note, mode=InteractionMode.PREMARKET)
-        await update.effective_message.reply_text(msg.plain_text)
+        await update.effective_chat.send_action(ChatAction.TYPING)
+        reply = await _chat_reply(
+            "请展示早盘速递。",
+            context,
+            agent_loop,
+            tools,
+        )
+        await update.effective_message.reply_text(reply)
 
     return premarket
 
 
-def _make_message_handler(
-    _engine: OpenRouterAnalystEngine,
-    _formatter: TelegramFormatter,
-    integration: AnalystIntegrationService,
-):
+def _make_message_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None or update.effective_message.text is None:
             return
-        user_id = str(update.effective_user.id) if update.effective_user else "unknown"
-        text = update.effective_message.text
-        reply = integration.handle_message(text, user_id=user_id)
-        await update.effective_message.reply_text(reply.plain_text)
+        await update.effective_chat.send_action(ChatAction.TYPING)
+        reply = await _chat_reply(update.effective_message.text, context, agent_loop, tools)
+        await update.effective_message.reply_text(reply)
 
     return handle_message
 
 
-def build_application(token: str) -> Application:
-    """Build and return a fully configured Telegram Application.
+# ---------------------------------------------------------------------------
+# Application builder
+# ---------------------------------------------------------------------------
 
-    Does NOT call .run_polling(); the caller decides how to start it.
-    """
-    engine, formatter, integration = _build_services()
+def build_application(token: str) -> Application:
+    """Build and return a fully configured Telegram Application."""
+    agent_loop, tools = _build_services()
 
     app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", _make_start_handler(engine, formatter, integration)))
-    app.add_handler(CommandHandler("help", _make_help_handler(engine, formatter, integration)))
-    app.add_handler(CommandHandler("regime", _make_regime_handler(engine, formatter, integration)))
-    app.add_handler(CommandHandler("calendar", _make_calendar_handler(engine, formatter, integration)))
-    app.add_handler(CommandHandler("premarket", _make_premarket_handler(engine, formatter, integration)))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _make_message_handler(engine, formatter, integration)))
+    app.add_handler(CommandHandler("start", _make_start_handler(agent_loop, tools)))
+    app.add_handler(CommandHandler("help", _make_help_handler(agent_loop, tools)))
+    app.add_handler(CommandHandler("regime", _make_regime_handler(agent_loop, tools)))
+    app.add_handler(CommandHandler("calendar", _make_calendar_handler(agent_loop, tools)))
+    app.add_handler(CommandHandler("premarket", _make_premarket_handler(agent_loop, tools)))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _make_message_handler(agent_loop, tools)))
 
     return app
 
@@ -229,7 +325,7 @@ def main() -> None:
         logger.error("ANALYST_TELEGRAM_TOKEN environment variable is not set")
         sys.exit(1)
 
-    logger.info("Starting Analyst Telegram bot …")
+    logger.info("Starting Analyst Telegram bot ...")
     app = build_application(token)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

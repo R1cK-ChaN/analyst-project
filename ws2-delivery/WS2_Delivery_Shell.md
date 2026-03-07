@@ -2,7 +2,7 @@
 
 Status note on March 7, 2026:
 This document describes the target WS2 scope. For the current implemented WS2 slice, see `00-overview/Implementation_Status.md`.
-Current code on `main` includes channel formatting for WeCom and Telegram plus a Telegram polling bot for validating WS2 interaction flows; WeCom transport, push delivery, and account setup remain target-state work.
+Current code includes a persona-driven Telegram agent bot (陈襄) that routes all messages through the WS1 agent loop with autonomous tool access (regime, calendar, briefing). The bot uses a high-EQ persona system prompt, per-user conversation history, and auto-detects user language. WeCom transport, push delivery, and account setup remain target-state work.
 
 ## Strategic Context (from Marketing Research)
 

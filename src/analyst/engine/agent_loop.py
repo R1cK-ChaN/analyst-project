@@ -24,9 +24,11 @@ class PythonAgentLoop:
         system_prompt: str,
         user_prompt: str,
         tools: list[AgentTool],
+        history: list[ConversationMessage] | None = None,
     ) -> AgentLoopResult:
         events: list[LoopEvent] = [LoopEvent(event_type="agent_start", payload={})]
-        messages: list[ConversationMessage] = [ConversationMessage(role="user", content=user_prompt)]
+        messages: list[ConversationMessage] = list(history) if history else []
+        messages.append(ConversationMessage(role="user", content=user_prompt))
         final_text = ""
 
         for turn in range(self.config.max_turns):
