@@ -7,7 +7,12 @@ name = "analyst-project"
 version = "0.1.0"
 description = "Standalone Analyst product scaffold"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "beautifulsoup4",
+    "feedparser",
+    "requests",
+    "yfinance",
+]
 
 [project.scripts]
 analyst-cli = "analyst.cli:main"

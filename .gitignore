@@ -8,4 +8,5 @@ __pycache__/
 venv/
 env/
 .env
+.analyst/
 .DS_Store
