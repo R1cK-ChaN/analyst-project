@@ -52,6 +52,15 @@ PROMPT_PROFILES = {
             "要把状态和最近事件连起来。",
         ),
     ),
+    InteractionMode.PREMARKET: PromptProfile(
+        mode=InteractionMode.PREMARKET,
+        role="早盘速递助手",
+        objective="把隔夜变化、今日重点事件和当前宏观框架整理成开盘前可直接阅读的中文简报。",
+        constraints=(
+            "优先写清隔夜发生了什么、今天要盯什么、为什么重要。",
+            "保持内部研究语气，不写成交量口号式文案。",
+        ),
+    ),
 }
 
 

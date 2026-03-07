@@ -22,7 +22,6 @@ draft / meeting-prep / regime / calendar / Q&A).
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -44,13 +43,15 @@ if str(_PROJECT_ROOT / "src") not in sys.path:
 
 from analyst.contracts import InteractionMode  # noqa: E402
 from analyst.delivery.telegram import TelegramFormatter  # noqa: E402
-from analyst.engine import AnalystEngine  # noqa: E402
+from analyst.engine import OpenRouterAnalystEngine  # noqa: E402
+from analyst.engine.live_provider import OpenRouterConfig  # noqa: E402
+from analyst.env import get_env_value  # noqa: E402
 from analyst.information import (  # noqa: E402
     AnalystInformationService,
     FileBackedInformationRepository,
 )
 from analyst.integration import AnalystIntegrationService  # noqa: E402
-from analyst.runtime import TemplateAgentRuntime  # noqa: E402
+from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +83,29 @@ HELP_TEXT = (
 )
 
 
-def _build_services() -> tuple[AnalystEngine, TelegramFormatter, AnalystIntegrationService]:
+def _build_services() -> tuple[OpenRouterAnalystEngine, TelegramFormatter, AnalystIntegrationService]:
     """Wire up the analyst service stack."""
     repository = FileBackedInformationRepository()
     info_service = AnalystInformationService(repository)
-    runtime = TemplateAgentRuntime()
-    engine = AnalystEngine(info_service=info_service, runtime=runtime)
+    runtime = OpenRouterAgentRuntime(
+        provider_config=OpenRouterConfig.from_env(
+            model_keys=(
+                "ANALYST_TELEGRAM_OPENROUTER_MODEL",
+                "ANALYST_OPENROUTER_MODEL",
+                "LLM_MODEL",
+            ),
+            default_model="google/gemini-3.1-flash-lite-preview",
+        ),
+        config=OpenRouterRuntimeConfig(
+            model_keys=(
+                "ANALYST_TELEGRAM_OPENROUTER_MODEL",
+                "ANALYST_OPENROUTER_MODEL",
+                "LLM_MODEL",
+            ),
+            default_model="google/gemini-3.1-flash-lite-preview",
+        ),
+    )
+    engine = OpenRouterAnalystEngine(info_service=info_service, runtime=runtime)
     formatter = TelegramFormatter()
     integration = AnalystIntegrationService(engine=engine, formatter=formatter)
     return engine, formatter, integration
@@ -98,7 +116,7 @@ def _build_services() -> tuple[AnalystEngine, TelegramFormatter, AnalystIntegrat
 # ---------------------------------------------------------------------------
 
 def _make_start_handler(
-    _engine: AnalystEngine,
+    _engine: OpenRouterAnalystEngine,
     _formatter: TelegramFormatter,
     _integration: AnalystIntegrationService,
 ):
@@ -110,7 +128,7 @@ def _make_start_handler(
 
 
 def _make_help_handler(
-    _engine: AnalystEngine,
+    _engine: OpenRouterAnalystEngine,
     _formatter: TelegramFormatter,
     _integration: AnalystIntegrationService,
 ):
@@ -122,7 +140,7 @@ def _make_help_handler(
 
 
 def _make_regime_handler(
-    engine: AnalystEngine,
+    engine: OpenRouterAnalystEngine,
     formatter: TelegramFormatter,
     _integration: AnalystIntegrationService,
 ):
@@ -137,7 +155,7 @@ def _make_regime_handler(
 
 
 def _make_calendar_handler(
-    engine: AnalystEngine,
+    engine: OpenRouterAnalystEngine,
     formatter: TelegramFormatter,
     _integration: AnalystIntegrationService,
 ):
@@ -151,7 +169,7 @@ def _make_calendar_handler(
 
 
 def _make_premarket_handler(
-    engine: AnalystEngine,
+    engine: OpenRouterAnalystEngine,
     formatter: TelegramFormatter,
     _integration: AnalystIntegrationService,
 ):
@@ -166,7 +184,7 @@ def _make_premarket_handler(
 
 
 def _make_message_handler(
-    _engine: AnalystEngine,
+    _engine: OpenRouterAnalystEngine,
     _formatter: TelegramFormatter,
     integration: AnalystIntegrationService,
 ):
@@ -205,7 +223,8 @@ def main() -> None:
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         level=logging.INFO,
     )
-    token = os.environ.get("ANALYST_TELEGRAM_TOKEN", "")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    token = get_env_value("ANALYST_TELEGRAM_TOKEN")
     if not token:
         logger.error("ANALYST_TELEGRAM_TOKEN environment variable is not set")
         sys.exit(1)

@@ -259,7 +259,7 @@ class LiveEngineTest(unittest.TestCase):
             self.assertEqual(notes_count, 1)
             self.assertEqual(regime_count, 1)
 
-    def test_openrouter_config_falls_back_to_information_env_shape(self) -> None:
+    def test_openrouter_config_reads_project_env_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_file = Path(temp_dir) / ".env"
             env_file.write_text(
@@ -280,19 +280,12 @@ class LiveEngineTest(unittest.TestCase):
             self.assertEqual(config.base_url, "https://openrouter.example/api/v1")
             self.assertEqual(config.model, "anthropic/test-model")
 
-    def test_local_project_env_takes_precedence_over_information_env(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            info_env = Path(temp_dir) / "information.env"
-            project_env = Path(temp_dir) / "project.env"
-            info_env.write_text("LLM_API_KEY=info-key\n", encoding="utf-8")
-            project_env.write_text("OPENROUTER_API_KEY=project-key\n", encoding="utf-8")
-            with patch("analyst.env.DEFAULT_ENV_FILES", (project_env, info_env)):
-                with patch.dict("os.environ", {}, clear=True):
-                    clear_env_cache()
-                    config = OpenRouterConfig.from_env()
-            self.assertEqual(config.api_key, "project-key")
+    def test_default_env_files_only_include_project_env(self) -> None:
+        from analyst.env import DEFAULT_ENV_FILES, PROJECT_ROOT
 
-    def test_fred_client_falls_back_to_information_env_file(self) -> None:
+        self.assertEqual(DEFAULT_ENV_FILES, (PROJECT_ROOT / ".env",))
+
+    def test_fred_client_reads_project_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_file = Path(temp_dir) / ".env"
             env_file.write_text("FRED_API_KEY=test-fred-key\n", encoding="utf-8")

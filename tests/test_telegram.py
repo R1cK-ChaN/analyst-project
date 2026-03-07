@@ -12,6 +12,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -218,10 +219,18 @@ class TestBuildApplication(unittest.TestCase):
         # Import locally to avoid import errors if telegram is not installed
         try:
             from analyst.delivery.bot import build_application
+            from analyst.engine.live_provider import OpenRouterConfig
         except ImportError:
             self.skipTest("python-telegram-bot not installed")
 
-        app = build_application("fake-token-for-test")
+        with patch(
+            "analyst.delivery.bot.OpenRouterConfig.from_env",
+            return_value=OpenRouterConfig(
+                api_key="test-key",
+                model="google/gemini-3.1-flash-lite-preview",
+            ),
+        ):
+            app = build_application("fake-token-for-test")
         # python-telegram-bot stores handlers in handler groups
         # group 0 is the default
         handlers = app.handlers.get(0, [])

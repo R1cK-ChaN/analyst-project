@@ -153,3 +153,75 @@ class AnalystEngine:
             seen.add(reference.url)
             merged.append(reference)
         return merged
+
+
+class OpenRouterAnalystEngine(AnalystEngine):
+    def get_regime_summary(self, focus: str = "global") -> ResearchNote:
+        regime_state = self.info_service.build_regime_state(focus=focus)
+        snapshot = self.info_service.get_market_snapshot(focus=focus)
+        context = RuntimeContext(
+            mode=InteractionMode.REGIME,
+            user_id="telegram-bot",
+            instruction="请总结当前宏观状态。",
+            focus=focus,
+            audience="internal_rm",
+            market_snapshot=snapshot,
+            regime_state=regime_state,
+            supporting_points=snapshot.headline_summary,
+            citations=self._merge_citations(snapshot.citations, []),
+        )
+        result = self.runtime.generate(context)
+        return ResearchNote(
+            note_id=f"regime-{utc_now().strftime('%Y%m%d%H%M%S')}",
+            created_at=utc_now(),
+            note_type="regime_summary",
+            title="宏观状态摘要",
+            summary=self._summary_from_text(result.plain_text, regime_state.summary),
+            body_markdown=result.markdown,
+            regime_state=regime_state,
+            citations=result.citations,
+            tags=["regime", focus, "openrouter"],
+        )
+
+    def build_premarket_briefing(self, focus: str = "global") -> ResearchNote:
+        snapshot = self.info_service.get_market_snapshot(focus=focus)
+        regime_state = self.info_service.build_regime_state(focus=focus)
+        calendar = self.info_service.get_calendar(limit=3)
+        calendar_points = [
+            f"{item.indicator} ({item.country}) | 预期 {item.expected or '待定'} | {item.notes}"
+            for item in calendar
+        ]
+        citations = self._merge_citations(
+            snapshot.citations,
+            [reference for item in calendar for reference in item.references],
+        )
+        context = RuntimeContext(
+            mode=InteractionMode.PREMARKET,
+            user_id="telegram-bot",
+            instruction="请生成一份早盘速递。",
+            focus=focus,
+            audience="internal_rm",
+            market_snapshot=snapshot,
+            regime_state=regime_state,
+            supporting_points=calendar_points,
+            citations=citations,
+        )
+        result = self.runtime.generate(context)
+        return ResearchNote(
+            note_id=f"premarket-{utc_now().strftime('%Y%m%d%H%M%S')}",
+            created_at=utc_now(),
+            note_type="pre_market",
+            title="早盘速递",
+            summary=self._summary_from_text(result.plain_text, regime_state.summary),
+            body_markdown=result.markdown,
+            regime_state=regime_state,
+            citations=result.citations,
+            tags=["premarket", focus, "openrouter"],
+        )
+
+    def _summary_from_text(self, text: str, fallback: str) -> str:
+        for line in text.splitlines():
+            cleaned = line.strip().lstrip("#").strip()
+            if cleaned:
+                return cleaned[:160]
+        return fallback

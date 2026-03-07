@@ -6,11 +6,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_ENV_FILES = (
-    PROJECT_ROOT / ".env",
-    WORKSPACE_ROOT / "information" / ".env",
-)
+DEFAULT_ENV_FILES = (PROJECT_ROOT / ".env",)
 
 
 @lru_cache(maxsize=None)

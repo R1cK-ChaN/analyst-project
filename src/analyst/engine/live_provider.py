@@ -22,11 +22,16 @@ class OpenRouterConfig:
     timeout_seconds: int = 60
 
     @classmethod
-    def from_env(cls) -> "OpenRouterConfig":
+    def from_env(
+        cls,
+        *,
+        model_keys: tuple[str, ...] = ("ANALYST_OPENROUTER_MODEL", "LLM_MODEL"),
+        default_model: str = "anthropic/claude-3.5-sonnet",
+    ) -> "OpenRouterConfig":
         api_key = get_env_value("OPENROUTER_API_KEY", "LLM_API_KEY")
         if not api_key:
             raise RuntimeError("OPENROUTER_API_KEY or LLM_API_KEY is required for live engine commands.")
-        model = get_env_value("ANALYST_OPENROUTER_MODEL", "LLM_MODEL", default="anthropic/claude-3.5-sonnet")
+        model = get_env_value(*model_keys, default=default_model)
         return cls(
             api_key=api_key,
             model=model,
