@@ -53,6 +53,9 @@ This changes the workstream plan in important ways.
 **Timeline:** Month 1–2
 **Dependencies:** None — fully independent
 
+Implementation note on March 7, 2026:
+The package-native WS1 Month 1 slice is already implemented under `src/analyst/`. What exists now is the live SQLite store, OpenRouter-backed agent loop, FRED/Fed RSS/Investing.com/ForexFactory/yfinance ingestion, and local CLI outputs for `refresh`, `live-calendar`, `flash`, `briefing`, `wrap`, and `regime-refresh`. China-specific sources, delivery integration, and live end-to-end provider verification are still pending. For the exact current state, use `00-overview/Implementation_Status.md`.
+
 ### What to Build
 
 The engine is unchanged from the previous plan. It produces macro analysis. It doesn't know or care who consumes it.

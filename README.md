@@ -2,6 +2,13 @@
 
 Standalone Analyst product scaffold. This folder now contains its own installable Python package under `src/analyst/` and can run without importing from the sibling `information/` repo.
 
+Current WS1 status on March 7, 2026:
+
+- the live WS1 engine is implemented under `src/analyst/engine/`, `src/analyst/storage/`, and `src/analyst/ingestion/`
+- local live commands now cover refresh, flash commentary, briefing, wrap, regime refresh, and calendar inspection
+- the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, and yfinance
+- China-specific ingestion, live end-to-end provider verification, and delivery integration are still pending
+
 ## What's Inside
 
 ```
@@ -50,7 +57,7 @@ analyst-project/
 ├── tests/                          ← LOCAL VALIDATION
 │   ├── test_product_layer.py       End-to-end contract and routing smoke tests
 │   ├── test_telegram.py            Telegram formatter, bot wiring, and transport regression tests
-│   └── test_ws1_engine.py          WS1 live engine: store, agent loop, env, CLI, regime parsing
+│   └── test_ws1_engine.py          WS1 live engine + calendar: store, scraper, env, CLI, regime parsing
 │
 ├── src/analyst/                    ← LIVE IMPLEMENTATION
 │   ├── app.py                      App factory and top-level product wiring
@@ -144,6 +151,8 @@ PYTHONPATH=src python3 -m analyst route "帮我写一段关于今晚非农数据
 
 # WS1 live engine commands (requires .env with API keys — see .env.example)
 PYTHONPATH=src python3 -m analyst refresh --once
+PYTHONPATH=src python3 -m analyst live-calendar --scope today
+PYTHONPATH=src python3 -m analyst live-calendar --scope upcoming --country US
 PYTHONPATH=src python3 -m analyst flash --indicator cpi
 PYTHONPATH=src python3 -m analyst briefing
 PYTHONPATH=src python3 -m analyst wrap
@@ -156,7 +165,7 @@ ANALYST_TELEGRAM_TOKEN=your-token PYTHONPATH=src python3 -m analyst.delivery.bot
 This validates the current standalone implementation:
 
 - bundled demo data + demo engine path
-- WS1 live engine: SQLite store, ingestion adapters, agent loop, OpenRouter provider
+- WS1 live engine: SQLite store, ingestion adapters, calendar query surface, agent loop, OpenRouter provider
 - WeCom and Telegram formatters
 - Telegram polling bot shell
 - integration router

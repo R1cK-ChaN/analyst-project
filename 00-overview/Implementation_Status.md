@@ -1,6 +1,6 @@
 # Analyst — Implementation Status
 
-**Status date:** March 7, 2026 (updated after ws1/engine merge)
+**Status date:** March 7, 2026 (updated after ws1/engine + ws1/calendar merge)
 
 This document is the current implementation snapshot for `analyst-project/`.
 
@@ -90,6 +90,8 @@ Implemented in `src/analyst/engine/`:
 - **type contracts** (`live_types.py`): Protocol-based `LLMProvider`, `AgentTool`, conversation types
 - live flash commentary (数据快评), morning briefing (早盘速递), after-market wrap (收盘点评)
 - regime state refresh with structured JSON regime scoring
+- live calendar inspection path with scope routing (`today`, `upcoming`, `recent`, `week`)
+- local agent tools for today's calendar, indicator release trends, and surprise summaries
 
 ### Storage layer
 
@@ -98,7 +100,8 @@ Implemented in `src/analyst/storage/`:
 - SQLite store (`sqlite.py`) with managed connection context manager (commit/rollback/close)
 - six tables: `calendar_events`, `market_prices`, `central_bank_comms`, `indicators`, `regime_snapshots`, `generated_notes`
 - frozen dataclass records for all table types
-- query methods: recent/upcoming events, latest prices, indicator history, regime snapshots
+- calendar event enrichment fields including `revised_previous` and `currency`
+- query methods: recent/upcoming events, date-range queries, today's events, indicator release history, latest prices, indicator history, regime snapshots
 - upsert semantics with UNIQUE constraints for deduplication
 
 ### Ingestion layer
@@ -111,6 +114,8 @@ Implemented in `src/analyst/ingestion/`:
 - `FedIngestionClient`: Fed RSS feed parser for press releases, speeches, and testimony
 - `MarketPriceClient`: cross-asset price scraper via yfinance (equities, FX, bonds, commodities, crypto)
 - `IngestionOrchestrator`: refresh-all and schedule orchestrator with configurable intervals
+- Investing calendar retry/backoff and multi-day refresh window (`days_back=1`, `days_forward=3`)
+- Investing calendar parsing for currency text and revised previous values
 
 ### Environment resolver
 
@@ -147,7 +152,7 @@ Implemented in `tests/`:
 
 - `test_product_layer.py` for product-layer smoke tests
 - `test_telegram.py` for Telegram formatter, truncation, routing, and bot wiring
-- `test_ws1_engine.py` for WS1 live engine: store CRUD/upsert/filter, flash commentary tool-calling loop with persistence, no-event error path, regime payload parsing with malformed JSON, env fallback chain, CLI routing for refresh/flash/regime-refresh
+- `test_ws1_engine.py` for WS1 live engine and calendar paths: store CRUD/upsert/filter/range queries, scraper retry behavior, flash commentary tool-calling loop with persistence, no-event error path, regime payload parsing with malformed JSON, env fallback chain, and CLI routing for refresh/flash/regime-refresh/live-calendar
 
 ---
 
@@ -218,14 +223,18 @@ Done:
 - regime summary, pre-market briefing, Q&A, draft, and meeting-prep paths (demo)
 - SQLite store with 6 tables and managed connections
 - ingestion adapters: Investing.com calendar, ForexFactory calendar, FRED API (25+ series), Fed RSS, yfinance market prices
+- enriched calendar event storage with `revised_previous` and `currency`
+- calendar query surface for recent, upcoming, today, week, and indicator-history views
 - ingestion orchestrator with refresh-all and scheduled polling
+- Investing calendar retry/backoff and multi-day fetching
 - Python agent loop with turn-bounded tool calling
 - OpenRouter LLM provider with configurable model
 - Chinese-language institutional macro prompts (数据快评, 早盘速递, 收盘点评, regime refresh)
 - regime state scoring with clamped numeric axes and cross-asset implications
 - environment resolver with multi-file `.env` fallback
-- CLI commands: refresh, schedule, flash, briefing, wrap, regime-refresh
-- 10 focused tests covering store, loop, env, CLI, and regime parsing
+- CLI commands: refresh, schedule, flash, briefing, wrap, regime-refresh, live-calendar
+- agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, and surprise summaries
+- focused WS1 tests covering store, scraper retry paths, loop, env, CLI, regime parsing, and calendar query behavior
 
 Missing:
 
@@ -328,6 +337,8 @@ PYTHONPATH=src python3 -m analyst route "帮我写一段关于今晚非农数据
 
 # WS1 live engine commands (requires .env with API keys)
 PYTHONPATH=src python3 -m analyst refresh --once
+PYTHONPATH=src python3 -m analyst live-calendar --scope today
+PYTHONPATH=src python3 -m analyst live-calendar --scope upcoming --country US
 PYTHONPATH=src python3 -m analyst flash --indicator cpi
 PYTHONPATH=src python3 -m analyst briefing
 PYTHONPATH=src python3 -m analyst wrap
@@ -349,6 +360,7 @@ python3 -m unittest discover -s tests -v
 2. ~~Add persistent research and interaction storage inside `analyst-project/`.~~ Done (SQLite store with regime snapshots and generated notes).
 3. ~~Add a real runtime adapter behind the current deterministic runtime interface.~~ Done (OpenRouter provider + agent loop).
 4. Run live end-to-end verification against OpenRouter and FRED with real credentials.
-5. Add China-specific ingestion sources (PBOC, NBS, Xinhua).
-6. Add a production-grade WeCom delivery transport layer and push scheduler.
-7. Begin quality benchmarking against real CICC/CITIC/Huatai notes.
+5. Connect WS1 calendar/regime surfaces to delivery and API endpoints, not just local CLI access.
+6. Add China-specific ingestion sources (PBOC, NBS, Xinhua).
+7. Add a production-grade WeCom delivery transport layer and push scheduler.
+8. Begin quality benchmarking against real CICC/CITIC/Huatai notes.
