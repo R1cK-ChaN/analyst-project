@@ -237,21 +237,27 @@ Missing:
 
 ### WS2 Delivery Shell
 
-Status: partially implemented
+Status: Telegram validation bot implemented, WeCom transport not yet started
 
 Done:
 
-- WeCom and Telegram reply formatting
-- disclaimers
-- channel-oriented message objects
-- Telegram bot transport for interactive polling-based delivery
-- command handlers for `/start`, `/help`, `/regime`, `/calendar`, and `/premarket`
+- WeCom-style and Telegram-specific reply formatting with per-mode compliance disclaimers
+- `ChannelFormatter` protocol for channel-agnostic delivery (`router.py`)
+- Telegram polling bot shell (`bot.py`) with `analyst-telegram` console script
+- command handlers: `/start`, `/help`, `/regime`, `/calendar`, `/premarket`
+- free-text intent routing via regex-based `detect_mode()` (draft, meeting-prep, regime, calendar, QA fallback)
+- Telegram-safe 4096-character truncation that preserves disclaimer suffix
+- 26 tests covering formatter correctness, truncation edge cases, integration routing, and bot handler wiring
+
+Current limitation: the Telegram bot uses the demo stack (`FileBackedInformationRepository` + `TemplateAgentRuntime`), not the live WS1 engine. Connecting it to the live engine is a WS4 integration task.
 
 Missing:
 
-- real WeCom integration
-- push scheduling
-- account/app setup
+- real WeCom integration (account, self-built app, callback endpoint)
+- connection to live WS1 engine for real-time macro data
+- push scheduling (早盘速递 at 7:30am, event-driven 快评)
+- per-user memory and context
+- interaction logging
 - official account and mini-program delivery surfaces
 - webhook/server deployment and production operations
 
