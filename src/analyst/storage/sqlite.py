@@ -443,17 +443,36 @@ class SQLiteEngineStore:
             ).fetchall()
         return [self._row_to_event(row) for row in rows]
 
-    def list_upcoming_events(self, *, limit: int = 10) -> list[StoredEventRecord]:
+    def list_upcoming_events(
+        self,
+        *,
+        limit: int = 10,
+        importance: str | None = None,
+        country: str | None = None,
+        category: str | None = None,
+    ) -> list[StoredEventRecord]:
         now_iso = utc_now().isoformat()
+        conditions = ["datetime_utc >= ?"]
+        params: list[Any] = [now_iso]
+        if importance:
+            conditions.append("importance = ?")
+            params.append(importance)
+        if country:
+            conditions.append("country = ?")
+            params.append(country)
+        if category:
+            conditions.append("category = ?")
+            params.append(category)
+        params.append(limit)
         with self._connection(commit=False) as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT * FROM calendar_events
-                WHERE datetime_utc >= ?
+                WHERE {' AND '.join(conditions)}
                 ORDER BY datetime_utc ASC, id ASC
                 LIMIT ?
                 """,
-                (now_iso, limit),
+                params,
             ).fetchall()
         return [self._row_to_event(row) for row in rows]
 

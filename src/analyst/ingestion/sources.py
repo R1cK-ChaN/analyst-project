@@ -325,7 +325,6 @@ class InvestingCalendarClient:
                 actual = self._clean_cell_text(row.find("td", {"class": "act"}))
                 forecast = self._clean_cell_text(row.find("td", {"class": "fore"}))
                 prev_td = row.find("td", {"class": "prev"})
-                previous = self._clean_cell_text(prev_td)
                 revised_previous: str | None = None
                 if prev_td is not None:
                     revised_span = prev_td.find("span")
@@ -333,6 +332,8 @@ class InvestingCalendarClient:
                         rev_text = revised_span.get_text(strip=True)
                         if rev_text and rev_text != "\xa0":
                             revised_previous = rev_text
+                        revised_span.decompose()
+                previous = self._clean_cell_text(prev_td)
                 timestamp = to_utc_iso(date_value=default_date, time_value=event_time)
                 event_id = row.get("event_attr_id") or row.get("id") or generate_event_id(country_code, indicator, timestamp)
                 events.append(

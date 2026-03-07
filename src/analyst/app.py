@@ -82,7 +82,9 @@ class LiveAnalystApplication:
                 limit=limit, importance=importance, country=country, category=category,
             )
         if scope == "upcoming":
-            return store.list_upcoming_events(limit=limit)
+            return store.list_upcoming_events(
+                limit=limit, importance=importance, country=country, category=category,
+            )
         if scope == "recent":
             return store.list_recent_events(
                 limit=limit, days=7, released_only=True,
