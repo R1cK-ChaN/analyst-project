@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 
-from .app import build_demo_app
+from .app import build_demo_app, build_live_engine_app
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,34 +31,80 @@ def build_parser() -> argparse.ArgumentParser:
     premarket = subparsers.add_parser("premarket")
     premarket.add_argument("--focus", default="global")
 
+    refresh = subparsers.add_parser("refresh")
+    refresh.add_argument("--once", action="store_true", help="Refresh all WS1 sources once")
+
+    subparsers.add_parser("schedule")
+
+    flash = subparsers.add_parser("flash")
+    flash.add_argument("--indicator")
+
+    subparsers.add_parser("briefing")
+    subparsers.add_parser("wrap")
+    subparsers.add_parser("regime-refresh")
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    app = build_demo_app()
-
     if args.command == "ask":
+        app = build_demo_app()
         print(app.ask(args.question).markdown)
         return 0
     if args.command == "draft":
+        app = build_demo_app()
         print(app.draft(args.request).markdown)
         return 0
     if args.command == "meeting-prep":
+        app = build_demo_app()
         print(app.meeting_prep(args.request).markdown)
         return 0
     if args.command == "route":
+        app = build_demo_app()
         print(app.route(args.message).markdown)
         return 0
     if args.command == "regime":
+        app = build_demo_app()
         print(app.regime(focus=args.focus).markdown)
         return 0
     if args.command == "calendar":
+        app = build_demo_app()
         print(app.calendar(limit=args.limit).markdown)
         return 0
     if args.command == "premarket":
+        app = build_demo_app()
         print(app.premarket(focus=args.focus).body_markdown)
+        return 0
+    if args.command == "refresh":
+        if not args.once:
+            parser.error("refresh requires --once; use schedule for continuous refresh")
+        app = build_live_engine_app()
+        print(json.dumps(app.refresh(), ensure_ascii=False, sort_keys=True))
+        return 0
+    if args.command == "schedule":
+        app = build_live_engine_app()
+        app.schedule()
+        return 0
+    if args.command == "flash":
+        app = build_live_engine_app()
+        print(app.flash(indicator_keyword=args.indicator).body_markdown)
+        return 0
+    if args.command == "briefing":
+        app = build_live_engine_app()
+        print(app.briefing().body_markdown)
+        return 0
+    if args.command == "wrap":
+        app = build_live_engine_app()
+        print(app.wrap().body_markdown)
+        return 0
+    if args.command == "regime-refresh":
+        app = build_live_engine_app()
+        state = app.regime_refresh()
+        print(state.summary)
+        for score in state.scores:
+            print(f"- {score.axis}: {score.label} ({score.score:.0f})")
         return 0
 
     parser.error("unknown command")

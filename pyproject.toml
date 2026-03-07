@@ -8,7 +8,11 @@ version = "0.1.0"
 description = "Standalone Analyst product scaffold"
 requires-python = ">=3.11"
 dependencies = [
+    "beautifulsoup4",
+    "feedparser",
     "python-telegram-bot>=21.0,<22",
+    "requests",
+    "yfinance",
 ]
 
 [project.scripts]

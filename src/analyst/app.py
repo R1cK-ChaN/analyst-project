@@ -3,12 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from analyst.contracts import ChannelMessage, InteractionMode, ResearchNote
+from analyst.contracts import ChannelMessage, InteractionMode, RegimeState, ResearchNote
 from analyst.delivery import WeComFormatter
-from analyst.engine import AnalystEngine
+from analyst.engine import AnalystEngine, LiveAnalystEngine
+from analyst.engine.live_types import LLMProvider
+from analyst.ingestion import IngestionOrchestrator
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.integration import AnalystIntegrationService
 from analyst.runtime import TemplateAgentRuntime
+from analyst.storage import SQLiteEngineStore
 
 
 @dataclass
@@ -41,6 +44,29 @@ class AnalystApplication:
         return self.integration.handle_wecom_message(message, user_id=user_id, focus=focus)
 
 
+@dataclass
+class LiveAnalystApplication:
+    engine: LiveAnalystEngine
+
+    def refresh(self) -> dict[str, int]:
+        return self.engine.refresh_all_sources()
+
+    def schedule(self) -> None:
+        self.engine.run_schedule()
+
+    def flash(self, indicator_keyword: str | None = None) -> ResearchNote:
+        return self.engine.generate_flash_commentary(indicator_keyword=indicator_keyword)
+
+    def briefing(self) -> ResearchNote:
+        return self.engine.generate_morning_briefing()
+
+    def wrap(self) -> ResearchNote:
+        return self.engine.generate_after_market_wrap()
+
+    def regime_refresh(self) -> RegimeState:
+        return self.engine.refresh_regime()
+
+
 def build_demo_app(data_dir: Path | None = None) -> AnalystApplication:
     repository = FileBackedInformationRepository(data_dir=data_dir)
     info_service = AnalystInformationService(repository)
@@ -49,3 +75,13 @@ def build_demo_app(data_dir: Path | None = None) -> AnalystApplication:
     formatter = WeComFormatter()
     integration = AnalystIntegrationService(engine=engine, formatter=formatter)
     return AnalystApplication(engine=engine, formatter=formatter, integration=integration)
+
+
+def build_live_engine_app(
+    db_path: Path | None = None,
+    provider: LLMProvider | None = None,
+) -> LiveAnalystApplication:
+    store = SQLiteEngineStore(db_path=db_path)
+    ingestion = IngestionOrchestrator(store)
+    engine = LiveAnalystEngine(store=store, provider=provider, ingestion=ingestion)
+    return LiveAnalystApplication(engine=engine)
