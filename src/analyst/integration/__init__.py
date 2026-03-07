@@ -1,3 +1,3 @@
-from .router import AnalystIntegrationService, detect_mode
+from .router import AnalystIntegrationService, ChannelFormatter, detect_mode
 
-__all__ = ["AnalystIntegrationService", "detect_mode"]
+__all__ = ["AnalystIntegrationService", "ChannelFormatter", "detect_mode"]

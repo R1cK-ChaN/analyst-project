@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import re
+from typing import Protocol
 
-from analyst.contracts import ChannelMessage, InteractionMode
-from analyst.delivery import WeComFormatter
+from analyst.contracts import (
+    CalendarItem,
+    ChannelMessage,
+    DraftResponse,
+    InteractionMode,
+    ResearchNote,
+)
 from analyst.engine import AnalystEngine
 
 
@@ -22,12 +28,21 @@ def detect_mode(message: str) -> InteractionMode:
     return InteractionMode.QA
 
 
-class AnalystIntegrationService:
-    def __init__(self, engine: AnalystEngine, formatter: WeComFormatter | None = None) -> None:
-        self.engine = engine
-        self.formatter = formatter or WeComFormatter()
+class ChannelFormatter(Protocol):
+    def format_draft(self, response: DraftResponse) -> ChannelMessage: ...
+    def format_research_note(self, note: ResearchNote, mode: InteractionMode) -> ChannelMessage: ...
+    def format_calendar(self, items: list[CalendarItem]) -> ChannelMessage: ...
 
-    def handle_wecom_message(
+
+class AnalystIntegrationService:
+    def __init__(self, engine: AnalystEngine, formatter: ChannelFormatter | None = None) -> None:
+        self.engine = engine
+        if formatter is None:
+            from analyst.delivery import WeComFormatter
+            formatter = WeComFormatter()
+        self.formatter = formatter
+
+    def handle_message(
         self,
         message: str,
         user_id: str,
@@ -47,3 +62,11 @@ class AnalystIntegrationService:
             return self.formatter.format_calendar(self.engine.get_calendar(limit=5))
         response = self.engine.answer_question(message, user_id=user_id, focus=focus)
         return self.formatter.format_draft(response)
+
+    def handle_wecom_message(
+        self,
+        message: str,
+        user_id: str,
+        focus: str = "global",
+    ) -> ChannelMessage:
+        return self.handle_message(message, user_id=user_id, focus=focus)

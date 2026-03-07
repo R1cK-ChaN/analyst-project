@@ -7,10 +7,13 @@ name = "analyst-project"
 version = "0.1.0"
 description = "Standalone Analyst product scaffold"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "python-telegram-bot>=21.0,<22",
+]
 
 [project.scripts]
 analyst-cli = "analyst.cli:main"
+analyst-telegram = "analyst.delivery.bot:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
