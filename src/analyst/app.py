@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from analyst.contracts import ChannelMessage, InteractionMode, RegimeState, ResearchNote
+from analyst.storage.sqlite import StoredEventRecord
 from analyst.delivery import WeComFormatter
 from analyst.engine import AnalystEngine, LiveAnalystEngine
 from analyst.engine.live_types import LLMProvider
@@ -65,6 +66,40 @@ class LiveAnalystApplication:
 
     def regime_refresh(self) -> RegimeState:
         return self.engine.refresh_regime()
+
+    def live_calendar(
+        self,
+        *,
+        scope: str = "today",
+        country: str | None = None,
+        category: str | None = None,
+        importance: str | None = None,
+        limit: int = 20,
+    ) -> list[StoredEventRecord]:
+        store = self.engine.store
+        if scope == "today":
+            return store.list_today_events(
+                limit=limit, importance=importance, country=country, category=category,
+            )
+        if scope == "upcoming":
+            return store.list_upcoming_events(limit=limit)
+        if scope == "recent":
+            return store.list_recent_events(
+                limit=limit, days=7, released_only=True,
+                importance=importance, country=country, category=category,
+            )
+        if scope == "week":
+            from datetime import datetime, timedelta, timezone
+            today = datetime.now(timezone.utc).date()
+            start_of_week = today - timedelta(days=today.weekday())
+            end_of_week = start_of_week + timedelta(days=6)
+            date_from = datetime(start_of_week.year, start_of_week.month, start_of_week.day, tzinfo=timezone.utc).isoformat()
+            date_to = datetime(end_of_week.year, end_of_week.month, end_of_week.day, 23, 59, 59, tzinfo=timezone.utc).isoformat()
+            return store.list_events_in_range(
+                date_from=date_from, date_to=date_to, limit=limit,
+                importance=importance, country=country, category=category,
+            )
+        return store.list_today_events(limit=limit)
 
 
 def build_demo_app(data_dir: Path | None = None) -> AnalystApplication:

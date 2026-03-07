@@ -4,7 +4,7 @@ from contextlib import contextmanager
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -30,6 +30,7 @@ class StoredEventRecord:
     previous: str | None = None
     revised_previous: str | None = None
     surprise: float | None = None
+    currency: str = ""
     unit: str = ""
     raw_json: dict[str, Any] = field(default_factory=dict)
 
@@ -137,6 +138,10 @@ class SQLiteEngineStore:
                 )
                 """
             )
+            try:
+                connection.execute("ALTER TABLE calendar_events ADD COLUMN currency TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass  # column already exists
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS market_prices (
@@ -224,10 +229,11 @@ class SQLiteEngineStore:
                     previous,
                     revised_previous,
                     surprise,
+                    currency,
                     unit,
                     raw_json,
                     scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.source,
@@ -242,6 +248,7 @@ class SQLiteEngineStore:
                     event.previous,
                     event.revised_previous,
                     event.surprise,
+                    event.currency,
                     event.unit,
                     json.dumps(event.raw_json, ensure_ascii=True, sort_keys=True),
                     utc_now().isoformat(),
@@ -405,6 +412,8 @@ class SQLiteEngineStore:
         days: int = 7,
         released_only: bool = False,
         importance: str | None = None,
+        country: str | None = None,
+        category: str | None = None,
     ) -> list[StoredEventRecord]:
         cutoff = (utc_now() - timedelta(days=days)).isoformat()
         conditions = ["datetime_utc >= ?"]
@@ -414,6 +423,12 @@ class SQLiteEngineStore:
         if importance:
             conditions.append("importance = ?")
             params.append(importance)
+        if country:
+            conditions.append("country = ?")
+            params.append(country)
+        if category:
+            conditions.append("category = ?")
+            params.append(category)
         params.append(limit)
         # Only fixed SQL fragments are appended here; user input stays parameterized.
         with self._connection(commit=False) as connection:
@@ -439,6 +454,81 @@ class SQLiteEngineStore:
                 LIMIT ?
                 """,
                 (now_iso, limit),
+            ).fetchall()
+        return [self._row_to_event(row) for row in rows]
+
+    def list_events_in_range(
+        self,
+        *,
+        date_from: str,
+        date_to: str,
+        limit: int = 50,
+        importance: str | None = None,
+        country: str | None = None,
+        category: str | None = None,
+        released_only: bool = False,
+    ) -> list[StoredEventRecord]:
+        conditions = ["datetime_utc >= ?", "datetime_utc <= ?"]
+        params: list[Any] = [date_from, date_to]
+        if released_only:
+            conditions.append("actual IS NOT NULL")
+        if importance:
+            conditions.append("importance = ?")
+            params.append(importance)
+        if country:
+            conditions.append("country = ?")
+            params.append(country)
+        if category:
+            conditions.append("category = ?")
+            params.append(category)
+        params.append(limit)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM calendar_events
+                WHERE {' AND '.join(conditions)}
+                ORDER BY datetime_utc ASC, id ASC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._row_to_event(row) for row in rows]
+
+    def list_today_events(
+        self,
+        *,
+        limit: int = 50,
+        importance: str | None = None,
+        country: str | None = None,
+        category: str | None = None,
+    ) -> list[StoredEventRecord]:
+        today = datetime.now(timezone.utc).date()
+        date_from = datetime(today.year, today.month, today.day, tzinfo=timezone.utc).isoformat()
+        date_to = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc).isoformat()
+        return self.list_events_in_range(
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            importance=importance,
+            country=country,
+            category=category,
+        )
+
+    def list_indicator_releases(
+        self,
+        *,
+        indicator_keyword: str,
+        limit: int = 12,
+    ) -> list[StoredEventRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM calendar_events
+                WHERE LOWER(indicator) LIKE ? AND actual IS NOT NULL
+                ORDER BY datetime_utc DESC, id DESC
+                LIMIT ?
+                """,
+                (f"%{indicator_keyword.lower()}%", limit),
             ).fetchall()
         return [self._row_to_event(row) for row in rows]
 
@@ -542,6 +632,7 @@ class SQLiteEngineStore:
             previous=row["previous"],
             revised_previous=row["revised_previous"],
             surprise=row["surprise"],
+            currency=row["currency"],
             unit=row["unit"],
             raw_json=json.loads(row["raw_json"]),
         )

@@ -264,12 +264,31 @@ class InvestingCalendarClient:
             "currentTab": "custom",
             "limit_from": 0,
         }
-        response = self.session.post(self.BASE_URL, data=payload, timeout=30)
-        response.raise_for_status()
-        html_content = response.json().get("data", "")
-        if not html_content:
-            return []
-        return self._parse_calendar_html(html_content, date_from)
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = self.session.post(self.BASE_URL, data=payload, timeout=30)
+                response.raise_for_status()
+                html_content = response.json().get("data", "")
+                if not html_content:
+                    return []
+                return self._parse_calendar_html(html_content, date_from)
+            except Exception as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+        return []
+
+    def fetch_range(self, *, days_back: int = 1, days_forward: int = 3) -> list[StoredEventRecord]:
+        today = datetime.now(OPEN_UTC_PLUS_8).date()
+        all_events: list[StoredEventRecord] = []
+        for offset in range(-days_back, days_forward + 1):
+            day = today + timedelta(days=offset)
+            day_str = day.strftime("%Y-%m-%d")
+            all_events.extend(self.fetch(date_from=day_str, date_to=day_str))
+            if offset < days_forward:
+                time.sleep(1.5)
+        return all_events
 
     def _parse_calendar_html(self, html: str, default_date: str) -> list[StoredEventRecord]:
         soup = BeautifulSoup(html, "html.parser")
@@ -278,6 +297,7 @@ class InvestingCalendarClient:
             try:
                 flag_td = row.find("td", {"class": "flagCur"})
                 country_code = ""
+                currency_text = ""
                 if flag_td is not None:
                     flag_span = flag_td.find("span")
                     if flag_span is not None:
@@ -285,6 +305,9 @@ class InvestingCalendarClient:
                             if class_name.startswith("ce-"):
                                 country_code = class_name.replace("ce-", "").upper()
                                 break
+                    cur_text = flag_td.get_text(strip=True)
+                    if cur_text:
+                        currency_text = cur_text
                 time_td = row.find("td", {"class": "time"})
                 event_time = time_td.text.strip() if time_td else "00:00"
                 event_td = row.find("td", {"class": "event"})
@@ -301,7 +324,15 @@ class InvestingCalendarClient:
                         importance = "medium"
                 actual = self._clean_cell_text(row.find("td", {"class": "act"}))
                 forecast = self._clean_cell_text(row.find("td", {"class": "fore"}))
-                previous = self._clean_cell_text(row.find("td", {"class": "prev"}))
+                prev_td = row.find("td", {"class": "prev"})
+                previous = self._clean_cell_text(prev_td)
+                revised_previous: str | None = None
+                if prev_td is not None:
+                    revised_span = prev_td.find("span")
+                    if revised_span is not None:
+                        rev_text = revised_span.get_text(strip=True)
+                        if rev_text and rev_text != "\xa0":
+                            revised_previous = rev_text
                 timestamp = to_utc_iso(date_value=default_date, time_value=event_time)
                 event_id = row.get("event_attr_id") or row.get("id") or generate_event_id(country_code, indicator, timestamp)
                 events.append(
@@ -316,11 +347,14 @@ class InvestingCalendarClient:
                         actual=actual,
                         forecast=forecast,
                         previous=previous,
+                        revised_previous=revised_previous,
                         surprise=self._compute_surprise(actual, forecast),
+                        currency=currency_text,
                         raw_json={
                             "source_row_id": row.get("id", ""),
                             "indicator": indicator,
                             "country": country_code,
+                            "currency": currency_text,
                             "time": event_time,
                         },
                     )
@@ -645,7 +679,7 @@ class IngestionOrchestrator:
 
     def refresh_calendar(self) -> dict[str, int]:
         total = 0
-        for event in self.investing.fetch():
+        for event in self.investing.fetch_range(days_back=1, days_forward=3):
             self.store.upsert_calendar_event(event)
             total += 1
         for event in self.forexfactory.fetch():

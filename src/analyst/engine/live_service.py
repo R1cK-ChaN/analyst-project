@@ -174,6 +174,8 @@ class LiveAnalystEngine:
                         "days": {"type": "integer", "default": 7},
                         "limit": {"type": "integer", "default": 10},
                         "importance": {"type": "string"},
+                        "country": {"type": "string", "description": "Filter by country code, e.g. US, JP, EU"},
+                        "category": {"type": "string", "description": "Filter by category, e.g. inflation, growth, employment"},
                     },
                 },
                 handler=self._tool_recent_releases,
@@ -226,6 +228,43 @@ class LiveAnalystEngine:
                 parameters={"type": "object", "properties": {}},
                 handler=self._tool_latest_regime_state,
             ),
+            AgentTool(
+                name="get_today_calendar",
+                description="Retrieve today's scheduled and released economic calendar events.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "importance": {"type": "string"},
+                        "country": {"type": "string"},
+                        "category": {"type": "string"},
+                    },
+                },
+                handler=self._tool_today_calendar,
+            ),
+            AgentTool(
+                name="get_indicator_trend",
+                description="Retrieve historical releases for a specific indicator keyword to track trends over time.",
+                parameters={
+                    "type": "object",
+                    "required": ["indicator_keyword"],
+                    "properties": {
+                        "indicator_keyword": {"type": "string", "description": "Keyword to match indicator names, e.g. CPI, NFP, GDP"},
+                        "limit": {"type": "integer", "default": 12},
+                    },
+                },
+                handler=self._tool_indicator_trend,
+            ),
+            AgentTool(
+                name="get_surprise_summary",
+                description="Summarize recent data surprises grouped by category with beat/miss counts.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "days": {"type": "integer", "default": 14},
+                    },
+                },
+                handler=self._tool_surprise_summary,
+            ),
         ]
 
     def _loop(self) -> PythonAgentLoop:
@@ -245,6 +284,8 @@ class LiveAnalystEngine:
             days=int(arguments.get("days", 7)),
             released_only=True,
             importance=arguments.get("importance"),
+            country=arguments.get("country"),
+            category=arguments.get("category"),
         )
         return {"events": [self._stored_event_to_dict(event) for event in events]}
 
@@ -309,6 +350,55 @@ class LiveAnalystEngine:
         if snapshot is None:
             return {"regime": None}
         return {"regime": snapshot.regime_json}
+
+    def _tool_today_calendar(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        events = self.store.list_today_events(
+            importance=arguments.get("importance"),
+            country=arguments.get("country"),
+            category=arguments.get("category"),
+        )
+        return {"events": [self._stored_event_to_dict(event) for event in events]}
+
+    def _tool_indicator_trend(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        keyword = str(arguments["indicator_keyword"])
+        limit = int(arguments.get("limit", 12))
+        events = self.store.list_indicator_releases(indicator_keyword=keyword, limit=limit)
+        return {
+            "indicator_keyword": keyword,
+            "releases": [
+                {
+                    "datetime_utc": event.datetime_utc,
+                    "country": event.country,
+                    "indicator": event.indicator,
+                    "actual": event.actual,
+                    "forecast": event.forecast,
+                    "previous": event.previous,
+                    "surprise": event.surprise,
+                }
+                for event in events
+            ],
+        }
+
+    def _tool_surprise_summary(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        days = int(arguments.get("days", 14))
+        events = self.store.list_recent_events(limit=200, days=days, released_only=True)
+        by_category: dict[str, list[float]] = {}
+        for event in events:
+            if event.surprise is not None:
+                by_category.setdefault(event.category, []).append(event.surprise)
+        summary = []
+        for category, surprises in sorted(by_category.items()):
+            beats = sum(1 for s in surprises if s > 0)
+            misses = sum(1 for s in surprises if s < 0)
+            avg = round(sum(surprises) / len(surprises), 4) if surprises else 0.0
+            summary.append({
+                "category": category,
+                "count": len(surprises),
+                "beats": beats,
+                "misses": misses,
+                "avg_surprise": avg,
+            })
+        return {"summary": summary}
 
     def _stored_event_to_dict(self, event: StoredEventRecord) -> dict[str, Any]:
         return {
