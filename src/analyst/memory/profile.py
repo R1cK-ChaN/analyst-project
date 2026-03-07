@@ -1,25 +1,27 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
-class ProfileFactUpdate:
-    key: str
-    value: object
-    confidence: float
+class ClientProfileUpdate:
+    preferred_language: str | None = None
+    watchlist_topics: list[str] = field(default_factory=list)
+    response_style: str | None = None
+    risk_appetite: str | None = None
+    investment_horizon: str | None = None
 
 
 _WATCHLIST_PATTERNS = {
-    "fed": re.compile(r"\b(fed|fomc|powell|美联储)\b", re.IGNORECASE),
-    "cpi": re.compile(r"\b(cpi|inflation|通胀)\b", re.IGNORECASE),
-    "jobs": re.compile(r"\b(nfp|payroll|employment|非农|就业)\b", re.IGNORECASE),
-    "rates": re.compile(r"\b(rates?|yield|利率|美债)\b", re.IGNORECASE),
-    "crypto": re.compile(r"\b(bitcoin|btc|eth|crypto|加密)\b", re.IGNORECASE),
-    "gold": re.compile(r"\b(gold|黄金)\b", re.IGNORECASE),
-    "oil": re.compile(r"\b(oil|原油)\b", re.IGNORECASE),
-    "equities": re.compile(r"\b(a股|港股|美股|equity|stocks?|nasdaq|spx)\b", re.IGNORECASE),
+    "fed": re.compile(r"(?:\b(?:fed|fomc|powell)\b|美联储)", re.IGNORECASE),
+    "cpi": re.compile(r"(?:\b(?:cpi|inflation)\b|通胀)", re.IGNORECASE),
+    "jobs": re.compile(r"(?:\b(?:nfp|payroll|employment)\b|非农|就业)", re.IGNORECASE),
+    "rates": re.compile(r"(?:\b(?:rates?|yield)\b|利率|美债)", re.IGNORECASE),
+    "crypto": re.compile(r"(?:\b(?:bitcoin|btc|eth|crypto)\b|加密)", re.IGNORECASE),
+    "gold": re.compile(r"(?:\b(?:gold)\b|黄金)", re.IGNORECASE),
+    "oil": re.compile(r"(?:\b(?:oil)\b|原油)", re.IGNORECASE),
+    "equities": re.compile(r"(?:\b(?:equity|stocks?|nasdaq|spx)\b|A股|港股|美股)", re.IGNORECASE),
 }
 
 _STYLE_PATTERNS = {
@@ -38,32 +40,36 @@ _HORIZON_PATTERNS = {
 }
 
 
-def extract_profile_fact_updates(text: str) -> list[ProfileFactUpdate]:
-    updates: list[ProfileFactUpdate] = []
+def extract_client_profile_update(text: str) -> ClientProfileUpdate:
     stripped = text.strip()
     if not stripped:
-        return updates
+        return ClientProfileUpdate()
 
-    language = "zh" if re.search(r"[\u4e00-\u9fff]", stripped) else "en"
-    updates.append(ProfileFactUpdate(key="preferred_language", value=language, confidence=0.9))
+    preferred_language = "zh" if re.search(r"[\u4e00-\u9fff]", stripped) else "en"
+    watchlist_topics = [name for name, pattern in _WATCHLIST_PATTERNS.items() if pattern.search(stripped)]
 
-    watchlist = [name for name, pattern in _WATCHLIST_PATTERNS.items() if pattern.search(stripped)]
-    if watchlist:
-        updates.append(ProfileFactUpdate(key="watchlist_topics", value=watchlist, confidence=0.78))
-
+    response_style = None
     for value, pattern in _STYLE_PATTERNS.items():
         if pattern.search(stripped):
-            updates.append(ProfileFactUpdate(key="response_style", value=value, confidence=0.74))
+            response_style = value
             break
 
+    risk_appetite = None
     for value, pattern in _RISK_PATTERNS.items():
         if pattern.search(stripped):
-            updates.append(ProfileFactUpdate(key="risk_style", value=value, confidence=0.72))
+            risk_appetite = value
             break
 
+    investment_horizon = None
     for value, pattern in _HORIZON_PATTERNS.items():
         if pattern.search(stripped):
-            updates.append(ProfileFactUpdate(key="investment_horizon", value=value, confidence=0.68))
+            investment_horizon = value
             break
 
-    return updates
+    return ClientProfileUpdate(
+        preferred_language=preferred_language,
+        watchlist_topics=watchlist_topics,
+        response_style=response_style,
+        risk_appetite=risk_appetite,
+        investment_horizon=investment_horizon,
+    )

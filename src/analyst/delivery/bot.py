@@ -51,7 +51,7 @@ from analyst.information import (  # noqa: E402
     FileBackedInformationRepository,
 )
 from analyst.integration import AnalystIntegrationService  # noqa: E402
-from analyst.memory import MemoryManager, build_sales_memory_context, record_sales_interaction  # noqa: E402
+from analyst.memory import build_sales_context, record_sales_interaction  # noqa: E402
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig  # noqa: E402
 from analyst.storage import SQLiteEngineStore  # noqa: E402
 
@@ -90,7 +90,6 @@ def _build_services() -> tuple[
     TelegramFormatter,
     AnalystIntegrationService,
     SQLiteEngineStore,
-    MemoryManager,
 ]:
     """Wire up the analyst service stack."""
     repository = FileBackedInformationRepository()
@@ -117,8 +116,7 @@ def _build_services() -> tuple[
     formatter = TelegramFormatter()
     integration = AnalystIntegrationService(engine=engine, formatter=formatter)
     store = SQLiteEngineStore()
-    memory_manager = MemoryManager(store)
-    return engine, formatter, integration, store, memory_manager
+    return engine, formatter, integration, store
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +196,6 @@ def _make_message_handler(
     _formatter: TelegramFormatter,
     integration: AnalystIntegrationService,
     store: SQLiteEngineStore,
-    memory_manager: MemoryManager,
 ):
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None or update.effective_message.text is None:
@@ -208,8 +205,7 @@ def _make_message_handler(
         channel_id = f"telegram:{update.effective_chat.id}"
         topic_id = getattr(update.effective_message, "message_thread_id", None)
         thread_id = str(topic_id) if topic_id is not None else "main"
-        memory_context = build_sales_memory_context(
-            manager=memory_manager,
+        memory_context = build_sales_context(
             store=store,
             client_id=user_id,
             channel_id=channel_id,
@@ -218,7 +214,6 @@ def _make_message_handler(
         )
         reply = integration.handle_message(text, user_id=user_id, memory_context=memory_context)
         record_sales_interaction(
-            manager=memory_manager,
             store=store,
             client_id=user_id,
             channel_id=channel_id,
@@ -236,7 +231,7 @@ def build_application(token: str) -> Application:
 
     Does NOT call .run_polling(); the caller decides how to start it.
     """
-    engine, formatter, integration, store, memory_manager = _build_services()
+    engine, formatter, integration, store = _build_services()
 
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", _make_start_handler(engine, formatter, integration)))
@@ -247,7 +242,7 @@ def build_application(token: str) -> Application:
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            _make_message_handler(engine, formatter, integration, store, memory_manager),
+            _make_message_handler(engine, formatter, integration, store),
         )
     )
 
