@@ -16,31 +16,52 @@ class AnalystEngine:
         self.info_service = info_service
         self.runtime = runtime
 
-    def answer_question(self, question: str, user_id: str, focus: str = "global") -> DraftResponse:
+    def answer_question(
+        self,
+        question: str,
+        user_id: str,
+        focus: str = "global",
+        memory_context: str = "",
+    ) -> DraftResponse:
         return self._generate_response(
             mode=InteractionMode.QA,
             instruction=question,
             user_id=user_id,
             audience="internal_rm",
             focus=focus,
+            memory_context=memory_context,
         )
 
-    def generate_draft(self, request: str, user_id: str, focus: str = "global") -> DraftResponse:
+    def generate_draft(
+        self,
+        request: str,
+        user_id: str,
+        focus: str = "global",
+        memory_context: str = "",
+    ) -> DraftResponse:
         return self._generate_response(
             mode=InteractionMode.DRAFT,
             instruction=request,
             user_id=user_id,
             audience="client_draft",
             focus=focus,
+            memory_context=memory_context,
         )
 
-    def generate_meeting_prep(self, request: str, user_id: str, focus: str = "global") -> DraftResponse:
+    def generate_meeting_prep(
+        self,
+        request: str,
+        user_id: str,
+        focus: str = "global",
+        memory_context: str = "",
+    ) -> DraftResponse:
         return self._generate_response(
             mode=InteractionMode.MEETING_PREP,
             instruction=request,
             user_id=user_id,
             audience="internal_rm",
             focus=focus,
+            memory_context=memory_context,
         )
 
     def get_regime_summary(self, focus: str = "global") -> ResearchNote:
@@ -113,6 +134,7 @@ class AnalystEngine:
         user_id: str,
         audience: str,
         focus: str,
+        memory_context: str = "",
     ) -> DraftResponse:
         snapshot = self.info_service.get_market_snapshot(focus=focus)
         regime_state = self.info_service.build_regime_state(focus=focus)
@@ -121,6 +143,7 @@ class AnalystEngine:
             mode=mode,
             user_id=user_id,
             instruction=instruction,
+            memory_context=memory_context,
             focus=focus,
             audience=audience,
             market_snapshot=snapshot,
@@ -163,6 +186,7 @@ class OpenRouterAnalystEngine(AnalystEngine):
             mode=InteractionMode.REGIME,
             user_id="telegram-bot",
             instruction="请总结当前宏观状态。",
+            memory_context="",
             focus=focus,
             audience="internal_rm",
             market_snapshot=snapshot,
@@ -199,6 +223,7 @@ class OpenRouterAnalystEngine(AnalystEngine):
             mode=InteractionMode.PREMARKET,
             user_id="telegram-bot",
             instruction="请生成一份早盘速递。",
+            memory_context="",
             focus=focus,
             audience="internal_rm",
             market_snapshot=snapshot,

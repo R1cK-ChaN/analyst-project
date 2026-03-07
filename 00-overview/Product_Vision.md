@@ -132,16 +132,18 @@ This is what makes institutions pay real money — the difference between a "con
 └─────────────────────────────────────────────────────┘
 ```
 
-### Agent Architecture (Three Agents, Same Loop, Different Roles)
+### Agent Architecture (Three Agents, One Pipeline, Different Memory Shapes)
 
-All three agents share the same underlying loop (observe → think → act) but differ in system prompts, tools, memory, and cadence.
+All three agents still follow the same broad workflow idea (observe → think → act), but the implemented memory model is not symmetric peer memory. The current shape is a pipeline:
+
+`Market / data sources → Research artifacts → Trader artifacts → Sales delivery + client memory`
 
 **Agent 1: Analyst Agent (the brain)**
 
 - Watches: economic data (FRED, BLS, BEA), central bank comms (Fed/ECB/BOJ/PBOC RSS), cross-asset prices (yfinance), economic calendar (Investing.com/ForexFactory scrape), news (Finnhub, Alpha Vantage, Google News RSS)
 - Produces: flash commentary, daily briefings, deep analysis, regime state updates
-- Memory (private): working notes, draft analysis, confidence calibration
-- Memory (published): finished research → Shared Research Store
+- Memory (implemented): `regime_snapshots`, `generated_notes`, `analytical_observations`
+- Publication layer (implemented): `research_artifacts`
 - Cadence: event-driven (data releases) + scheduled (daily briefing, weekly review)
 - Language: generates in Chinese (primary) and English (for bilingual clients)
 
@@ -152,40 +154,49 @@ All three agents share the same underlying loop (observe → think → act) but 
 - Purpose: proves the Analyst's signals have portfolio value; demonstrates API integration
 - The Trader is not the product. The Analyst is the product. The Trader is the proof.
 - Initial scope: crypto (beachhead, company alignment), expandable to multi-asset
-- Memory (published): aggregated track record only → Performance Store
+- Memory / state tables (implemented): `trade_signals`, `decision_log`, `position_state`, `performance_records`
+- Publication layer (implemented): `trading_artifacts` with `research_artifact_id` lineage back to Research
 
 **Agent 3: Sales Agent (the relationship layer)**
 
 - Reads: Research Store (gated by client tier), Performance Store, client profiles
 - Does: answers client questions, drafts messages, preps meeting talking points, handles objections, manages relationships
 - Channels: WeChat/WeCom chat, group messages
-- Memory (private): per-client profiles, conversation history, preferences, watchlists
+- Memory (implemented): `client_profiles`, `conversation_threads`, `conversation_messages`, `delivery_queue`
 - Hard boundary: never sees Trader positions or strategy parameters
 
 ### Memory Architecture
 
 ```
-SHARED STORES:
-
-  Research Store
-  ├── Published analyst output (flash notes, briefings, regime state)
-  ├── Schema-enforced, tagged by tier and client_safe flag
-  └── Write: Analyst only | Read: Trader, Sales (gated)
-
-  Performance Store
-  ├── Aggregated track record (no positions)
-  └── Write: Trader only | Read: Sales only
+CURRENT IMPLEMENTATION:
 
   Market State Store
-  ├── Latest cross-asset prices, yields, spreads
-  ├── Economic calendar with consensus
-  └── Write: Scrapers | Read: All agents
+  ├── prices, calendar, central-bank comms, indicators, news
+  └── Write: ingestion | Read: Research
+
+  Research Working Memory
+  ├── regime_snapshots
+  ├── generated_notes
+  ├── analytical_observations
+  └── Publish → research_artifacts
+
+  Trader Working Memory
+  ├── trade_signals
+  ├── decision_log
+  ├── position_state
+  ├── performance_records
+  └── Publish → trading_artifacts (FK lineage to research_artifacts)
+
+  Sales Memory
+  ├── client_profiles
+  ├── conversation_threads / conversation_messages
+  └── delivery_queue
 
 HARD BOUNDARIES:
-  - Analyst never sees trading positions
-  - Sales agent never sees strategy parameters
+  - Research does not use client or thread memory
+  - Trader artifacts must link back to research artifacts
+  - Sales uses delivery history plus client profiles, not raw Research scratchpad
   - Clients never see other clients' data
-  - Agents publish structured JSON, never raw context
 ```
 
 ---

@@ -8,6 +8,7 @@ from typing import Any
 
 from analyst.contracts import Event, Importance, RegimeScore, RegimeState, ResearchNote, utc_now
 from analyst.ingestion import IngestionOrchestrator
+from analyst.memory import build_research_context
 from analyst.storage import NewsArticleRecord, SQLiteEngineStore, StoredEventRecord
 
 from .agent_loop import AgentLoopConfig, PythonAgentLoop
@@ -74,7 +75,7 @@ class LiveAnalystEngine:
         baseline_regime = self._baseline_regime(trigger_event)
         result = self._loop().run(
             system_prompt=SYSTEM_PROMPT,
-            user_prompt=flash_prompt(trigger_event, baseline_regime),
+            user_prompt=self._with_research_context(flash_prompt(trigger_event, baseline_regime)),
             tools=self._build_tools(),
         )
         return self._finalize_note(
@@ -88,7 +89,7 @@ class LiveAnalystEngine:
     def generate_morning_briefing(self) -> ResearchNote:
         upcoming_events = self.store.list_upcoming_events(limit=5)
         baseline_regime = self._baseline_regime()
-        prompt = briefing_prompt(self._render_event_lines(upcoming_events), baseline_regime)
+        prompt = self._with_research_context(briefing_prompt(self._render_event_lines(upcoming_events), baseline_regime))
         result = self._loop().run(system_prompt=SYSTEM_PROMPT, user_prompt=prompt, tools=self._build_tools())
         return self._finalize_note(
             note_type="pre_market",
@@ -101,7 +102,7 @@ class LiveAnalystEngine:
     def generate_after_market_wrap(self) -> ResearchNote:
         recent_events = self.store.list_recent_events(limit=5, days=1, released_only=True)
         baseline_regime = self._baseline_regime()
-        prompt = wrap_prompt(self._render_event_lines(recent_events), baseline_regime)
+        prompt = self._with_research_context(wrap_prompt(self._render_event_lines(recent_events), baseline_regime))
         result = self._loop().run(system_prompt=SYSTEM_PROMPT, user_prompt=prompt, tools=self._build_tools())
         return self._finalize_note(
             note_type="after_market_wrap",
@@ -115,7 +116,7 @@ class LiveAnalystEngine:
         baseline_regime = self._baseline_regime()
         result = self._loop().run(
             system_prompt=SYSTEM_PROMPT,
-            user_prompt=regime_prompt(baseline_regime),
+            user_prompt=self._with_research_context(regime_prompt(baseline_regime)),
             tools=self._build_tools(),
         )
         regime_payload = self._extract_regime_payload(result.final_text, baseline_regime, None)
@@ -123,6 +124,16 @@ class LiveAnalystEngine:
             regime_json=regime_payload,
             trigger_event=regime_payload["trigger"],
             summary=regime_payload["dominant_narrative"],
+        )
+        self._publish_research_output(
+            source_kind="regime_snapshot",
+            source_id=snapshot.snapshot_id,
+            title="宏观状态刷新",
+            body_markdown=result.final_text,
+            summary=regime_payload["dominant_narrative"],
+            artifact_type="regime_snapshot",
+            payload=regime_payload,
+            tags=["ws1", "regime_refresh"],
         )
         return self._regime_to_contract(snapshot.regime_json)
 
@@ -150,6 +161,22 @@ class LiveAnalystEngine:
             body_markdown=body_markdown,
             regime_json=regime_payload,
             metadata=metadata,
+        )
+        self._publish_research_output(
+            source_kind="generated_note",
+            source_id=saved_note.note_id,
+            title=title,
+            body_markdown=body_markdown,
+            summary=regime_payload["dominant_narrative"],
+            artifact_type="research_note",
+            payload={
+                "note_type": note_type,
+                "note_id": saved_note.note_id,
+                "snapshot_id": snapshot.snapshot_id,
+                "regime": regime_payload,
+                "metadata": metadata,
+            },
+            tags=["ws1", note_type],
         )
         return ResearchNote(
             note_id=f"live-note-{saved_note.note_id}",
@@ -614,6 +641,43 @@ class LiveAnalystEngine:
             f"- {event.datetime_utc} | {event.country} {event.indicator} | 实际 {event.actual or '待公布'} | "
             f"预期 {event.forecast or '未知'} | 前值 {event.previous or '未知'}"
             for event in events
+        )
+
+    def _with_research_context(self, prompt: str) -> str:
+        context = build_research_context(self.store)
+        if not context:
+            return prompt
+        return f"## 已知研究上下文\n{context}\n\n{prompt}"
+
+    def _publish_research_output(
+        self,
+        *,
+        source_kind: str,
+        source_id: int,
+        title: str,
+        body_markdown: str,
+        summary: str,
+        artifact_type: str,
+        payload: dict[str, Any],
+        tags: list[str],
+    ):
+        self.store.add_analytical_observation(
+            observation_type="published_output",
+            summary=summary,
+            detail=title,
+            source_kind=source_kind,
+            source_id=source_id,
+            metadata={"artifact_type": artifact_type, "payload": payload},
+        )
+        return self.store.publish_research_artifact(
+            artifact_type=artifact_type,
+            title=title,
+            summary=summary,
+            content_markdown=body_markdown,
+            source_kind=source_kind,
+            source_id=source_id,
+            tags=tags,
+            metadata={"source": "live_engine", "payload": payload},
         )
 
     def _regime_to_contract(self, regime_json: dict[str, Any]) -> RegimeState:

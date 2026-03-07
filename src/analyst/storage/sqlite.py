@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import json
 import math
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -118,6 +119,135 @@ class GeneratedNoteRecord:
     metadata: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class AnalyticalObservationRecord:
+    observation_id: int
+    observation_type: str
+    summary: str
+    detail: str
+    source_kind: str
+    source_id: int
+    created_at: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ResearchArtifactRecord:
+    artifact_id: int
+    artifact_type: str
+    title: str
+    summary: str
+    content_markdown: str
+    source_kind: str
+    source_id: int
+    created_at: str
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TradeSignalRecord:
+    signal_id: int
+    signal_type: str
+    title: str
+    summary: str
+    rationale_markdown: str
+    signal: dict[str, Any]
+    confidence: float
+    created_at: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DecisionLogRecord:
+    decision_id: int
+    decision_type: str
+    title: str
+    summary: str
+    rationale_markdown: str
+    research_artifact_id: int | None
+    signal_id: int | None
+    created_at: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PositionStateRecord:
+    symbol: str
+    exposure: float
+    direction: str
+    thesis: str
+    updated_at: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PerformanceRecord:
+    record_id: int
+    metric_name: str
+    metric_value: float
+    period_label: str
+    created_at: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TradingArtifactRecord:
+    artifact_id: int
+    artifact_type: str
+    title: str
+    summary: str
+    rationale_markdown: str
+    research_artifact_id: int
+    decision_log_id: int | None
+    signal: dict[str, Any]
+    confidence: float
+    created_at: str
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ClientProfileRecord:
+    client_id: str
+    preferred_language: str
+    watchlist_topics: list[str]
+    response_style: str
+    risk_appetite: str
+    investment_horizon: str
+    last_active_at: str
+    total_interactions: int
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class ConversationMessageRecord:
+    message_id: int
+    client_id: str
+    channel: str
+    thread_id: str
+    role: str
+    content: str
+    created_at: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DeliveryQueueRecord:
+    delivery_id: int
+    client_id: str
+    channel: str
+    thread_id: str
+    source_type: str
+    source_artifact_id: int | None
+    content_rendered: str
+    status: str
+    delivered_at: str | None
+    client_reaction: str
+    created_at: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class SQLiteEngineStore:
     def __init__(self, db_path: Path | None = None) -> None:
         self.db_path = db_path or default_engine_db_path()
@@ -128,6 +258,7 @@ class SQLiteEngineStore:
         connection = sqlite3.connect(str(self.db_path))
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
     @contextmanager
@@ -342,6 +473,196 @@ class SQLiteEngineStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS analytical_observations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    observation_type TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    detail TEXT NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    source_id INTEGER NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS research_artifacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    artifact_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    content_markdown TEXT NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    source_id INTEGER NOT NULL,
+                    tags_json TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS trade_signals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    signal_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    rationale_markdown TEXT NOT NULL,
+                    signal_json TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS decision_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    decision_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    rationale_markdown TEXT NOT NULL,
+                    research_artifact_id INTEGER,
+                    signal_id INTEGER,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (research_artifact_id) REFERENCES research_artifacts(id),
+                    FOREIGN KEY (signal_id) REFERENCES trade_signals(id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS position_state (
+                    symbol TEXT PRIMARY KEY,
+                    exposure REAL NOT NULL,
+                    direction TEXT NOT NULL,
+                    thesis TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS performance_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    metric_name TEXT NOT NULL,
+                    metric_value REAL NOT NULL,
+                    period_label TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS trading_artifacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    artifact_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    rationale_markdown TEXT NOT NULL,
+                    research_artifact_id INTEGER NOT NULL,
+                    decision_log_id INTEGER,
+                    signal_json TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    tags_json TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (research_artifact_id) REFERENCES research_artifacts(id),
+                    FOREIGN KEY (decision_log_id) REFERENCES decision_log(id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS client_profiles (
+                    client_id TEXT PRIMARY KEY,
+                    preferred_language TEXT NOT NULL DEFAULT '',
+                    watchlist_topics_json TEXT NOT NULL DEFAULT '[]',
+                    response_style TEXT NOT NULL DEFAULT '',
+                    risk_appetite TEXT NOT NULL DEFAULT '',
+                    investment_horizon TEXT NOT NULL DEFAULT '',
+                    last_active_at TEXT NOT NULL DEFAULT '',
+                    total_interactions INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversation_threads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    opened_at TEXT NOT NULL,
+                    last_active_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    UNIQUE(client_id, channel, thread_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversation_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (client_id, channel, thread_id)
+                        REFERENCES conversation_threads(client_id, channel, thread_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS delivery_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_artifact_id INTEGER,
+                    content_rendered TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    delivered_at TEXT,
+                    client_reaction TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_analytical_observations_created ON analytical_observations(id DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_research_artifacts_type_created ON research_artifacts(artifact_type, id DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_trading_artifacts_research_created ON trading_artifacts(research_artifact_id, id DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_decision_log_research_created ON decision_log(research_artifact_id, id DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_performance_records_metric_created ON performance_records(metric_name, id DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_conversation_messages_thread_created ON conversation_messages(client_id, channel, thread_id, id DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_delivery_queue_client_created ON delivery_queue(client_id, channel, thread_id, id DESC)"
+            )
 
     def upsert_calendar_event(self, event: StoredEventRecord) -> None:
         with self._connection(commit=True) as connection:
@@ -477,7 +798,7 @@ class SQLiteEngineStore:
                 """,
                 (
                     timestamp,
-                    json.dumps(regime_json, ensure_ascii=True, sort_keys=True),
+                    json.dumps(regime_json, ensure_ascii=False, sort_keys=True),
                     trigger_event,
                     summary,
                 ),
@@ -520,8 +841,8 @@ class SQLiteEngineStore:
                     title,
                     summary,
                     body_markdown,
-                    json.dumps(regime_json, ensure_ascii=True, sort_keys=True) if regime_json else None,
-                    json.dumps(metadata or {}, ensure_ascii=True, sort_keys=True),
+                    json.dumps(regime_json, ensure_ascii=False, sort_keys=True) if regime_json else None,
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
                 ),
             )
             note_id = int(cursor.lastrowid)
@@ -535,6 +856,578 @@ class SQLiteEngineStore:
             regime_json=regime_json,
             metadata=metadata or {},
         )
+
+    def list_recent_regime_snapshots(self, *, limit: int = 3) -> list[RegimeSnapshotRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM regime_snapshots
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            RegimeSnapshotRecord(
+                snapshot_id=int(row["id"]),
+                timestamp=row["timestamp"],
+                regime_json=json.loads(row["regime_json"]),
+                trigger_event=row["trigger_event"],
+                summary=row["summary"],
+            )
+            for row in rows
+        ]
+
+    def list_recent_generated_notes(
+        self,
+        *,
+        limit: int = 5,
+        note_type: str | None = None,
+    ) -> list[GeneratedNoteRecord]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if note_type:
+            conditions.append("note_type = ?")
+            params.append(note_type)
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM generated_notes
+                {where_clause}
+                ORDER BY id DESC
+                LIMIT ?
+                """.format(where_clause=where_clause),
+                [*params, limit],
+            ).fetchall()
+        return [
+            GeneratedNoteRecord(
+                note_id=int(row["id"]),
+                created_at=row["created_at"],
+                note_type=row["note_type"],
+                title=row["title"],
+                summary=row["summary"],
+                body_markdown=row["body_markdown"],
+                regime_json=json.loads(row["regime_json"]) if row["regime_json"] else None,
+                metadata=json.loads(row["metadata_json"]),
+            )
+            for row in rows
+        ]
+
+    def add_analytical_observation(
+        self,
+        *,
+        observation_type: str,
+        summary: str,
+        detail: str,
+        source_kind: str,
+        source_id: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> AnalyticalObservationRecord:
+        created_at = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO analytical_observations (
+                    observation_type,
+                    summary,
+                    detail,
+                    source_kind,
+                    source_id,
+                    metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation_type,
+                    summary,
+                    detail,
+                    source_kind,
+                    source_id,
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+                    created_at,
+                ),
+            )
+            observation_id = int(cursor.lastrowid)
+        return AnalyticalObservationRecord(
+            observation_id=observation_id,
+            observation_type=observation_type,
+            summary=summary,
+            detail=detail,
+            source_kind=source_kind,
+            source_id=source_id,
+            created_at=created_at,
+            metadata=metadata or {},
+        )
+
+    def list_recent_analytical_observations(self, *, limit: int = 5) -> list[AnalyticalObservationRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM analytical_observations
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            AnalyticalObservationRecord(
+                observation_id=int(row["id"]),
+                observation_type=row["observation_type"],
+                summary=row["summary"],
+                detail=row["detail"],
+                source_kind=row["source_kind"],
+                source_id=int(row["source_id"]),
+                created_at=row["created_at"],
+                metadata=json.loads(row["metadata_json"]),
+            )
+            for row in rows
+        ]
+
+    def publish_research_artifact(
+        self,
+        *,
+        artifact_type: str,
+        title: str,
+        summary: str,
+        content_markdown: str,
+        source_kind: str,
+        source_id: int,
+        tags: list[str],
+        metadata: dict[str, Any] | None = None,
+    ) -> ResearchArtifactRecord:
+        created_at = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO research_artifacts (
+                    artifact_type,
+                    title,
+                    summary,
+                    content_markdown,
+                    source_kind,
+                    source_id,
+                    tags_json,
+                    metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    artifact_type,
+                    title,
+                    summary,
+                    content_markdown,
+                    source_kind,
+                    source_id,
+                    json.dumps(tags, ensure_ascii=False, sort_keys=True),
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+                    created_at,
+                ),
+            )
+            artifact_id = int(cursor.lastrowid)
+        return ResearchArtifactRecord(
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            title=title,
+            summary=summary,
+            content_markdown=content_markdown,
+            source_kind=source_kind,
+            source_id=source_id,
+            created_at=created_at,
+            tags=tags,
+            metadata=metadata or {},
+        )
+
+    def list_recent_research_artifacts(
+        self,
+        *,
+        limit: int = 5,
+        artifact_types: tuple[str, ...] = (),
+    ) -> list[ResearchArtifactRecord]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if artifact_types:
+            conditions.append("artifact_type IN (" + ",".join("?" for _ in artifact_types) + ")")
+            params.extend(artifact_types)
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM research_artifacts
+                {where_clause}
+                ORDER BY id DESC
+                LIMIT ?
+                """.format(where_clause=where_clause),
+                [*params, limit],
+            ).fetchall()
+        return [
+            ResearchArtifactRecord(
+                artifact_id=int(row["id"]),
+                artifact_type=row["artifact_type"],
+                title=row["title"],
+                summary=row["summary"],
+                content_markdown=row["content_markdown"],
+                source_kind=row["source_kind"],
+                source_id=int(row["source_id"]),
+                created_at=row["created_at"],
+                tags=json.loads(row["tags_json"]),
+                metadata=json.loads(row["metadata_json"]),
+            )
+            for row in rows
+        ]
+
+    def search_research_artifacts(
+        self,
+        *,
+        query: str,
+        limit: int = 5,
+        artifact_types: tuple[str, ...] = (),
+    ) -> list[ResearchArtifactRecord]:
+        terms = self._search_terms(query)
+        candidates = self.list_recent_research_artifacts(limit=max(limit * 20, 100), artifact_types=artifact_types)
+        scored: list[tuple[float, ResearchArtifactRecord]] = []
+        for artifact in candidates:
+            haystack = " ".join([artifact.title, artifact.summary, artifact.content_markdown])
+            score = self._score_text_match(haystack, terms)
+            if score <= 0:
+                continue
+            scored.append((score, artifact))
+        scored.sort(key=lambda item: (item[0], item[1].created_at), reverse=True)
+        return [record for _, record in scored[:limit]]
+
+    def save_trade_signal(
+        self,
+        *,
+        signal_type: str,
+        title: str,
+        summary: str,
+        rationale_markdown: str,
+        signal: dict[str, Any],
+        confidence: float,
+        metadata: dict[str, Any] | None = None,
+    ) -> TradeSignalRecord:
+        created_at = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO trade_signals (
+                    signal_type,
+                    title,
+                    summary,
+                    rationale_markdown,
+                    signal_json,
+                    confidence,
+                    metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    signal_type,
+                    title,
+                    summary,
+                    rationale_markdown,
+                    json.dumps(signal, ensure_ascii=False, sort_keys=True),
+                    confidence,
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+                    created_at,
+                ),
+            )
+            signal_id = int(cursor.lastrowid)
+        return TradeSignalRecord(
+            signal_id=signal_id,
+            signal_type=signal_type,
+            title=title,
+            summary=summary,
+            rationale_markdown=rationale_markdown,
+            signal=signal,
+            confidence=confidence,
+            created_at=created_at,
+            metadata=metadata or {},
+        )
+
+    def log_trading_decision(
+        self,
+        *,
+        decision_type: str,
+        title: str,
+        summary: str,
+        rationale_markdown: str,
+        research_artifact_id: int | None,
+        signal_id: int | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> DecisionLogRecord:
+        created_at = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO decision_log (
+                    decision_type,
+                    title,
+                    summary,
+                    rationale_markdown,
+                    research_artifact_id,
+                    signal_id,
+                    metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    decision_type,
+                    title,
+                    summary,
+                    rationale_markdown,
+                    research_artifact_id,
+                    signal_id,
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+                    created_at,
+                ),
+            )
+            decision_id = int(cursor.lastrowid)
+        return DecisionLogRecord(
+            decision_id=decision_id,
+            decision_type=decision_type,
+            title=title,
+            summary=summary,
+            rationale_markdown=rationale_markdown,
+            research_artifact_id=research_artifact_id,
+            signal_id=signal_id,
+            created_at=created_at,
+            metadata=metadata or {},
+        )
+
+    def list_recent_decisions(self, *, limit: int = 5) -> list[DecisionLogRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM decision_log
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            DecisionLogRecord(
+                decision_id=int(row["id"]),
+                decision_type=row["decision_type"],
+                title=row["title"],
+                summary=row["summary"],
+                rationale_markdown=row["rationale_markdown"],
+                research_artifact_id=int(row["research_artifact_id"]) if row["research_artifact_id"] is not None else None,
+                signal_id=int(row["signal_id"]) if row["signal_id"] is not None else None,
+                created_at=row["created_at"],
+                metadata=json.loads(row["metadata_json"]),
+            )
+            for row in rows
+        ]
+
+    def upsert_position_state(
+        self,
+        *,
+        symbol: str,
+        exposure: float,
+        direction: str,
+        thesis: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO position_state (
+                    symbol,
+                    exposure,
+                    direction,
+                    thesis,
+                    metadata_json,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    exposure = excluded.exposure,
+                    direction = excluded.direction,
+                    thesis = excluded.thesis,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    symbol,
+                    exposure,
+                    direction,
+                    thesis,
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+                    utc_now().isoformat(),
+                ),
+            )
+
+    def list_position_state(self, *, limit: int = 10) -> list[PositionStateRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM position_state
+                ORDER BY updated_at DESC, symbol ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            PositionStateRecord(
+                symbol=row["symbol"],
+                exposure=float(row["exposure"]),
+                direction=row["direction"],
+                thesis=row["thesis"],
+                updated_at=row["updated_at"],
+                metadata=json.loads(row["metadata_json"]),
+            )
+            for row in rows
+        ]
+
+    def record_performance(
+        self,
+        *,
+        metric_name: str,
+        metric_value: float,
+        period_label: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> PerformanceRecord:
+        created_at = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO performance_records (
+                    metric_name,
+                    metric_value,
+                    period_label,
+                    metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    metric_name,
+                    metric_value,
+                    period_label,
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+                    created_at,
+                ),
+            )
+            record_id = int(cursor.lastrowid)
+        return PerformanceRecord(
+            record_id=record_id,
+            metric_name=metric_name,
+            metric_value=metric_value,
+            period_label=period_label,
+            created_at=created_at,
+            metadata=metadata or {},
+        )
+
+    def list_recent_performance_records(self, *, limit: int = 5) -> list[PerformanceRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM performance_records
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            PerformanceRecord(
+                record_id=int(row["id"]),
+                metric_name=row["metric_name"],
+                metric_value=float(row["metric_value"]),
+                period_label=row["period_label"],
+                created_at=row["created_at"],
+                metadata=json.loads(row["metadata_json"]),
+            )
+            for row in rows
+        ]
+
+    def publish_trading_artifact(
+        self,
+        *,
+        artifact_type: str,
+        title: str,
+        summary: str,
+        rationale_markdown: str,
+        research_artifact_id: int,
+        signal: dict[str, Any],
+        confidence: float,
+        decision_log_id: int | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> TradingArtifactRecord:
+        created_at = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO trading_artifacts (
+                    artifact_type,
+                    title,
+                    summary,
+                    rationale_markdown,
+                    research_artifact_id,
+                    decision_log_id,
+                    signal_json,
+                    confidence,
+                    tags_json,
+                    metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    artifact_type,
+                    title,
+                    summary,
+                    rationale_markdown,
+                    research_artifact_id,
+                    decision_log_id,
+                    json.dumps(signal, ensure_ascii=False, sort_keys=True),
+                    confidence,
+                    json.dumps(tags or [], ensure_ascii=False, sort_keys=True),
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+                    created_at,
+                ),
+            )
+            artifact_id = int(cursor.lastrowid)
+        return TradingArtifactRecord(
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            title=title,
+            summary=summary,
+            rationale_markdown=rationale_markdown,
+            research_artifact_id=research_artifact_id,
+            decision_log_id=decision_log_id,
+            signal=signal,
+            confidence=confidence,
+            created_at=created_at,
+            tags=tags or [],
+            metadata=metadata or {},
+        )
+
+    def list_recent_trading_artifacts(self, *, limit: int = 5) -> list[TradingArtifactRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM trading_artifacts
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            TradingArtifactRecord(
+                artifact_id=int(row["id"]),
+                artifact_type=row["artifact_type"],
+                title=row["title"],
+                summary=row["summary"],
+                rationale_markdown=row["rationale_markdown"],
+                research_artifact_id=int(row["research_artifact_id"]),
+                decision_log_id=int(row["decision_log_id"]) if row["decision_log_id"] is not None else None,
+                signal=json.loads(row["signal_json"]),
+                confidence=float(row["confidence"]),
+                created_at=row["created_at"],
+                tags=json.loads(row["tags_json"]),
+                metadata=json.loads(row["metadata_json"]),
+            )
+            for row in rows
+        ]
 
     def list_recent_events(
         self,
@@ -1111,3 +2004,546 @@ class SQLiteEngineStore:
             authors=row["authors"] or "",
             extraction_provider=row["extraction_provider"] or "keyword",
         )
+
+    # -- Sales memory and delivery pipeline --------------------------------
+
+    def get_client_profile(self, client_id: str) -> ClientProfileRecord:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM client_profiles
+                WHERE client_id = ?
+                LIMIT 1
+                """,
+                (client_id,),
+            ).fetchone()
+        return self._row_to_client_profile(row, client_id=client_id)
+
+    def upsert_client_profile(
+        self,
+        client_id: str,
+        *,
+        preferred_language: str | None = None,
+        watchlist_topics: list[str] | None = None,
+        response_style: str | None = None,
+        risk_appetite: str | None = None,
+        investment_horizon: str | None = None,
+        last_active_at: str | None = None,
+        interaction_increment: int = 0,
+    ) -> ClientProfileRecord:
+        with self._connection(commit=True) as connection:
+            return self._upsert_client_profile_in_connection(
+                connection,
+                client_id=client_id,
+                preferred_language=preferred_language,
+                watchlist_topics=watchlist_topics,
+                response_style=response_style,
+                risk_appetite=risk_appetite,
+                investment_horizon=investment_horizon,
+                last_active_at=last_active_at,
+                interaction_increment=interaction_increment,
+            )
+
+    def ensure_conversation_thread(self, *, client_id: str, channel: str, thread_id: str) -> None:
+        with self._connection(commit=True) as connection:
+            self._ensure_conversation_thread_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+            )
+
+    def append_conversation_message(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        role: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ConversationMessageRecord:
+        created_at = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            self._ensure_conversation_thread_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                timestamp=created_at,
+            )
+            cursor = connection.execute(
+                """
+                INSERT INTO conversation_messages (
+                    client_id,
+                    channel,
+                    thread_id,
+                    role,
+                    content,
+                    metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    client_id,
+                    channel,
+                    thread_id,
+                    role,
+                    content,
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+                    created_at,
+                ),
+            )
+            message_id = int(cursor.lastrowid)
+            connection.execute(
+                """
+                UPDATE conversation_threads
+                SET last_active_at = ?
+                WHERE client_id = ? AND channel = ? AND thread_id = ?
+                """,
+                (created_at, client_id, channel, thread_id),
+            )
+        return ConversationMessageRecord(
+            message_id=message_id,
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+            role=role,
+            content=content,
+            created_at=created_at,
+            metadata=metadata or {},
+        )
+
+    def list_conversation_messages(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        limit: int = 12,
+    ) -> list[ConversationMessageRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM conversation_messages
+                WHERE client_id = ? AND channel = ? AND thread_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (client_id, channel, thread_id, limit),
+            ).fetchall()
+        records = [
+            ConversationMessageRecord(
+                message_id=int(row["id"]),
+                client_id=row["client_id"],
+                channel=row["channel"],
+                thread_id=row["thread_id"],
+                role=row["role"],
+                content=row["content"],
+                created_at=row["created_at"],
+                metadata=json.loads(row["metadata_json"]),
+            )
+            for row in rows
+        ]
+        records.reverse()
+        return records
+
+    def enqueue_delivery(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        source_type: str,
+        content_rendered: str,
+        source_artifact_id: int | None = None,
+        status: str = "delivered",
+        delivered_at: str | None = None,
+        client_reaction: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> DeliveryQueueRecord:
+        created_at = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            self._ensure_conversation_thread_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                timestamp=created_at,
+            )
+            cursor = connection.execute(
+                """
+                INSERT INTO delivery_queue (
+                    client_id,
+                    channel,
+                    thread_id,
+                    source_type,
+                    source_artifact_id,
+                    content_rendered,
+                    status,
+                    delivered_at,
+                    client_reaction,
+                    metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    client_id,
+                    channel,
+                    thread_id,
+                    source_type,
+                    source_artifact_id,
+                    content_rendered,
+                    status,
+                    delivered_at,
+                    client_reaction,
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+                    created_at,
+                ),
+            )
+            delivery_id = int(cursor.lastrowid)
+        return DeliveryQueueRecord(
+            delivery_id=delivery_id,
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+            source_type=source_type,
+            source_artifact_id=source_artifact_id,
+            content_rendered=content_rendered,
+            status=status,
+            delivered_at=delivered_at,
+            client_reaction=client_reaction,
+            created_at=created_at,
+            metadata=metadata or {},
+        )
+
+    def list_recent_deliveries(
+        self,
+        *,
+        client_id: str,
+        channel: str | None = None,
+        thread_id: str | None = None,
+        limit: int = 5,
+    ) -> list[DeliveryQueueRecord]:
+        conditions = ["client_id = ?"]
+        params: list[Any] = [client_id]
+        if channel is not None:
+            conditions.append("channel = ?")
+            params.append(channel)
+        if thread_id is not None:
+            conditions.append("thread_id = ?")
+            params.append(thread_id)
+        params.append(limit)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM delivery_queue
+                WHERE {' AND '.join(conditions)}
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [
+            DeliveryQueueRecord(
+                delivery_id=int(row["id"]),
+                client_id=row["client_id"],
+                channel=row["channel"],
+                thread_id=row["thread_id"],
+                source_type=row["source_type"],
+                source_artifact_id=int(row["source_artifact_id"]) if row["source_artifact_id"] is not None else None,
+                content_rendered=row["content_rendered"],
+                status=row["status"],
+                delivered_at=row["delivered_at"],
+                client_reaction=row["client_reaction"],
+                created_at=row["created_at"],
+                metadata=json.loads(row["metadata_json"]),
+            )
+            for row in rows
+        ]
+
+    def search_delivery_queue(
+        self,
+        *,
+        client_id: str,
+        query: str,
+        channel: str | None = None,
+        thread_id: str | None = None,
+        limit: int = 3,
+    ) -> list[DeliveryQueueRecord]:
+        terms = self._search_terms(query)
+        candidates = self.list_recent_deliveries(
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+            limit=max(limit * 12, 50),
+        )
+        scored: list[tuple[float, DeliveryQueueRecord]] = []
+        for item in candidates:
+            score = self._score_text_match(item.content_rendered, terms)
+            if score <= 0:
+                continue
+            scored.append((score, item))
+        scored.sort(key=lambda pair: (pair[0], pair[1].created_at), reverse=True)
+        return [record for _, record in scored[:limit]]
+
+    def record_sales_interaction(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        user_text: str,
+        assistant_text: str,
+        profile_updates: dict[str, Any],
+    ) -> None:
+        user_timestamp = utc_now().isoformat()
+        assistant_timestamp = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            self._upsert_client_profile_in_connection(
+                connection,
+                client_id=client_id,
+                preferred_language=profile_updates.get("preferred_language"),
+                watchlist_topics=profile_updates.get("watchlist_topics"),
+                response_style=profile_updates.get("response_style"),
+                risk_appetite=profile_updates.get("risk_appetite"),
+                investment_horizon=profile_updates.get("investment_horizon"),
+                last_active_at=assistant_timestamp,
+                interaction_increment=1,
+            )
+            self._ensure_conversation_thread_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                timestamp=assistant_timestamp,
+            )
+            connection.executemany(
+                """
+                INSERT INTO conversation_messages (
+                    client_id,
+                    channel,
+                    thread_id,
+                    role,
+                    content,
+                    metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        client_id,
+                        channel,
+                        thread_id,
+                        "user",
+                        user_text,
+                        json.dumps({"channel": channel}, ensure_ascii=False, sort_keys=True),
+                        user_timestamp,
+                    ),
+                    (
+                        client_id,
+                        channel,
+                        thread_id,
+                        "assistant",
+                        assistant_text,
+                        json.dumps({"channel": channel}, ensure_ascii=False, sort_keys=True),
+                        assistant_timestamp,
+                    ),
+                ],
+            )
+            connection.execute(
+                """
+                INSERT INTO delivery_queue (
+                    client_id,
+                    channel,
+                    thread_id,
+                    source_type,
+                    source_artifact_id,
+                    content_rendered,
+                    status,
+                    delivered_at,
+                    client_reaction,
+                    metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    client_id,
+                    channel,
+                    thread_id,
+                    "sales_reply",
+                    None,
+                    assistant_text,
+                    "delivered",
+                    assistant_timestamp,
+                    "",
+                    json.dumps({"user_text": user_text}, ensure_ascii=False, sort_keys=True),
+                    assistant_timestamp,
+                ),
+            )
+
+    def _row_to_client_profile(self, row: sqlite3.Row | None, *, client_id: str) -> ClientProfileRecord:
+        if row is None:
+            return ClientProfileRecord(
+                client_id=client_id,
+                preferred_language="",
+                watchlist_topics=[],
+                response_style="",
+                risk_appetite="",
+                investment_horizon="",
+                last_active_at="",
+                total_interactions=0,
+                updated_at="",
+            )
+        return ClientProfileRecord(
+            client_id=row["client_id"],
+            preferred_language=row["preferred_language"],
+            watchlist_topics=json.loads(row["watchlist_topics_json"]),
+            response_style=row["response_style"],
+            risk_appetite=row["risk_appetite"],
+            investment_horizon=row["investment_horizon"],
+            last_active_at=row["last_active_at"],
+            total_interactions=int(row["total_interactions"]),
+            updated_at=row["updated_at"],
+        )
+
+    def _get_client_profile_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        client_id: str,
+    ) -> ClientProfileRecord:
+        row = connection.execute(
+            """
+            SELECT * FROM client_profiles
+            WHERE client_id = ?
+            LIMIT 1
+            """,
+            (client_id,),
+        ).fetchone()
+        return self._row_to_client_profile(row, client_id=client_id)
+
+    def _upsert_client_profile_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        client_id: str,
+        preferred_language: str | None = None,
+        watchlist_topics: list[str] | None = None,
+        response_style: str | None = None,
+        risk_appetite: str | None = None,
+        investment_horizon: str | None = None,
+        last_active_at: str | None = None,
+        interaction_increment: int = 0,
+    ) -> ClientProfileRecord:
+        current = self._get_client_profile_in_connection(connection, client_id=client_id)
+        merged_topics = current.watchlist_topics
+        if watchlist_topics:
+            merged_topics = sorted(set(current.watchlist_topics).union(watchlist_topics))
+        next_language = preferred_language if preferred_language is not None else current.preferred_language
+        next_response_style = response_style if response_style is not None else current.response_style
+        next_risk_appetite = risk_appetite if risk_appetite is not None else current.risk_appetite
+        next_investment_horizon = (
+            investment_horizon if investment_horizon is not None else current.investment_horizon
+        )
+        next_last_active = last_active_at if last_active_at is not None else current.last_active_at
+        updated_at = utc_now().isoformat()
+        total_interactions = current.total_interactions + interaction_increment
+        connection.execute(
+            """
+            INSERT INTO client_profiles (
+                client_id,
+                preferred_language,
+                watchlist_topics_json,
+                response_style,
+                risk_appetite,
+                investment_horizon,
+                last_active_at,
+                total_interactions,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(client_id) DO UPDATE SET
+                preferred_language = excluded.preferred_language,
+                watchlist_topics_json = excluded.watchlist_topics_json,
+                response_style = excluded.response_style,
+                risk_appetite = excluded.risk_appetite,
+                investment_horizon = excluded.investment_horizon,
+                last_active_at = excluded.last_active_at,
+                total_interactions = excluded.total_interactions,
+                updated_at = excluded.updated_at
+            """,
+            (
+                client_id,
+                next_language,
+                json.dumps(merged_topics, ensure_ascii=False, sort_keys=True),
+                next_response_style,
+                next_risk_appetite,
+                next_investment_horizon,
+                next_last_active,
+                total_interactions,
+                updated_at,
+            ),
+        )
+        return ClientProfileRecord(
+            client_id=client_id,
+            preferred_language=next_language,
+            watchlist_topics=merged_topics,
+            response_style=next_response_style,
+            risk_appetite=next_risk_appetite,
+            investment_horizon=next_investment_horizon,
+            last_active_at=next_last_active,
+            total_interactions=total_interactions,
+            updated_at=updated_at,
+        )
+
+    def _ensure_conversation_thread_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        timestamp: str | None = None,
+    ) -> None:
+        active_at = timestamp or utc_now().isoformat()
+        connection.execute(
+            """
+            INSERT INTO conversation_threads (
+                client_id,
+                channel,
+                thread_id,
+                opened_at,
+                last_active_at,
+                status
+            ) VALUES (?, ?, ?, ?, ?, 'active')
+            ON CONFLICT(client_id, channel, thread_id) DO UPDATE SET
+                last_active_at = excluded.last_active_at,
+                status = 'active'
+            """,
+            (client_id, channel, thread_id, active_at, active_at),
+        )
+
+    def _search_terms(self, query: str) -> list[str]:
+        terms: list[str] = []
+        for token in re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", query):
+            cleaned = token.strip()
+            if len(cleaned) < 2:
+                continue
+            normalized = cleaned.casefold()
+            terms.append(normalized)
+            if re.fullmatch(r"[\u4e00-\u9fff]+", cleaned) and len(cleaned) > 2:
+                terms.extend(cleaned[index : index + 2] for index in range(len(cleaned) - 1))
+        if not terms and query.strip():
+            fallback = query.casefold().strip()
+            if len(fallback) >= 2:
+                terms.append(fallback)
+        return list(dict.fromkeys(terms))
+
+    def _score_text_match(self, haystack: str, terms: list[str]) -> float:
+        if not terms:
+            return 0.0
+        normalized = haystack.casefold()
+        score = 0.0
+        for term in terms:
+            score += float(normalized.count(term))
+        return score

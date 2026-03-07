@@ -109,6 +109,7 @@ class OpenRouterAgentRuntime(AgentRuntime):
         return (
             f"{prompt}\n\n"
             f"用户请求: {context.instruction}\n"
+            f"已知记忆:\n{context.memory_context or '- 无'}\n\n"
             f"关注范围: {context.focus}\n"
             f"受众: {context.audience}\n\n"
             f"市场头条:\n{self._render_headlines(context)}\n\n"

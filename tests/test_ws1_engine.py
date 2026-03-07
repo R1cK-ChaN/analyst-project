@@ -255,9 +255,13 @@ class LiveEngineTest(unittest.TestCase):
             connection = sqlite3.connect(str(store.db_path))
             notes_count = connection.execute("SELECT COUNT(*) FROM generated_notes").fetchone()[0]
             regime_count = connection.execute("SELECT COUNT(*) FROM regime_snapshots").fetchone()[0]
+            research_artifact_count = connection.execute("SELECT COUNT(*) FROM research_artifacts").fetchone()[0]
+            observation_count = connection.execute("SELECT COUNT(*) FROM analytical_observations").fetchone()[0]
             connection.close()
             self.assertEqual(notes_count, 1)
             self.assertEqual(regime_count, 1)
+            self.assertEqual(research_artifact_count, 1)
+            self.assertEqual(observation_count, 1)
 
     def test_openrouter_config_reads_project_env_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

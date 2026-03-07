@@ -4,8 +4,8 @@ Uses python-telegram-bot (v20+) async API.
 Reads ANALYST_TELEGRAM_TOKEN from the environment.
 
 All user messages are routed through a persona-driven agent loop (陈襄).
-The agent can autonomously decide when to fetch macro data, calendar events,
-or briefings using tools backed by the analyst engine.
+The bot hydrates structured sales memory for each client/thread and records
+the interaction after every reply.
 
 Commands
 --------
@@ -50,7 +50,9 @@ from analyst.information import (  # noqa: E402
     AnalystInformationService,
     FileBackedInformationRepository,
 )
+from analyst.memory import build_sales_context, record_sales_interaction  # noqa: E402
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig  # noqa: E402
+from analyst.storage import SQLiteEngineStore  # noqa: E402
 
 from .soul import SOUL_SYSTEM_PROMPT  # noqa: E402
 
@@ -76,6 +78,12 @@ def _append_history(context: ContextTypes.DEFAULT_TYPE, role: str, content: str)
     max_messages = MAX_HISTORY_TURNS * 2
     if len(history) > max_messages:
         del history[: len(history) - max_messages]
+
+
+def _system_prompt_with_memory(memory_context: str = "") -> str:
+    if not memory_context:
+        return SOUL_SYSTEM_PROMPT
+    return f"{SOUL_SYSTEM_PROMPT}\n\n### 客户上下文\n{memory_context}"
 
 
 # ---------------------------------------------------------------------------
@@ -134,15 +142,16 @@ async def _chat_reply(
     context: ContextTypes.DEFAULT_TYPE,
     agent_loop: PythonAgentLoop,
     tools: list[AgentTool],
+    memory_context: str = "",
 ) -> str:
-    """Send user_text through the agent loop with persona, history, and tools."""
+    """Send user_text through the agent loop with persona, history, tools, and sales context."""
     history = _get_history(context)
     history_messages = [ConversationMessage(role=msg["role"], content=msg["content"]) for msg in history]
 
     try:
         result = await asyncio.to_thread(
             agent_loop.run,
-            system_prompt=SOUL_SYSTEM_PROMPT,
+            system_prompt=_system_prompt_with_memory(memory_context),
             user_prompt=user_text,
             tools=tools,
             history=history_messages,
@@ -165,8 +174,8 @@ async def _chat_reply(
 # Service wiring
 # ---------------------------------------------------------------------------
 
-def _build_services() -> tuple[PythonAgentLoop, list[AgentTool]]:
-    """Wire up the agent loop and tools."""
+def _build_services() -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
+    """Wire up the agent loop, tools, and sales-memory store."""
     repository = FileBackedInformationRepository()
     info_service = AnalystInformationService(repository)
     or_config = OpenRouterConfig.from_env(
@@ -195,7 +204,8 @@ def _build_services() -> tuple[PythonAgentLoop, list[AgentTool]]:
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
     )
     tools = _build_tools(engine)
-    return agent_loop, tools
+    store = SQLiteEngineStore()
+    return agent_loop, tools, store
 
 
 # ---------------------------------------------------------------------------
@@ -283,12 +293,43 @@ def _make_premarket_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool])
     return premarket
 
 
-def _make_message_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
+def _make_message_handler(
+    agent_loop: PythonAgentLoop,
+    tools: list[AgentTool],
+    store: SQLiteEngineStore,
+):
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None or update.effective_message.text is None:
             return
+        user_id = str(update.effective_user.id) if update.effective_user else str(update.effective_chat.id)
+        text = update.effective_message.text
+        channel_id = f"telegram:{update.effective_chat.id}"
+        topic_id = getattr(update.effective_message, "message_thread_id", None)
+        thread_id = str(topic_id) if topic_id is not None else "main"
+
         await update.effective_chat.send_action(ChatAction.TYPING)
-        reply = await _chat_reply(update.effective_message.text, context, agent_loop, tools)
+        memory_context = build_sales_context(
+            store=store,
+            client_id=user_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            query=text,
+        )
+        reply = await _chat_reply(
+            text,
+            context,
+            agent_loop,
+            tools,
+            memory_context=memory_context,
+        )
+        record_sales_interaction(
+            store=store,
+            client_id=user_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            user_text=text,
+            assistant_text=reply,
+        )
         await update.effective_message.reply_text(reply)
 
     return handle_message
@@ -300,7 +341,7 @@ def _make_message_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
 
 def build_application(token: str) -> Application:
     """Build and return a fully configured Telegram Application."""
-    agent_loop, tools = _build_services()
+    agent_loop, tools, store = _build_services()
 
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", _make_start_handler(agent_loop, tools)))
@@ -308,7 +349,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("regime", _make_regime_handler(agent_loop, tools)))
     app.add_handler(CommandHandler("calendar", _make_calendar_handler(agent_loop, tools)))
     app.add_handler(CommandHandler("premarket", _make_premarket_handler(agent_loop, tools)))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _make_message_handler(agent_loop, tools)))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _make_message_handler(agent_loop, tools, store)))
 
     return app
 
