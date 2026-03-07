@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 
+from analyst.storage.sqlite import StoredEventRecord
+
 from .app import build_demo_app, build_live_engine_app
 
 
@@ -34,6 +36,13 @@ def build_parser() -> argparse.ArgumentParser:
     refresh = subparsers.add_parser("refresh")
     refresh.add_argument("--once", action="store_true", help="Refresh all WS1 sources once")
 
+    live_cal = subparsers.add_parser("live-calendar")
+    live_cal.add_argument("--scope", choices=["today", "upcoming", "recent", "week"], default="today")
+    live_cal.add_argument("--country", default=None)
+    live_cal.add_argument("--category", default=None)
+    live_cal.add_argument("--importance", default=None)
+    live_cal.add_argument("--limit", type=int, default=20)
+
     subparsers.add_parser("schedule")
 
     flash = subparsers.add_parser("flash")
@@ -44,6 +53,19 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("regime-refresh")
 
     return parser
+
+
+def format_calendar_event(event: StoredEventRecord) -> str:
+    stars = {"high": "***", "medium": "**", "low": "*"}.get(event.importance, "*")
+    actual = event.actual or "-"
+    forecast = event.forecast or "-"
+    previous = event.previous or "-"
+    dt = event.datetime_utc[:16].replace("T", " ")
+    source = event.source.upper()
+    return (
+        f"{dt}  {event.country:>2} {stars:>3}  [{source:<12}]  "
+        f"{event.indicator:<40}  A:{actual:<8} F:{forecast:<8} P:{previous}"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -76,6 +98,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "premarket":
         app = build_demo_app()
         print(app.premarket(focus=args.focus).body_markdown)
+        return 0
+    if args.command == "live-calendar":
+        app = build_live_engine_app()
+        events = app.live_calendar(
+            scope=args.scope,
+            country=args.country,
+            category=args.category,
+            importance=args.importance,
+            limit=args.limit,
+        )
+        if not events:
+            print("No events found.")
+        else:
+            for event in events:
+                print(format_calendar_event(event))
         return 0
     if args.command == "refresh":
         if not args.once:

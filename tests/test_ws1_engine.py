@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -336,6 +336,206 @@ class LiveEngineTest(unittest.TestCase):
             )
             self.assertEqual(payload["risk_appetite"], 1.0)
             self.assertEqual(payload["confidence"], 0.0)
+
+
+class CalendarEnhancementsTest(unittest.TestCase):
+    def test_list_recent_events_country_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+            store.upsert_calendar_event(
+                StoredEventRecord(
+                    source="investing", event_id="evt-us", datetime_utc="2026-03-07T12:00:00+00:00",
+                    country="US", indicator="CPI", category="inflation", importance="high",
+                    actual="3.0%", raw_json={},
+                )
+            )
+            store.upsert_calendar_event(
+                StoredEventRecord(
+                    source="investing", event_id="evt-jp", datetime_utc="2026-03-07T06:00:00+00:00",
+                    country="JP", indicator="GDP", category="growth", importance="medium",
+                    actual="1.5%", raw_json={},
+                )
+            )
+            us_events = store.list_recent_events(limit=10, days=30, country="US")
+            jp_events = store.list_recent_events(limit=10, days=30, country="JP")
+            self.assertEqual(len(us_events), 1)
+            self.assertEqual(us_events[0].country, "US")
+            self.assertEqual(len(jp_events), 1)
+            self.assertEqual(jp_events[0].country, "JP")
+
+    def test_list_recent_events_category_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+            store.upsert_calendar_event(
+                StoredEventRecord(
+                    source="investing", event_id="evt-infl", datetime_utc="2026-03-07T12:00:00+00:00",
+                    country="US", indicator="CPI", category="inflation", importance="high",
+                    actual="3.0%", raw_json={},
+                )
+            )
+            store.upsert_calendar_event(
+                StoredEventRecord(
+                    source="investing", event_id="evt-grow", datetime_utc="2026-03-07T12:00:00+00:00",
+                    country="US", indicator="GDP", category="growth", importance="medium",
+                    actual="2.0%", raw_json={},
+                )
+            )
+            inflation = store.list_recent_events(limit=10, days=30, category="inflation")
+            growth = store.list_recent_events(limit=10, days=30, category="growth")
+            self.assertEqual(len(inflation), 1)
+            self.assertEqual(inflation[0].category, "inflation")
+            self.assertEqual(len(growth), 1)
+            self.assertEqual(growth[0].category, "growth")
+
+    def test_list_events_in_range(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+            store.upsert_calendar_event(
+                StoredEventRecord(
+                    source="investing", event_id="evt-d5", datetime_utc="2026-03-05T10:00:00+00:00",
+                    country="US", indicator="ADP", category="employment", importance="medium",
+                    actual="150K", raw_json={},
+                )
+            )
+            store.upsert_calendar_event(
+                StoredEventRecord(
+                    source="investing", event_id="evt-d7", datetime_utc="2026-03-07T12:00:00+00:00",
+                    country="US", indicator="NFP", category="employment", importance="high",
+                    actual="200K", raw_json={},
+                )
+            )
+            store.upsert_calendar_event(
+                StoredEventRecord(
+                    source="investing", event_id="evt-d9", datetime_utc="2026-03-09T12:00:00+00:00",
+                    country="US", indicator="CPI", category="inflation", importance="high",
+                    actual="3.0%", raw_json={},
+                )
+            )
+            events = store.list_events_in_range(
+                date_from="2026-03-06T00:00:00+00:00",
+                date_to="2026-03-08T23:59:59+00:00",
+            )
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].event_id, "evt-d7")
+
+    def test_list_today_events(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+            now = datetime.now(timezone.utc)
+            today_iso = now.replace(hour=12, minute=0, second=0, microsecond=0).isoformat()
+            yesterday_iso = (now - timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0).isoformat()
+            store.upsert_calendar_event(
+                StoredEventRecord(
+                    source="investing", event_id="evt-today", datetime_utc=today_iso,
+                    country="US", indicator="CPI", category="inflation", importance="high",
+                    raw_json={},
+                )
+            )
+            store.upsert_calendar_event(
+                StoredEventRecord(
+                    source="investing", event_id="evt-yesterday", datetime_utc=yesterday_iso,
+                    country="US", indicator="GDP", category="growth", importance="medium",
+                    raw_json={},
+                )
+            )
+            events = store.list_today_events()
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].event_id, "evt-today")
+
+    def test_list_indicator_releases_trend(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+            for i, actual in enumerate(["3.0%", "3.1%", "3.2%"]):
+                store.upsert_calendar_event(
+                    StoredEventRecord(
+                        source="investing", event_id=f"evt-cpi-{i}",
+                        datetime_utc=f"2026-0{i+1}-07T12:30:00+00:00",
+                        country="US", indicator="CPI YoY", category="inflation", importance="high",
+                        actual=actual, forecast="3.0%", previous="2.9%",
+                        surprise=round(float(actual.replace("%", "")) - 3.0, 4),
+                        raw_json={},
+                    )
+                )
+            releases = store.list_indicator_releases(indicator_keyword="CPI")
+            self.assertEqual(len(releases), 3)
+            self.assertEqual(releases[0].actual, "3.2%")  # most recent first
+
+    def test_currency_field_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+            store.upsert_calendar_event(
+                StoredEventRecord(
+                    source="investing", event_id="evt-cur", datetime_utc="2026-03-07T12:00:00+00:00",
+                    country="US", indicator="CPI", category="inflation", importance="high",
+                    actual="3.0%", currency="USD", raw_json={},
+                )
+            )
+            events = store.list_recent_events(limit=1, days=30)
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].currency, "USD")
+
+    def test_fetch_range_aggregates_days(self) -> None:
+        with patch("analyst.ingestion.sources.InvestingCalendarClient.fetch") as mock_fetch:
+            mock_fetch.return_value = [
+                StoredEventRecord(
+                    source="investing", event_id="evt-x", datetime_utc="2026-03-07T12:00:00+00:00",
+                    country="US", indicator="CPI", category="inflation", importance="high",
+                    raw_json={},
+                )
+            ]
+            from analyst.ingestion.sources import InvestingCalendarClient
+            client = InvestingCalendarClient()
+            with patch("analyst.ingestion.sources.time.sleep"):
+                events = client.fetch_range(days_back=1, days_forward=1)
+            # days_back=1, days_forward=1 => 3 days: -1, 0, +1
+            self.assertEqual(mock_fetch.call_count, 3)
+            self.assertEqual(len(events), 3)  # 1 event per day * 3 days
+
+    def test_fetch_retries_then_raises(self) -> None:
+        from analyst.ingestion.sources import InvestingCalendarClient
+
+        client = InvestingCalendarClient()
+        client.session.post = Mock(side_effect=RuntimeError("boom"))
+        with patch("analyst.ingestion.sources.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "Investing calendar fetch failed after 3 attempts"):
+                client.fetch(date_from="2026-03-07", date_to="2026-03-07")
+        self.assertEqual(client.session.post.call_count, 3)
+
+    def test_tool_indicator_trend(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+            for i in range(3):
+                store.upsert_calendar_event(
+                    StoredEventRecord(
+                        source="investing", event_id=f"evt-nfp-{i}",
+                        datetime_utc=f"2026-0{i+1}-07T12:30:00+00:00",
+                        country="US", indicator="Nonfarm Payrolls", category="employment", importance="high",
+                        actual=f"{200+i*10}K", forecast="200K", previous="190K",
+                        surprise=float(i * 10), raw_json={},
+                    )
+                )
+            engine = LiveAnalystEngine(store=store, ingestion=FakeIngestion(), provider=None)
+            result = engine._tool_indicator_trend({"indicator_keyword": "Nonfarm"})
+            self.assertEqual(len(result["releases"]), 3)
+            self.assertEqual(result["indicator_keyword"], "Nonfarm")
+
+    def test_live_calendar_cli_today(self) -> None:
+        fake_app = Mock()
+        fake_app.live_calendar.return_value = [
+            StoredEventRecord(
+                source="investing", event_id="evt-cli", datetime_utc="2026-03-07T12:30:00+00:00",
+                country="US", indicator="CPI YoY", category="inflation", importance="high",
+                actual="3.4%", forecast="3.2%", previous="3.1%", raw_json={},
+            )
+        ]
+        output = io.StringIO()
+        with patch("analyst.cli.build_live_engine_app", return_value=fake_app):
+            with redirect_stdout(output):
+                rc = main(["live-calendar", "--scope", "today"])
+        self.assertEqual(rc, 0)
+        self.assertIn("INVESTING", output.getvalue())
+        self.assertIn("CPI YoY", output.getvalue())
+        self.assertIn("3.4%", output.getvalue())
 
 
 class CLIWSTest(unittest.TestCase):
