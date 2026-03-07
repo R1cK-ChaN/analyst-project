@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import math
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -64,6 +65,36 @@ class IndicatorObservationRecord:
     date: str
     value: float
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class NewsArticleRecord:
+    url_hash: str
+    source_feed: str
+    feed_category: str
+    title: str
+    url: str
+    published_at: str
+    description: str
+    content_markdown: str
+    impact_level: str
+    finance_category: str
+    confidence: float
+    content_fetched: bool
+    institution: str = ""
+    country: str = ""
+    market: str = ""
+    asset_class: str = ""
+    sector: str = ""
+    document_type: str = ""
+    event_type: str = ""
+    subject: str = ""
+    subject_id: str = ""
+    data_period: str = ""
+    contains_commentary: bool = False
+    language: str = "en"
+    authors: str = ""
+    extraction_provider: str = "keyword"
 
 
 @dataclass(frozen=True)
@@ -186,6 +217,106 @@ class SQLiteEngineStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS news_articles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url_hash TEXT NOT NULL UNIQUE,
+                    source_feed TEXT NOT NULL,
+                    feed_category TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    published_at TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    content_markdown TEXT NOT NULL,
+                    impact_level TEXT NOT NULL,
+                    finance_category TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    content_fetched INTEGER NOT NULL DEFAULT 0,
+                    scraped_at TEXT NOT NULL
+                )
+                """
+            )
+            # -- news_articles new columns for LLM extraction -----------
+            _news_new_cols = [
+                ("institution", "TEXT NOT NULL DEFAULT ''"),
+                ("country", "TEXT NOT NULL DEFAULT ''"),
+                ("market", "TEXT NOT NULL DEFAULT ''"),
+                ("asset_class", "TEXT NOT NULL DEFAULT ''"),
+                ("sector", "TEXT NOT NULL DEFAULT ''"),
+                ("document_type", "TEXT NOT NULL DEFAULT ''"),
+                ("event_type", "TEXT NOT NULL DEFAULT ''"),
+                ("subject", "TEXT NOT NULL DEFAULT ''"),
+                ("subject_id", "TEXT NOT NULL DEFAULT ''"),
+                ("data_period", "TEXT NOT NULL DEFAULT ''"),
+                ("contains_commentary", "INTEGER NOT NULL DEFAULT 0"),
+                ("language", "TEXT NOT NULL DEFAULT 'en'"),
+                ("authors", "TEXT NOT NULL DEFAULT ''"),
+                ("extraction_provider", "TEXT NOT NULL DEFAULT 'keyword'"),
+            ]
+            for col_name, col_def in _news_new_cols:
+                try:
+                    connection.execute(f"ALTER TABLE news_articles ADD COLUMN {col_name} {col_def}")
+                except sqlite3.OperationalError:
+                    pass
+            # Repair rows written by older builds that truncated published_at
+            # to a bare date. Prefer the original scraped_at when it shares
+            # the same day; otherwise normalize to midnight UTC.
+            connection.execute(
+                """
+                UPDATE news_articles
+                SET published_at = CASE
+                    WHEN substr(scraped_at, 1, 10) = published_at THEN scraped_at
+                    ELSE published_at || 'T00:00:00+00:00'
+                END
+                WHERE length(published_at) = 10
+                  AND published_at LIKE '____-__-__'
+                """
+            )
+            # -- FTS5 full-text search for news articles ----------------
+            # Guarded: SQLite builds without FTS5 skip this block;
+            # search_news() falls back to LIKE queries.
+            try:
+                connection.execute(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS news_fts USING fts5(
+                        title, description, subject,
+                        content='news_articles',
+                        content_rowid='id'
+                    )
+                    """
+                )
+                for trigger_name in ("news_fts_ai", "news_fts_ad", "news_fts_au"):
+                    connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+                connection.execute(
+                    """
+                    CREATE TRIGGER news_fts_ai AFTER INSERT ON news_articles BEGIN
+                        INSERT INTO news_fts(rowid, title, description, subject)
+                        VALUES (new.id, new.title, new.description, new.subject);
+                    END
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE TRIGGER news_fts_ad AFTER DELETE ON news_articles BEGIN
+                        INSERT INTO news_fts(news_fts, rowid, title, description, subject)
+                        VALUES ('delete', old.id, old.title, old.description, old.subject);
+                    END
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE TRIGGER news_fts_au AFTER UPDATE ON news_articles BEGIN
+                        INSERT INTO news_fts(news_fts, rowid, title, description, subject)
+                        VALUES ('delete', old.id, old.title, old.description, old.subject);
+                        INSERT INTO news_fts(rowid, title, description, subject)
+                        VALUES (new.id, new.title, new.description, new.subject);
+                    END
+                    """
+                )
+                connection.execute("INSERT INTO news_fts(news_fts) VALUES('rebuild')")
+            except sqlite3.OperationalError:
+                pass  # FTS5 not available; search_news() will use LIKE fallback
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS regime_snapshots (
@@ -685,4 +816,298 @@ class SQLiteEngineStore:
             date=row["date"],
             value=float(row["value"]),
             metadata=json.loads(row["metadata_json"]),
+        )
+
+    # -- News articles -------------------------------------------------------
+
+    # Time-decay constants for news retrieval scoring
+    _IMPACT_HALF_LIFE = {"critical": 7, "high": 5, "medium": 3, "low": 2, "info": 1}
+    _IMPACT_WEIGHT = {"critical": 2.0, "high": 1.5, "medium": 1.0, "low": 0.6, "info": 0.3}
+    _TIME_DECAY_MAX_BOOST = 1.5
+    _TIME_DECAY_MIN_BOOST = 0.1
+
+    @staticmethod
+    def _normalize_news_published_at(published_at: str) -> str:
+        if not published_at:
+            return published_at
+        try:
+            parsed = datetime.fromisoformat(published_at)
+        except ValueError:
+            return published_at
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.isoformat()
+
+    @staticmethod
+    def _parse_news_published_at(published_at: str) -> datetime:
+        parsed = datetime.fromisoformat(published_at)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    def upsert_news_article(self, article: NewsArticleRecord) -> None:
+        normalized_published_at = self._normalize_news_published_at(article.published_at)
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO news_articles (
+                    url_hash, source_feed, feed_category, title, url,
+                    published_at, description, content_markdown,
+                    impact_level, finance_category, confidence,
+                    content_fetched, institution, country, market,
+                    asset_class, sector, document_type, event_type,
+                    subject, subject_id, data_period,
+                    contains_commentary, language, authors,
+                    extraction_provider, scraped_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    article.url_hash,
+                    article.source_feed,
+                    article.feed_category,
+                    article.title,
+                    article.url,
+                    normalized_published_at,
+                    article.description,
+                    article.content_markdown,
+                    article.impact_level,
+                    article.finance_category,
+                    article.confidence,
+                    int(article.content_fetched),
+                    article.institution,
+                    article.country,
+                    article.market,
+                    article.asset_class,
+                    article.sector,
+                    article.document_type,
+                    article.event_type,
+                    article.subject,
+                    article.subject_id,
+                    article.data_period,
+                    int(article.contains_commentary),
+                    article.language,
+                    article.authors,
+                    article.extraction_provider,
+                    utc_now().isoformat(),
+                ),
+            )
+
+    def list_recent_news(
+        self,
+        *,
+        limit: int = 20,
+        days: int = 7,
+        impact_level: str | None = None,
+        feed_category: str | None = None,
+        finance_category: str | None = None,
+        country: str | None = None,
+        asset_class: str | None = None,
+    ) -> list[NewsArticleRecord]:
+        cutoff = (utc_now() - timedelta(days=days)).isoformat()
+        conditions = ["published_at >= ?"]
+        params: list[Any] = [cutoff]
+        if impact_level:
+            conditions.append("impact_level = ?")
+            params.append(impact_level)
+        if feed_category:
+            conditions.append("feed_category = ?")
+            params.append(feed_category)
+        if finance_category:
+            conditions.append("finance_category = ?")
+            params.append(finance_category)
+        if country:
+            conditions.append("country = ?")
+            params.append(country)
+        if asset_class:
+            conditions.append("asset_class = ?")
+            params.append(asset_class)
+        params.append(limit)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM news_articles
+                WHERE {' AND '.join(conditions)}
+                ORDER BY published_at DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._row_to_news_article(row) for row in rows]
+
+    def search_news(self, query: str, *, limit: int = 20) -> list[NewsArticleRecord]:
+        with self._connection(commit=False) as connection:
+            try:
+                rows = connection.execute(
+                    """
+                    SELECT n.* FROM news_articles n
+                    JOIN news_fts ON news_fts.rowid = n.id
+                    WHERE news_fts MATCH ?
+                    ORDER BY n.published_at DESC, n.id DESC
+                    LIMIT ?
+                    """,
+                    (query, limit),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                pattern = f"%{query}%"
+                rows = connection.execute(
+                    """
+                    SELECT * FROM news_articles
+                    WHERE title LIKE ? OR description LIKE ?
+                    ORDER BY published_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (pattern, pattern, limit),
+                ).fetchall()
+        return [self._row_to_news_article(row) for row in rows]
+
+    def get_news_context(
+        self,
+        *,
+        query: str | None = None,
+        days: int = 7,
+        limit: int = 15,
+        impact_level: str | None = None,
+        feed_category: str | None = None,
+        finance_category: str | None = None,
+        country: str | None = None,
+        asset_class: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve news with time-decay + impact-weight composite scoring."""
+        cutoff = (utc_now() - timedelta(days=days)).isoformat()
+        conditions = ["published_at >= ?"]
+        params: list[Any] = [cutoff]
+        if impact_level:
+            conditions.append("impact_level = ?")
+            params.append(impact_level)
+        if feed_category:
+            conditions.append("feed_category = ?")
+            params.append(feed_category)
+        if finance_category:
+            conditions.append("finance_category = ?")
+            params.append(finance_category)
+        if country:
+            conditions.append("country = ?")
+            params.append(country)
+        if asset_class:
+            conditions.append("asset_class = ?")
+            params.append(asset_class)
+
+        with self._connection(commit=False) as connection:
+            if query:
+                try:
+                    rows = connection.execute(
+                        f"""
+                        SELECT n.* FROM news_articles n
+                        JOIN news_fts ON news_fts.rowid = n.id
+                        WHERE news_fts MATCH ? AND {' AND '.join(conditions)}
+                        """,
+                        [query] + params,
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    pattern = f"%{query}%"
+                    conditions.append("(title LIKE ? OR description LIKE ?)")
+                    params.extend([pattern, pattern])
+                    rows = connection.execute(
+                        f"""
+                        SELECT * FROM news_articles
+                        WHERE {' AND '.join(conditions)}
+                        """,
+                        params,
+                    ).fetchall()
+            else:
+                rows = connection.execute(
+                    f"""
+                    SELECT * FROM news_articles
+                    WHERE {' AND '.join(conditions)}
+                    """,
+                    params,
+                ).fetchall()
+
+        now = utc_now()
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for row in rows:
+            article = self._row_to_news_article(row)
+            try:
+                pub = self._parse_news_published_at(article.published_at)
+                age_days = max((now - pub).total_seconds() / 86400, 0.0)
+            except (ValueError, TypeError):
+                age_days = float(days)
+            half_life = self._IMPACT_HALF_LIFE.get(article.impact_level, 2)
+            time_decay = self._TIME_DECAY_MIN_BOOST + (
+                (self._TIME_DECAY_MAX_BOOST - self._TIME_DECAY_MIN_BOOST)
+                * math.pow(2, -age_days / half_life)
+            )
+            impact_w = self._IMPACT_WEIGHT.get(article.impact_level, 0.5)
+            composite = time_decay * impact_w
+
+            desc = article.description
+            if len(desc) > 500:
+                desc = desc[:500] + "..."
+            scored.append((composite, {
+                "source_feed": article.source_feed,
+                "title": article.title,
+                "url": article.url,
+                "published_at": article.published_at,
+                "description": desc,
+                "impact_level": article.impact_level,
+                "finance_category": article.finance_category,
+                "country": article.country,
+                "asset_class": article.asset_class,
+                "subject": article.subject,
+                "event_type": article.event_type,
+                "score": round(composite, 4),
+            }))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [item for _, item in scored[:limit]]
+
+    def get_recent_news_titles(self, *, hours: int = 24) -> list[str]:
+        cutoff = (utc_now() - timedelta(hours=hours)).isoformat()
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT title FROM news_articles
+                WHERE scraped_at >= ?
+                ORDER BY id DESC
+                """,
+                (cutoff,),
+            ).fetchall()
+        return [row["title"] for row in rows]
+
+    def news_article_exists(self, url_hash: str) -> bool:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT 1 FROM news_articles WHERE url_hash = ? LIMIT 1",
+                (url_hash,),
+            ).fetchone()
+        return row is not None
+
+    def _row_to_news_article(self, row: sqlite3.Row) -> NewsArticleRecord:
+        return NewsArticleRecord(
+            url_hash=row["url_hash"],
+            source_feed=row["source_feed"],
+            feed_category=row["feed_category"],
+            title=row["title"],
+            url=row["url"],
+            published_at=row["published_at"],
+            description=row["description"],
+            content_markdown=row["content_markdown"],
+            impact_level=row["impact_level"],
+            finance_category=row["finance_category"],
+            confidence=float(row["confidence"]),
+            content_fetched=bool(row["content_fetched"]),
+            institution=row["institution"] or "",
+            country=row["country"] or "",
+            market=row["market"] or "",
+            asset_class=row["asset_class"] or "",
+            sector=row["sector"] or "",
+            document_type=row["document_type"] or "",
+            event_type=row["event_type"] or "",
+            subject=row["subject"] or "",
+            subject_id=row["subject_id"] or "",
+            data_period=row["data_period"] or "",
+            contains_commentary=bool(row["contains_commentary"]),
+            language=row["language"] or "en",
+            authors=row["authors"] or "",
+            extraction_provider=row["extraction_provider"] or "keyword",
         )

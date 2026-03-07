@@ -10,7 +10,10 @@ requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4",
     "feedparser",
+    "httpx",
+    "markdownify",
     "python-telegram-bot>=21.0,<22",
+    "readability-lxml",
     "requests",
     "yfinance",
 ]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from analyst.storage.sqlite import StoredEventRecord
+from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
 
 from .app import build_demo_app, build_live_engine_app
 
@@ -52,6 +52,21 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("wrap")
     subparsers.add_parser("regime-refresh")
 
+    news_refresh = subparsers.add_parser("news-refresh")
+    news_refresh.add_argument("--category", default=None)
+
+    news_latest = subparsers.add_parser("news-latest")
+    news_latest.add_argument("--limit", type=int, default=20)
+    news_latest.add_argument("--impact", default=None)
+    news_latest.add_argument("--category", default=None)
+
+    news_search = subparsers.add_parser("news-search")
+    news_search.add_argument("query")
+    news_search.add_argument("--limit", type=int, default=20)
+
+    news_feeds_parser = subparsers.add_parser("news-feeds")
+    news_feeds_parser.add_argument("--category", default=None)
+
     return parser
 
 
@@ -65,6 +80,17 @@ def format_calendar_event(event: StoredEventRecord) -> str:
     return (
         f"{dt}  {event.country:>2} {stars:>3}  [{source:<12}]  "
         f"{event.indicator:<40}  A:{actual:<8} F:{forecast:<8} P:{previous}"
+    )
+
+
+def format_news_headline(article: NewsArticleRecord) -> str:
+    dt = article.published_at[:16].replace("T", " ")
+    impact = article.impact_level.upper()
+    country = article.country or "--"
+    subject = f"  [{article.subject}]" if article.subject else ""
+    return (
+        f"{dt}  {country:>2} [{impact:<8}]  [{article.source_feed:<20}]  "
+        f"{article.title}{subject}"
     )
 
 
@@ -142,6 +168,40 @@ def main(argv: list[str] | None = None) -> int:
         print(state.summary)
         for score in state.scores:
             print(f"- {score.axis}: {score.label} ({score.score:.0f})")
+        return 0
+    if args.command == "news-refresh":
+        app = build_live_engine_app()
+        result = app.engine.ingestion.refresh_news(category=args.category)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
+    if args.command == "news-latest":
+        app = build_live_engine_app()
+        articles = app.engine.store.list_recent_news(
+            limit=args.limit,
+            impact_level=args.impact,
+            feed_category=args.category,
+        )
+        if not articles:
+            print("No news articles found.")
+        else:
+            for article in articles:
+                print(format_news_headline(article))
+        return 0
+    if args.command == "news-search":
+        app = build_live_engine_app()
+        articles = app.engine.store.search_news(args.query, limit=args.limit)
+        if not articles:
+            print("No matching news articles found.")
+        else:
+            for article in articles:
+                print(format_news_headline(article))
+        return 0
+    if args.command == "news-feeds":
+        from analyst.ingestion.news_feeds import get_feeds
+        feeds = get_feeds(args.category)
+        for feed in feeds:
+            print(f"[{feed.category:<16}] {feed.name}")
+        print(f"\nTotal: {len(feeds)} feeds")
         return 0
 
     parser.error("unknown command")

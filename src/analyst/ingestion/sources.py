@@ -14,10 +14,14 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 
 from analyst.env import get_env_value
+from analyst.ingestion.news_extract import extract_news_metadata
+from analyst.ingestion.news_feeds import FeedInfo, RSS_FEEDS, get_feeds
+from analyst.ingestion.news_fetcher import ArticleFetcher
 from analyst.storage import (
     CentralBankCommunicationRecord,
     IndicatorObservationRecord,
     MarketPriceRecord,
+    NewsArticleRecord,
     SQLiteEngineStore,
     StoredEventRecord,
 )
@@ -662,6 +666,127 @@ class MarketPriceClient:
         return RefreshStats(source="market", count=count)
 
 
+class NewsIngestionClient:
+    def __init__(
+        self,
+        *,
+        timeout: int = 15,
+        max_items_per_feed: int = 10,
+        article_timeout: int = 20,
+        max_content_chars: int = 15_000,
+    ) -> None:
+        self._timeout = timeout
+        self._max_items_per_feed = max_items_per_feed
+        self._article_fetcher = ArticleFetcher(
+            timeout=article_timeout,
+            max_content_chars=max_content_chars,
+        )
+        self._session = requests.Session()
+        self._session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+        })
+
+    def refresh(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        category: str | None = None,
+    ) -> RefreshStats:
+        """Fetch -> extract articles -> LLM/keyword metadata -> store."""
+        feeds = get_feeds(category)
+
+        stored_count = 0
+        for feed in feeds:
+            try:
+                resp = self._session.get(feed.url, timeout=self._timeout)
+                resp.raise_for_status()
+                parsed = feedparser.parse(resp.text)
+            except Exception:
+                continue
+
+            entries = parsed.entries[: self._max_items_per_feed]
+            for entry in entries:
+                try:
+                    title = entry.get("title", "").strip()
+                    if not title:
+                        continue
+
+                    link = entry.get("link", "")
+                    if not link:
+                        continue
+
+                    url_hash = hashlib.sha256(link.encode("utf-8")).hexdigest()
+                    if store.news_article_exists(url_hash):
+                        continue
+
+                    raw_desc = entry.get("summary", "") or entry.get("description", "")
+                    from bs4 import BeautifulSoup as _BS
+                    description = _BS(raw_desc, "html.parser").get_text(" ", strip=True)
+
+                    published_at = ""
+                    if hasattr(entry, "published_parsed") and entry.published_parsed:
+                        published_at = datetime(
+                            *entry.published_parsed[:6], tzinfo=timezone.utc
+                        ).isoformat()
+                    if not published_at:
+                        published_at = datetime.now(timezone.utc).isoformat()
+
+                    article = self._article_fetcher.fetch_article(link, description)
+                    extraction = extract_news_metadata(
+                        title=title,
+                        description=description,
+                        content_markdown=article.content,
+                        source_feed=feed.name,
+                        feed_category=feed.category,
+                        published_at=published_at,
+                    )
+
+                    record = NewsArticleRecord(
+                        url_hash=url_hash,
+                        source_feed=feed.name,
+                        feed_category=feed.category,
+                        title=extraction.title,
+                        url=link,
+                        published_at=published_at,
+                        description=description,
+                        content_markdown=article.content,
+                        impact_level=extraction.impact_level,
+                        finance_category=extraction.finance_category,
+                        confidence=extraction.confidence,
+                        content_fetched=article.fetched,
+                        institution=extraction.institution,
+                        country=extraction.country,
+                        market=extraction.market,
+                        asset_class=extraction.asset_class,
+                        sector=extraction.sector,
+                        document_type=extraction.document_type,
+                        event_type=extraction.event_type,
+                        subject=extraction.subject,
+                        subject_id=extraction.subject_id,
+                        data_period=extraction.data_period,
+                        contains_commentary=extraction.contains_commentary,
+                        language=extraction.language,
+                        authors=extraction.authors,
+                        extraction_provider=extraction.extraction_provider,
+                    )
+                    store.upsert_news_article(record)
+                    stored_count += 1
+
+                    time.sleep(0.5)
+                except Exception:
+                    continue
+
+            time.sleep(0.3)
+
+        return RefreshStats(source="news", count=stored_count)
+
+    def close(self) -> None:
+        self._article_fetcher.close()
+
+
 class IngestionOrchestrator:
     def __init__(
         self,
@@ -672,6 +797,7 @@ class IngestionOrchestrator:
         forexfactory: ForexFactoryCalendarClient | None = None,
         fed: FedIngestionClient | None = None,
         market: MarketPriceClient | None = None,
+        news: NewsIngestionClient | None = None,
     ) -> None:
         self.store = store
         self.fred = fred or FREDIngestionClient()
@@ -679,6 +805,7 @@ class IngestionOrchestrator:
         self.forexfactory = forexfactory or ForexFactoryCalendarClient()
         self.fed = fed or FedIngestionClient()
         self.market = market or MarketPriceClient()
+        self.news = news or NewsIngestionClient()
 
     def refresh_calendar(self) -> dict[str, int]:
         total = 0
@@ -706,9 +833,13 @@ class IngestionOrchestrator:
         stats = self.fred.refresh_all_series(self.store, lookback_days=lookback_days)
         return {stats.source: stats.count}
 
+    def refresh_news(self, *, category: str | None = None) -> dict[str, int]:
+        stats = self.news.refresh(self.store, category=category)
+        return {stats.source: stats.count}
+
     def refresh_all(self) -> dict[str, int]:
         results: dict[str, int] = {}
-        for batch in (self.refresh_calendar(), self.refresh_fed(), self.refresh_market(), self.refresh_fred_daily()):
+        for batch in (self.refresh_calendar(), self.refresh_fed(), self.refresh_market(), self.refresh_fred_daily(), self.refresh_news()):
             results.update(batch)
         return results
 
@@ -718,6 +849,7 @@ class IngestionOrchestrator:
             "fed": {"interval": 14_400, "handler": self.refresh_fed},
             "market": {"interval": 1800, "handler": self.refresh_market},
             "fred_daily": {"interval": 86_400, "handler": self.refresh_fred_daily},
+            "news": {"interval": 900, "handler": self.refresh_news},
         }
         next_run = {name: 0.0 for name in jobs}
         self.refresh_all()

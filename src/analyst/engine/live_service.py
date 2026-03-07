@@ -8,7 +8,7 @@ from typing import Any
 
 from analyst.contracts import Event, Importance, RegimeScore, RegimeState, ResearchNote, utc_now
 from analyst.ingestion import IngestionOrchestrator
-from analyst.storage import SQLiteEngineStore, StoredEventRecord
+from analyst.storage import NewsArticleRecord, SQLiteEngineStore, StoredEventRecord
 
 from .agent_loop import AgentLoopConfig, PythonAgentLoop
 from .live_prompts import SYSTEM_PROMPT, briefing_prompt, flash_prompt, regime_prompt, wrap_prompt
@@ -265,6 +265,39 @@ class LiveAnalystEngine:
                 },
                 handler=self._tool_surprise_summary,
             ),
+            AgentTool(
+                name="get_recent_news",
+                description="Retrieve recent news articles ranked by time-decay and impact. Supports filtering by impact level, feed category, finance category, country, and asset class.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "days": {"type": "integer", "default": 3},
+                        "limit": {"type": "integer", "default": 15},
+                        "impact_level": {"type": "string", "description": "critical, high, medium, low, info"},
+                        "feed_category": {"type": "string", "description": "markets, forex, bonds, centralbanks, china, etc."},
+                        "finance_category": {"type": "string", "description": "monetary_policy, inflation, rates, etc."},
+                        "country": {"type": "string", "description": "Country code, e.g. US, CN, EU, Global"},
+                        "asset_class": {"type": "string", "description": "Asset class, e.g. Macro, Fixed Income, Equity, FX, Commodity"},
+                    },
+                },
+                handler=self._tool_recent_news,
+            ),
+            AgentTool(
+                name="search_news",
+                description="Search news articles by keyword using full-text search, ranked by time-decay and impact.",
+                parameters={
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer", "default": 15},
+                        "days": {"type": "integer", "default": 7},
+                        "country": {"type": "string", "description": "Country code, e.g. US, CN, EU"},
+                        "asset_class": {"type": "string", "description": "Asset class filter"},
+                    },
+                },
+                handler=self._tool_search_news,
+            ),
         ]
 
     def _loop(self) -> PythonAgentLoop:
@@ -399,6 +432,46 @@ class LiveAnalystEngine:
                 "avg_surprise": avg,
             })
         return {"summary": summary}
+
+    def _tool_recent_news(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        articles = self.store.get_news_context(
+            days=int(arguments.get("days", 3)),
+            limit=int(arguments.get("limit", 15)),
+            impact_level=arguments.get("impact_level"),
+            feed_category=arguments.get("feed_category"),
+            finance_category=arguments.get("finance_category"),
+            country=arguments.get("country"),
+            asset_class=arguments.get("asset_class"),
+        )
+        return {"articles": articles}
+
+    def _tool_search_news(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        articles = self.store.get_news_context(
+            query=str(arguments["query"]),
+            days=int(arguments.get("days", 7)),
+            limit=int(arguments.get("limit", 15)),
+            country=arguments.get("country"),
+            asset_class=arguments.get("asset_class"),
+        )
+        return {"articles": articles}
+
+    def _news_article_to_dict(self, article: NewsArticleRecord) -> dict[str, Any]:
+        desc = article.description
+        if len(desc) > 500:
+            desc = desc[:500] + "..."
+        return {
+            "source_feed": article.source_feed,
+            "title": article.title,
+            "url": article.url,
+            "published_at": article.published_at,
+            "description": desc,
+            "impact_level": article.impact_level,
+            "finance_category": article.finance_category,
+            "country": article.country,
+            "asset_class": article.asset_class,
+            "subject": article.subject,
+            "event_type": article.event_type,
+        }
 
     def _stored_event_to_dict(self, event: StoredEventRecord) -> dict[str, Any]:
         return {
