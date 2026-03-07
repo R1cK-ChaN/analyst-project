@@ -5,8 +5,9 @@ Standalone Analyst product scaffold. This folder now contains its own installabl
 Current WS1 status on March 7, 2026:
 
 - the live WS1 engine is implemented under `src/analyst/engine/`, `src/analyst/storage/`, and `src/analyst/ingestion/`
-- local live commands now cover refresh, flash commentary, briefing, wrap, regime refresh, and calendar inspection
-- the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, and yfinance
+- local live commands now cover refresh, flash commentary, briefing, wrap, regime refresh, calendar inspection, and news inspection
+- the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, yfinance, and macro-finance RSS news ingestion
+- the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
 - China-specific ingestion, live end-to-end provider verification, and delivery integration are still pending
 
 ## What's Inside
@@ -55,6 +56,7 @@ analyst-project/
 │   └── README.md                   Historical split-package note; live code moved into `src/analyst/integration/`
 │
 ├── tests/                          ← LOCAL VALIDATION
+│   ├── test_news_ingestion.py      WS1 news ingestion, extraction, search, and retrieval ranking tests
 │   ├── test_product_layer.py       End-to-end contract and routing smoke tests
 │   ├── test_telegram.py            Telegram formatter, bot wiring, and transport regression tests
 │   └── test_ws1_engine.py          WS1 live engine + calendar: store, scraper, env, CLI, regime parsing
@@ -67,8 +69,8 @@ analyst-project/
 │   ├── information/                Local information layer using bundled demo data
 │   ├── runtime/                    Runtime and prompt profiles
 │   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
-│   ├── storage/                    SQLite store (calendar, prices, comms, indicators, regime, notes)
-│   ├── ingestion/                  Source adapters (Investing.com, ForexFactory, FRED, Fed RSS, yfinance)
+│   ├── storage/                    SQLite store (calendar, prices, comms, indicators, news, regime, notes)
+│   ├── ingestion/                  Source adapters (Investing.com, ForexFactory, FRED, Fed RSS, yfinance, RSS news)
 │   ├── delivery/                   WeCom/Telegram formatting and Telegram bot shell
 │   └── integration/                Message routing
 │
@@ -157,6 +159,10 @@ PYTHONPATH=src python3 -m analyst flash --indicator cpi
 PYTHONPATH=src python3 -m analyst briefing
 PYTHONPATH=src python3 -m analyst wrap
 PYTHONPATH=src python3 -m analyst regime-refresh
+PYTHONPATH=src python3 -m analyst news-refresh --category markets
+PYTHONPATH=src python3 -m analyst news-latest --limit 10 --category centralbanks
+PYTHONPATH=src python3 -m analyst news-search "Fed" --limit 10
+PYTHONPATH=src python3 -m analyst news-feeds --category markets
 
 # Telegram bot
 ANALYST_TELEGRAM_TOKEN=your-token PYTHONPATH=src python3 -m analyst.delivery.bot
@@ -165,7 +171,7 @@ ANALYST_TELEGRAM_TOKEN=your-token PYTHONPATH=src python3 -m analyst.delivery.bot
 This validates the current standalone implementation:
 
 - bundled demo data + demo engine path
-- WS1 live engine: SQLite store, ingestion adapters, calendar query surface, agent loop, OpenRouter provider
+- WS1 live engine: SQLite store, ingestion adapters, calendar/news query surface, agent loop, OpenRouter provider
 - WeCom and Telegram formatters
 - Telegram polling bot shell
 - integration router

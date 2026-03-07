@@ -1,6 +1,6 @@
 # Analyst — Implementation Status
 
-**Status date:** March 7, 2026 (updated after ws1/engine + ws1/calendar merge)
+**Status date:** March 7, 2026 (updated after ws1/news merge)
 
 This document is the current implementation snapshot for `analyst-project/`.
 
@@ -91,17 +91,20 @@ Implemented in `src/analyst/engine/`:
 - live flash commentary (数据快评), morning briefing (早盘速递), after-market wrap (收盘点评)
 - regime state refresh with structured JSON regime scoring
 - live calendar inspection path with scope routing (`today`, `upcoming`, `recent`, `week`)
-- local agent tools for today's calendar, indicator release trends, and surprise summaries
+- local agent tools for today's calendar, indicator release trends, surprise summaries, recent news, and news search
 
 ### Storage layer
 
 Implemented in `src/analyst/storage/`:
 
 - SQLite store (`sqlite.py`) with managed connection context manager (commit/rollback/close)
-- six tables: `calendar_events`, `market_prices`, `central_bank_comms`, `indicators`, `regime_snapshots`, `generated_notes`
+- seven tables: `calendar_events`, `market_prices`, `central_bank_comms`, `indicators`, `news_articles`, `regime_snapshots`, `generated_notes`
 - frozen dataclass records for all table types
 - calendar event enrichment fields including `revised_previous` and `currency`
-- query methods: recent/upcoming events, date-range queries, today's events, indicator release history, latest prices, indicator history, regime snapshots
+- news article metadata fields for institution/country/market/asset class/sector/document type/event type/subject/data period/commentary/language/authors/provider
+- FTS-backed `news_fts` index with LIKE fallback for SQLite builds without FTS5
+- time-decay + impact-weight news ranking via `get_news_context()`
+- query methods: recent/upcoming events, date-range queries, today's events, indicator release history, latest prices, indicator history, news listing/search/context, regime snapshots
 - upsert semantics with UNIQUE constraints for deduplication
 
 ### Ingestion layer
@@ -113,9 +116,14 @@ Implemented in `src/analyst/ingestion/`:
 - `FREDIngestionClient`: FRED API adapter for 25+ macro series (inflation, employment, growth, rates, liquidity, FX, credit)
 - `FedIngestionClient`: Fed RSS feed parser for press releases, speeches, and testimony
 - `MarketPriceClient`: cross-asset price scraper via yfinance (equities, FX, bonds, commodities, crypto)
+- `NewsIngestionClient`: macro-finance RSS pipeline with URL deduplication, article fetch, structured extraction, and persistence
+- `news_feeds.py`: 140+ curated RSS/Google News feed definitions by category
+- `news_fetcher.py`: article extraction with Google News proxy resolution + readability/markdownify
+- `news_extract.py`: LLM metadata extraction with keyword fallback and canonical finance category mapping
 - `IngestionOrchestrator`: refresh-all and schedule orchestrator with configurable intervals
 - Investing calendar retry/backoff and multi-day refresh window (`days_back=1`, `days_forward=3`)
 - Investing calendar parsing for currency text and revised previous values
+- scheduled news refresh every 15 minutes
 
 ### Environment resolver
 
@@ -150,6 +158,7 @@ Implemented in `src/analyst/integration/`:
 
 Implemented in `tests/`:
 
+- `test_news_ingestion.py` for RSS feed registry, classifier utility, article fetcher, SQLite news storage, extraction fallback behavior, and news ingestion/retrieval regressions
 - `test_product_layer.py` for product-layer smoke tests
 - `test_telegram.py` for Telegram formatter, truncation, routing, and bot wiring
 - `test_ws1_engine.py` for WS1 live engine and calendar paths: store CRUD/upsert/filter/range queries, scraper retry behavior, flash commentary tool-calling loop with persistence, no-event error path, regime payload parsing with malformed JSON, env fallback chain, and CLI routing for refresh/flash/regime-refresh/live-calendar
@@ -163,11 +172,10 @@ Implemented in `tests/`:
 Not yet implemented inside `analyst-project/`:
 
 - live government-report crawling (BLS, BEA beyond FRED)
-- live news ingestion (Finnhub, Alpha Vantage, Google News RSS)
 - China-specific sources (PBOC, NBS, Xinhua, Caixin)
 - live document parsing
 
-Note: calendar scraping (Investing.com, ForexFactory), FRED series, Fed RSS, and yfinance market prices are now implemented in `src/analyst/ingestion/`.
+Note: calendar scraping (Investing.com, ForexFactory), FRED series, Fed RSS, yfinance market prices, and RSS-based news ingestion are now implemented in `src/analyst/ingestion/`.
 
 ### Agent backend (remaining)
 
@@ -221,26 +229,29 @@ Done:
 
 - engine contract layer
 - regime summary, pre-market briefing, Q&A, draft, and meeting-prep paths (demo)
-- SQLite store with 6 tables and managed connections
-- ingestion adapters: Investing.com calendar, ForexFactory calendar, FRED API (25+ series), Fed RSS, yfinance market prices
+- SQLite store with 7 tables and managed connections
+- ingestion adapters: Investing.com calendar, ForexFactory calendar, FRED API (25+ series), Fed RSS, yfinance market prices, RSS news ingestion
 - enriched calendar event storage with `revised_previous` and `currency`
+- news article storage with structured metadata, provider tracking, and FTS-backed retrieval
 - calendar query surface for recent, upcoming, today, week, and indicator-history views
+- news query surface for latest/search/context views with time-decay ranking
 - ingestion orchestrator with refresh-all and scheduled polling
 - Investing calendar retry/backoff and multi-day fetching
+- RSS article fetch/extract pipeline with keyword/LLM metadata extraction
 - Python agent loop with turn-bounded tool calling
 - OpenRouter LLM provider with configurable model
 - Chinese-language institutional macro prompts (数据快评, 早盘速递, 收盘点评, regime refresh)
 - regime state scoring with clamped numeric axes and cross-asset implications
 - environment resolver with multi-file `.env` fallback
-- CLI commands: refresh, schedule, flash, briefing, wrap, regime-refresh, live-calendar
-- agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, and surprise summaries
-- focused WS1 tests covering store, scraper retry paths, loop, env, CLI, regime parsing, and calendar query behavior
+- CLI commands: refresh, schedule, flash, briefing, wrap, regime-refresh, live-calendar, news-refresh, news-latest, news-search, news-feeds
+- agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, surprise summaries, recent news, and news search
+- focused WS1 tests covering store, scraper retry paths, loop, env, CLI, calendar query behavior, news ingestion, search, and ranking regressions
 
 Missing:
 
 - live end-to-end verification against OpenRouter/FRED (tested locally with mocks only)
 - China-specific ingestion (PBOC, NBS, Xinhua, Caixin)
-- news ingestion (Finnhub, Alpha Vantage, Google News)
+- non-RSS premium/news API sources (Finnhub, Alpha Vantage) if broader coverage is needed
 - evaluation harness and quality benchmarking against real sell-side notes
 - Sales agent Month 2 scope (user personalization, memory)
 
