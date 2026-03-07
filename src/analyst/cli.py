@@ -61,7 +61,11 @@ def format_calendar_event(event: StoredEventRecord) -> str:
     forecast = event.forecast or "-"
     previous = event.previous or "-"
     dt = event.datetime_utc[:16].replace("T", " ")
-    return f"{dt}  {event.country:>2} {stars:>3}  {event.indicator:<40}  A:{actual:<8} F:{forecast:<8} P:{previous}"
+    source = event.source.upper()
+    return (
+        f"{dt}  {event.country:>2} {stars:>3}  [{source:<12}]  "
+        f"{event.indicator:<40}  A:{actual:<8} F:{forecast:<8} P:{previous}"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

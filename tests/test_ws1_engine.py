@@ -491,6 +491,16 @@ class CalendarEnhancementsTest(unittest.TestCase):
             self.assertEqual(mock_fetch.call_count, 3)
             self.assertEqual(len(events), 3)  # 1 event per day * 3 days
 
+    def test_fetch_retries_then_raises(self) -> None:
+        from analyst.ingestion.sources import InvestingCalendarClient
+
+        client = InvestingCalendarClient()
+        client.session.post = Mock(side_effect=RuntimeError("boom"))
+        with patch("analyst.ingestion.sources.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "Investing calendar fetch failed after 3 attempts"):
+                client.fetch(date_from="2026-03-07", date_to="2026-03-07")
+        self.assertEqual(client.session.post.call_count, 3)
+
     def test_tool_indicator_trend(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
@@ -523,6 +533,7 @@ class CalendarEnhancementsTest(unittest.TestCase):
             with redirect_stdout(output):
                 rc = main(["live-calendar", "--scope", "today"])
         self.assertEqual(rc, 0)
+        self.assertIn("INVESTING", output.getvalue())
         self.assertIn("CPI YoY", output.getvalue())
         self.assertIn("3.4%", output.getvalue())
 

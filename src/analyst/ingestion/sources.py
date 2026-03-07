@@ -277,7 +277,9 @@ class InvestingCalendarClient:
                 last_error = exc
                 if attempt < 2:
                     time.sleep(2 ** attempt)
-        return []
+        raise RuntimeError(
+            f"Investing calendar fetch failed after 3 attempts for {date_from} to {date_to}."
+        ) from last_error
 
     def fetch_range(self, *, days_back: int = 1, days_forward: int = 3) -> list[StoredEventRecord]:
         today = datetime.now(OPEN_UTC_PLUS_8).date()
