@@ -49,15 +49,19 @@ analyst-project/
 │
 ├── tests/                          ← LOCAL VALIDATION
 │   ├── test_product_layer.py       End-to-end contract and routing smoke tests
-│   └── test_telegram.py            Telegram formatter, bot wiring, and transport regression tests
+│   ├── test_telegram.py            Telegram formatter, bot wiring, and transport regression tests
+│   └── test_ws1_engine.py          WS1 live engine: store, agent loop, env, CLI, regime parsing
 │
 ├── src/analyst/                    ← LIVE IMPLEMENTATION
 │   ├── app.py                      App factory and top-level product wiring
 │   ├── cli.py                      Local CLI entrypoint
 │   ├── contracts.py                Shared product contracts
+│   ├── env.py                      Multi-file .env resolver
 │   ├── information/                Local information layer using bundled demo data
 │   ├── runtime/                    Runtime and prompt profiles
-│   ├── engine/                     Engine service boundary
+│   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
+│   ├── storage/                    SQLite store (calendar, prices, comms, indicators, regime, notes)
+│   ├── ingestion/                  Source adapters (Investing.com, ForexFactory, FRED, Fed RSS, yfinance)
 │   ├── delivery/                   WeCom/Telegram formatting and Telegram bot shell
 │   └── integration/                Message routing
 │
@@ -134,19 +138,27 @@ python3 -m unittest discover -s tests -v
 Quick local usage:
 
 ```bash
+# Demo commands (no API keys needed)
 PYTHONPATH=src python3 -m analyst regime
 PYTHONPATH=src python3 -m analyst route "帮我写一段关于今晚非农数据的客户消息"
+
+# WS1 live engine commands (requires .env with API keys — see .env.example)
+PYTHONPATH=src python3 -m analyst refresh --once
+PYTHONPATH=src python3 -m analyst flash --indicator cpi
+PYTHONPATH=src python3 -m analyst briefing
+PYTHONPATH=src python3 -m analyst wrap
+PYTHONPATH=src python3 -m analyst regime-refresh
+
+# Telegram bot
 ANALYST_TELEGRAM_TOKEN=your-token PYTHONPATH=src python3 -m analyst.delivery.bot
 ```
 
-This validates the current standalone thin slice:
+This validates the current standalone implementation:
 
-- bundled demo data
-- local information layer
-- runtime layer
-- engine service
-- WeCom formatter
-- Telegram formatter and polling bot shell
+- bundled demo data + demo engine path
+- WS1 live engine: SQLite store, ingestion adapters, agent loop, OpenRouter provider
+- WeCom and Telegram formatters
+- Telegram polling bot shell
 - integration router
 
 ## Source Of Truth

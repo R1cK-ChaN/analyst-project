@@ -1,7 +1,7 @@
 # WS1: Macro Engine — Detailed Specification
 
-Status note on March 6, 2026:
-This document describes the target WS1 scope. For the current implemented WS1 slice, see `00-overview/Implementation_Status.md`.
+Status note on March 7, 2026:
+Month 1 scope (data pipeline + analyst agent) is implemented and merged to main. The live engine path is in `src/analyst/engine/`, `src/analyst/storage/`, and `src/analyst/ingestion/`. Live OpenRouter/FRED execution has been tested locally with mocks; end-to-end network verification is pending. For full implementation status, see `00-overview/Implementation_Status.md`.
 
 ## Owner: Technical Founder
 ## Timeline: Month 1–2
