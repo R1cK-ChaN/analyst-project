@@ -1,6 +1,6 @@
 # Analyst — Implementation Status
 
-**Status date:** March 6, 2026
+**Status date:** March 7, 2026
 
 This document is the current implementation snapshot for `analyst-project/`.
 
@@ -33,6 +33,8 @@ The sibling `information/` repo is currently reference material only. The standa
 - installable project metadata in `pyproject.toml`
 - package entrypoint in `src/analyst/__main__.py`
 - CLI in `src/analyst/cli.py`
+- Telegram bot entrypoint in `src/analyst/delivery/bot.py`
+- `analyst-telegram` console script in `pyproject.toml`
 - top-level app factory in `src/analyst/app.py`
 
 ### Shared contracts
@@ -87,8 +89,11 @@ Implemented in `src/analyst/engine/`:
 Implemented in `src/analyst/delivery/`:
 
 - WeCom-style message formatting
+- Telegram-specific message formatting
+- Telegram polling bot shell with `/start`, `/help`, `/regime`, `/calendar`, and `/premarket`
 - compliance disclaimers
 - calendar reply formatting
+- Telegram-safe 4096-character truncation that preserves disclaimers
 
 ### Integration layer
 
@@ -96,17 +101,16 @@ Implemented in `src/analyst/integration/`:
 
 - keyword-based mode detection
 - message routing to engine methods
-- formatted WeCom reply generation
+- channel-agnostic formatter protocol
+- generic formatted reply generation
+- backward-compatible `handle_wecom_message()` alias
 
 ### Tests
 
-Implemented in `tests/test_product_layer.py`:
+Implemented in `tests/`:
 
-- routing test
-- draft reply smoke test
-- regime reply smoke test
-- pre-market briefing smoke test
-- local calendar data smoke test
+- `test_product_layer.py` for product-layer smoke tests
+- `test_telegram.py` for Telegram formatter, truncation, routing, and bot wiring
 
 ---
 
@@ -190,16 +194,19 @@ Status: partially implemented
 
 Done:
 
-- reply formatting
+- WeCom and Telegram reply formatting
 - disclaimers
 - channel-oriented message objects
+- Telegram bot transport for interactive polling-based delivery
+- command handlers for `/start`, `/help`, `/regime`, `/calendar`, and `/premarket`
 
 Missing:
 
 - real WeCom integration
 - push scheduling
 - account/app setup
-- real delivery transport
+- official account and mini-program delivery surfaces
+- webhook/server deployment and production operations
 
 ### WS3 Customer Discovery
 
@@ -215,11 +222,12 @@ Done:
 
 - router patterns
 - request-to-engine dispatch
+- formatter abstraction across delivery channels
 - formatted reply output
 
 Missing:
 
-- transport/server layer
+- WeCom transport/server layer
 - logging/tracing
 - retries and failure handling
 - per-user state
@@ -263,6 +271,7 @@ From `analyst-project/`:
 ```bash
 PYTHONPATH=src python3 -m analyst regime
 PYTHONPATH=src python3 -m analyst route "帮我写一段关于今晚非农数据的客户消息"
+ANALYST_TELEGRAM_TOKEN=your-token PYTHONPATH=src python3 -m analyst.delivery.bot
 python3 -m unittest discover -s tests -v
 ```
 
@@ -273,4 +282,4 @@ python3 -m unittest discover -s tests -v
 1. Replace `data/demo/` with a local Analyst-owned ingestion/store layer.
 2. Add persistent research and interaction storage inside `analyst-project/`.
 3. Add a real runtime adapter behind the current deterministic runtime interface.
-4. Add an actual delivery transport layer for WeCom.
+4. Add a production-grade WeCom delivery transport layer and push scheduler.

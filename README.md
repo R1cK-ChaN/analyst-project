@@ -48,7 +48,8 @@ analyst-project/
 │   └── README.md                   Historical split-package note; live code moved into `src/analyst/integration/`
 │
 ├── tests/                          ← LOCAL VALIDATION
-│   └── test_product_layer.py       End-to-end contract and routing smoke tests
+│   ├── test_product_layer.py       End-to-end contract and routing smoke tests
+│   └── test_telegram.py            Telegram formatter, bot wiring, and transport regression tests
 │
 ├── src/analyst/                    ← LIVE IMPLEMENTATION
 │   ├── app.py                      App factory and top-level product wiring
@@ -57,7 +58,7 @@ analyst-project/
 │   ├── information/                Local information layer using bundled demo data
 │   ├── runtime/                    Runtime and prompt profiles
 │   ├── engine/                     Engine service boundary
-│   ├── delivery/                   Channel formatting
+│   ├── delivery/                   WeCom/Telegram formatting and Telegram bot shell
 │   └── integration/                Message routing
 │
 ├── data/demo/                      ← LOCAL DEMO DATA
@@ -135,6 +136,7 @@ Quick local usage:
 ```bash
 PYTHONPATH=src python3 -m analyst regime
 PYTHONPATH=src python3 -m analyst route "帮我写一段关于今晚非农数据的客户消息"
+ANALYST_TELEGRAM_TOKEN=your-token PYTHONPATH=src python3 -m analyst.delivery.bot
 ```
 
 This validates the current standalone thin slice:
@@ -144,6 +146,7 @@ This validates the current standalone thin slice:
 - runtime layer
 - engine service
 - WeCom formatter
+- Telegram formatter and polling bot shell
 - integration router
 
 ## Source Of Truth
