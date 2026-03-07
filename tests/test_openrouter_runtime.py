@@ -65,6 +65,7 @@ def make_context(mode: InteractionMode = InteractionMode.QA) -> RuntimeContext:
         mode=mode,
         user_id="test-user",
         instruction="请给我一份宏观解释。",
+        memory_context="",
         focus="global",
         audience="internal_rm",
         market_snapshot=snapshot,

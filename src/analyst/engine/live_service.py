@@ -8,6 +8,7 @@ from typing import Any
 
 from analyst.contracts import Event, Importance, RegimeScore, RegimeState, ResearchNote, utc_now
 from analyst.ingestion import IngestionOrchestrator
+from analyst.memory import MemoryManager, research_global_scope
 from analyst.storage import NewsArticleRecord, SQLiteEngineStore, StoredEventRecord
 
 from .agent_loop import AgentLoopConfig, PythonAgentLoop
@@ -60,6 +61,7 @@ class LiveAnalystEngine:
         self.provider = provider
         self.ingestion = ingestion or IngestionOrchestrator(store)
         self.config = config or LiveEngineConfig()
+        self.memory_manager = MemoryManager(store)
 
     def refresh_all_sources(self) -> dict[str, int]:
         return self.ingestion.refresh_all()
@@ -124,6 +126,14 @@ class LiveAnalystEngine:
             trigger_event=regime_payload["trigger"],
             summary=regime_payload["dominant_narrative"],
         )
+        self._remember_research_output(
+            title="宏观状态刷新",
+            body_markdown=result.final_text,
+            summary=regime_payload["dominant_narrative"],
+            artifact_type="regime_snapshot",
+            payload=regime_payload,
+            tags=["ws1", "regime_refresh"],
+        )
         return self._regime_to_contract(snapshot.regime_json)
 
     def _finalize_note(
@@ -150,6 +160,18 @@ class LiveAnalystEngine:
             body_markdown=body_markdown,
             regime_json=regime_payload,
             metadata=metadata,
+        )
+        self._remember_research_output(
+            title=title,
+            body_markdown=body_markdown,
+            summary=regime_payload["dominant_narrative"],
+            artifact_type="research_note",
+            payload={
+                "note_type": note_type,
+                "regime": regime_payload,
+                "metadata": metadata,
+            },
+            tags=["ws1", note_type],
         )
         return ResearchNote(
             note_id=f"live-note-{saved_note.note_id}",
@@ -614,6 +636,39 @@ class LiveAnalystEngine:
             f"- {event.datetime_utc} | {event.country} {event.indicator} | 实际 {event.actual or '待公布'} | "
             f"预期 {event.forecast or '未知'} | 前值 {event.previous or '未知'}"
             for event in events
+        )
+
+    def _remember_research_output(
+        self,
+        *,
+        title: str,
+        body_markdown: str,
+        summary: str,
+        artifact_type: str,
+        payload: dict[str, Any],
+        tags: list[str],
+    ) -> None:
+        session = self.memory_manager.get_session(research_global_scope())
+        session.add_event(
+            "published_output",
+            {"artifact_type": artifact_type, "title": title},
+        )
+        session.store_archival(
+            f"{title}\n{summary}\n{body_markdown}",
+            {"artifact_type": artifact_type},
+        )
+        session.set_block("latest_research_output", title, label="Latest Research Output")
+        self.store.publish_artifact(
+            artifact_type=artifact_type,
+            producer_agent="research",
+            title=title,
+            summary=summary,
+            content_markdown=body_markdown,
+            payload=payload,
+            tags=tags,
+            source_scope_key=session.scope.storage_key(),
+            client_safe=True,
+            metadata={"source": "live_engine"},
         )
 
     def _regime_to_contract(self, regime_json: dict[str, Any]) -> RegimeState:

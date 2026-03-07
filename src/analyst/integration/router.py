@@ -47,20 +47,21 @@ class AnalystIntegrationService:
         message: str,
         user_id: str,
         focus: str = "global",
+        memory_context: str = "",
     ) -> ChannelMessage:
         mode = detect_mode(message)
         if mode == InteractionMode.DRAFT:
-            response = self.engine.generate_draft(message, user_id=user_id, focus=focus)
+            response = self.engine.generate_draft(message, user_id=user_id, focus=focus, memory_context=memory_context)
             return self.formatter.format_draft(response)
         if mode == InteractionMode.MEETING_PREP:
-            response = self.engine.generate_meeting_prep(message, user_id=user_id, focus=focus)
+            response = self.engine.generate_meeting_prep(message, user_id=user_id, focus=focus, memory_context=memory_context)
             return self.formatter.format_draft(response)
         if mode == InteractionMode.REGIME:
             note = self.engine.get_regime_summary(focus=focus)
             return self.formatter.format_research_note(note, mode=InteractionMode.REGIME)
         if mode == InteractionMode.CALENDAR:
             return self.formatter.format_calendar(self.engine.get_calendar(limit=5))
-        response = self.engine.answer_question(message, user_id=user_id, focus=focus)
+        response = self.engine.answer_question(message, user_id=user_id, focus=focus, memory_context=memory_context)
         return self.formatter.format_draft(response)
 
     def handle_wecom_message(
@@ -68,5 +69,6 @@ class AnalystIntegrationService:
         message: str,
         user_id: str,
         focus: str = "global",
+        memory_context: str = "",
     ) -> ChannelMessage:
-        return self.handle_message(message, user_id=user_id, focus=focus)
+        return self.handle_message(message, user_id=user_id, focus=focus, memory_context=memory_context)

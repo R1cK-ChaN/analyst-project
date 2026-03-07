@@ -51,7 +51,9 @@ from analyst.information import (  # noqa: E402
     FileBackedInformationRepository,
 )
 from analyst.integration import AnalystIntegrationService  # noqa: E402
+from analyst.memory import MemoryManager, build_sales_memory_context, record_sales_interaction  # noqa: E402
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig  # noqa: E402
+from analyst.storage import SQLiteEngineStore  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +85,13 @@ HELP_TEXT = (
 )
 
 
-def _build_services() -> tuple[OpenRouterAnalystEngine, TelegramFormatter, AnalystIntegrationService]:
+def _build_services() -> tuple[
+    OpenRouterAnalystEngine,
+    TelegramFormatter,
+    AnalystIntegrationService,
+    SQLiteEngineStore,
+    MemoryManager,
+]:
     """Wire up the analyst service stack."""
     repository = FileBackedInformationRepository()
     info_service = AnalystInformationService(repository)
@@ -108,7 +116,9 @@ def _build_services() -> tuple[OpenRouterAnalystEngine, TelegramFormatter, Analy
     engine = OpenRouterAnalystEngine(info_service=info_service, runtime=runtime)
     formatter = TelegramFormatter()
     integration = AnalystIntegrationService(engine=engine, formatter=formatter)
-    return engine, formatter, integration
+    store = SQLiteEngineStore()
+    memory_manager = MemoryManager(store)
+    return engine, formatter, integration, store, memory_manager
 
 
 # ---------------------------------------------------------------------------
@@ -187,13 +197,35 @@ def _make_message_handler(
     _engine: OpenRouterAnalystEngine,
     _formatter: TelegramFormatter,
     integration: AnalystIntegrationService,
+    store: SQLiteEngineStore,
+    memory_manager: MemoryManager,
 ):
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None or update.effective_message.text is None:
             return
-        user_id = str(update.effective_user.id) if update.effective_user else "unknown"
+        user_id = str(update.effective_user.id) if update.effective_user else str(update.effective_chat.id)
         text = update.effective_message.text
-        reply = integration.handle_message(text, user_id=user_id)
+        channel_id = f"telegram:{update.effective_chat.id}"
+        topic_id = getattr(update.effective_message, "message_thread_id", None)
+        thread_id = str(topic_id) if topic_id is not None else "main"
+        memory_context = build_sales_memory_context(
+            manager=memory_manager,
+            store=store,
+            client_id=user_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            query=text,
+        )
+        reply = integration.handle_message(text, user_id=user_id, memory_context=memory_context)
+        record_sales_interaction(
+            manager=memory_manager,
+            store=store,
+            client_id=user_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            user_text=text,
+            assistant_text=reply.plain_text,
+        )
         await update.effective_message.reply_text(reply.plain_text)
 
     return handle_message
@@ -204,7 +236,7 @@ def build_application(token: str) -> Application:
 
     Does NOT call .run_polling(); the caller decides how to start it.
     """
-    engine, formatter, integration = _build_services()
+    engine, formatter, integration, store, memory_manager = _build_services()
 
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", _make_start_handler(engine, formatter, integration)))
@@ -212,7 +244,12 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("regime", _make_regime_handler(engine, formatter, integration)))
     app.add_handler(CommandHandler("calendar", _make_calendar_handler(engine, formatter, integration)))
     app.add_handler(CommandHandler("premarket", _make_premarket_handler(engine, formatter, integration)))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _make_message_handler(engine, formatter, integration)))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            _make_message_handler(engine, formatter, integration, store, memory_manager),
+        )
+    )
 
     return app
 
