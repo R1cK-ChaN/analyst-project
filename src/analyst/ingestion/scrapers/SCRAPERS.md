@@ -4,15 +4,18 @@ Each scraper module targets one financial site and exposes clients for every
 scrapable data section. All clients use `curl_cffi` (via `create_cf_session`)
 for TLS-fingerprint bypass of Cloudflare protection.
 
+All news clients support **pagination** — single-page fetches for polling,
+plus `fetch_all_news()` convenience methods for backfill.
+
 ---
 
 ## Shared Data Types (`_common.py`)
 
 | Dataclass | Purpose |
 |-----------|---------|
-| `ScrapedNewsItem` | A news/article headline from any site |
+| `ScrapedNewsItem` | A news/article headline from any site (`image_url`, `raw_json` included) |
 | `ScrapedIndicator` | A macro-economic indicator snapshot |
-| `ScrapedMarketQuote` | A market price quote |
+| `ScrapedMarketQuote` | A market price quote (`symbol`, `raw_json` included) |
 
 Calendar data uses the existing `StoredEventRecord` from `analyst.storage`.
 
@@ -29,8 +32,8 @@ Scrapes the **economic calendar** via Investing.com's internal JSON API.
 | `fetch(date_from, date_to)` | `list[StoredEventRecord]` | Events for a single date range |
 | `fetch_range(days_back, days_forward)` | `list[StoredEventRecord]` | Multi-day sweep with 1.5 s delay between days |
 
-**Fields per event:** source, event_id, datetime_utc, country, indicator,
-category, importance (low/medium/high), actual, forecast, previous,
+**Fields per event:** source, event_id, timestamp (epoch seconds), country,
+indicator, category, importance (low/medium/high), actual, forecast, previous,
 revised_previous, surprise, currency, raw_json.
 
 **Anti-bot:** POST to `/Service/getCalendarFilteredData` with
@@ -42,7 +45,8 @@ Scrapes **news articles** from the `/news/<category>` HTML pages.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `fetch_news(category)` | `list[ScrapedNewsItem]` | Articles for one category |
+| `fetch_news(category, page=1)` | `list[ScrapedNewsItem]` | Articles for one category page |
+| `fetch_all_news(category, max_pages=3)` | `list[ScrapedNewsItem]` | Paginate through multiple pages with 1.5 s delay |
 
 **Supported categories:** `latest-news`, `economy-news`,
 `commodities-news`, `cryptocurrency-news`, `forex-news`,
@@ -59,6 +63,7 @@ Scrapes **news articles** from the `/news/<category>` HTML pages.
 | `description` | First-paragraph snippet |
 | `author` | "Reuters", "Investing.com" |
 | `category` | Extracted from URL path (e.g. `economy-news`) |
+| `raw_json.comments` | Comment count (int, when visible on the page) |
 
 **Typical yield:** ~20 articles per category page.
 
@@ -74,9 +79,9 @@ Scrapes the **economic calendar** table from the ForexFactory calendar page.
 |--------|---------|-------------|
 | `fetch(week)` | `list[StoredEventRecord]` | Events for `"this"` week or a specific week string |
 
-**Fields per event:** source, event_id, datetime_utc, country, indicator,
-category, importance (low/medium/high from colour), actual, forecast,
-previous, surprise, raw_json.
+**Fields per event:** source, event_id, timestamp (epoch seconds), country,
+indicator, category, importance (low/medium/high from colour), actual,
+forecast, previous, surprise, raw_json.
 
 ### ForexFactoryNewsClient
 
@@ -84,7 +89,8 @@ Scrapes the **news feed** from the ForexFactory `/news` page.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `fetch_news()` | `list[ScrapedNewsItem]` | Latest news articles |
+| `fetch_news(page=1)` | `list[ScrapedNewsItem]` | News articles for one page |
+| `fetch_all_news(max_pages=3)` | `list[ScrapedNewsItem]` | Paginate through multiple pages with 1.5 s delay |
 
 **Fields per item:**
 
@@ -95,6 +101,7 @@ Scrapes the **news feed** from the ForexFactory `/news` page.
 | `description` | Article preview / first paragraph |
 | `author` | Source site: "reuters.com", "zerohedge.com", "@realDonaldTrump" |
 | `importance` | `high` / `medium` / `low` (from colour badge, if present) |
+| `image_url` | Article thumbnail (when rendered on the page) |
 | `raw_json.time_ago` | "3 hr ago" |
 | `raw_json.comments` | Comment count (int) |
 
@@ -122,7 +129,8 @@ Fetches the **news stream** from TE's internal JSON API (`/ws/stream.ashx`).
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `fetch_news(count=20)` | `list[ScrapedNewsItem]` | Latest *count* news items |
+| `fetch_news(start=0, count=20)` | `list[ScrapedNewsItem]` | *count* news items from offset *start* |
+| `fetch_all_news(max_items=100, batch_size=20)` | `list[ScrapedNewsItem]` | Paginate through the stream with 1 s delay between batches |
 
 **Fields per item:**
 
@@ -135,11 +143,14 @@ Fetches the **news stream** from TE's internal JSON API (`/ws/stream.ashx`).
 | `author` | "Farida Husna", or "CALCULATOR" for auto-generated summaries |
 | `category` | Indicator name: "Foreign Exchange Reserves", "Inflation Rate", "Crypto" |
 | `importance` | `high` / `medium` / `low` (numeric 3/2/1 mapped) |
+| `image_url` | Article image or thumbnail URL (whichever is non-empty) |
 | `raw_json.country` | "China", "United States", "Crypto" |
 | `raw_json.id` | Numeric stream item ID |
 | `raw_json.expiration` | When the item expires from the stream |
+| `raw_json.html` | Rich HTML body with embedded symbol links (if present) |
+| `raw_json.type` | Item type, e.g. "indicator" (if present) |
 
-**Typical yield:** 20 items (configurable via `count`).
+**Typical yield:** 20 items per batch (configurable via `count`).
 
 ### TradingEconomicsIndicatorsClient
 
@@ -151,6 +162,12 @@ Scrapes **macro-economic indicator tables** from the country indicators page.
 
 **Country parameter:** URL slug, e.g. `"united-states"`, `"japan"`,
 `"euro-area"`, `"china"`.
+
+**Category detection:** Uses the site's native tab-pane taxonomy (e.g.
+`gdp`, `labour`, `prices`, `money`, `trade`, `government`, `business`,
+`consumer`, `housing`) when available. Falls back to preceding section
+headings, then to a keyword-based heuristic (`categorize_event`) as
+last resort.
 
 **Fields per indicator:**
 
@@ -164,7 +181,7 @@ Scrapes **macro-economic indicator tables** from the country indicators page.
 | `unit` | "percent", "Thousand", "USD Billion" |
 | `date` | "Feb/26" |
 | `country` | "US" (ISO 2-letter code) |
-| `category` | Auto-detected: "employment", "inflation", "growth", etc. |
+| `category` | Native section id (e.g. "labour") or auto-detected fallback |
 | `url` | Detail page link |
 
 **Typical yield:** ~400 indicators for the US.
@@ -187,6 +204,8 @@ Scrapes the **market overview tables** from the TE news page sidebar.
 | `change` | "9.89" |
 | `change_pct` | "12.21%" |
 | `url` | Detail page link |
+| `symbol` | Row identifier, e.g. "CL1:COM", "XAUUSD:CUR", "BTCUSD:CUR" |
+| `raw_json.decimals` | Display precision from `data-decimals` (when present) |
 
 **Asset classes returned (6):**
 

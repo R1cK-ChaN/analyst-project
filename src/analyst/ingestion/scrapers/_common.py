@@ -83,6 +83,8 @@ class ScrapedMarketQuote:
     change: str = ""
     change_pct: str = ""
     url: str = ""
+    symbol: str = ""
+    raw_json: dict[str, Any] = field(default_factory=dict)
 
 
 def parse_numeric_value(value: str | None) -> float | None:

@@ -201,15 +201,31 @@ class TradingEconomicsNewsClient:
             "Referer": "https://tradingeconomics.com/news",
         })
 
-    def fetch_news(self, *, count: int = 20) -> list[ScrapedNewsItem]:
-        """Fetch the latest *count* news items from the TE stream."""
+    def fetch_news(self, *, start: int = 0, count: int = 20) -> list[ScrapedNewsItem]:
+        """Fetch *count* news items from the TE stream beginning at *start*."""
         response = self.session.get(
             self.STREAM_URL,
-            params={"start": "0", "size": str(count)},
+            params={"start": str(start), "size": str(count)},
             timeout=30,
         )
         response.raise_for_status()
         return self._parse_stream_json(response.text)
+
+    def fetch_all_news(self, *, max_items: int = 100, batch_size: int = 20) -> list[ScrapedNewsItem]:
+        """Paginate through the TE stream until *max_items* are collected."""
+        all_items: list[ScrapedNewsItem] = []
+        offset = 0
+        while len(all_items) < max_items:
+            batch = self.fetch_news(start=offset, count=batch_size)
+            if not batch:
+                break
+            all_items.extend(batch)
+            offset += len(batch)
+            if len(batch) < batch_size:
+                break
+            if len(all_items) < max_items:
+                time.sleep(1.0)
+        return all_items[:max_items]
 
     def _parse_stream_json(self, text: str) -> list[ScrapedNewsItem]:
         try:
@@ -233,6 +249,8 @@ class TradingEconomicsNewsClient:
                 importance_val = entry.get("importance", 0)
                 importance = IMPORTANCE_MAP.get(importance_val, "")
 
+                image_url = entry.get("image") or entry.get("thumbnail") or ""
+
                 items.append(ScrapedNewsItem(
                     source="tradingeconomics",
                     title=title,
@@ -242,10 +260,13 @@ class TradingEconomicsNewsClient:
                     author=entry.get("author", ""),
                     category=entry.get("category", ""),
                     importance=importance,
+                    image_url=image_url,
                     raw_json={
                         "id": entry.get("ID"),
                         "country": entry.get("country", ""),
                         "expiration": entry.get("expiration", ""),
+                        "html": entry.get("html"),
+                        "type": entry.get("type"),
                     },
                 ))
             except Exception:
@@ -276,6 +297,8 @@ class TradingEconomicsIndicatorsClient:
         indicators: list[ScrapedIndicator] = []
 
         for table in soup.find_all("table", {"class": "table"}):
+            native_category = self._extract_table_category(table)
+
             for row in table.find_all("tr"):
                 cells = row.find_all("td")
                 if len(cells) < 5:
@@ -309,12 +332,28 @@ class TradingEconomicsIndicatorsClient:
                         unit=unit,
                         date=date,
                         url=full_url,
-                        category=categorize_event(name),
+                        category=native_category or categorize_event(name),
                     ))
                 except Exception:
                     continue
 
         return indicators
+
+    @staticmethod
+    def _extract_table_category(table: Any) -> str:
+        """Derive category from the page's native tab-pane structure or a preceding heading."""
+        # Check parent/grandparent for a tab-pane id (e.g. <div id="gdp">)
+        for ancestor in (table.parent, getattr(table.parent, "parent", None)):
+            if ancestor is None:
+                continue
+            pane_id = ancestor.get("id") if hasattr(ancestor, "get") else None
+            if pane_id:
+                return pane_id.lower()
+        # Fallback: preceding heading sibling
+        prev = table.find_previous_sibling(["h2", "h3", "h4"])
+        if prev:
+            return prev.get_text(strip=True).lower()
+        return ""
 
 
 class TradingEconomicsMarketsClient:
@@ -371,6 +410,12 @@ class TradingEconomicsMarketsClient:
                         else href
                     )
 
+                    data_symbol = row.get("data-symbol", "")
+                    raw: dict[str, Any] = {}
+                    data_decimals = row.get("data-decimals", "")
+                    if data_decimals:
+                        raw["decimals"] = data_decimals
+
                     quotes.append(ScrapedMarketQuote(
                         source="tradingeconomics",
                         name=name,
@@ -379,6 +424,8 @@ class TradingEconomicsMarketsClient:
                         change=change,
                         change_pct=change_pct,
                         url=full_url,
+                        symbol=data_symbol,
+                        raw_json=raw,
                     ))
                 except Exception:
                     continue

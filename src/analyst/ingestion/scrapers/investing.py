@@ -194,12 +194,31 @@ class InvestingNewsClient:
     def fetch_news(
         self,
         category: str = "latest-news",
+        *,
+        page: int = 1,
     ) -> list[ScrapedNewsItem]:
-        """Fetch news articles for *category* (e.g. 'economy-news')."""
-        url = f"{self.BASE_URL}/{category}"
+        """Fetch news articles for *category* (e.g. 'economy-news'), page >= 1."""
+        url = f"{self.BASE_URL}/{category}" if page <= 1 else f"{self.BASE_URL}/{category}/{page}"
         response = self.session.get(url, timeout=30)
         response.raise_for_status()
         return self._parse_news_html(response.text, category)
+
+    def fetch_all_news(
+        self,
+        category: str = "latest-news",
+        *,
+        max_pages: int = 3,
+    ) -> list[ScrapedNewsItem]:
+        """Paginate through up to *max_pages* of a news category."""
+        all_items: list[ScrapedNewsItem] = []
+        for p in range(1, max_pages + 1):
+            items = self.fetch_news(category, page=p)
+            all_items.extend(items)
+            if not items:
+                break
+            if p < max_pages:
+                time.sleep(1.5)
+        return all_items
 
     def _parse_news_html(self, html: str, category: str) -> list[ScrapedNewsItem]:
         soup = BeautifulSoup(html, "html.parser")
@@ -227,8 +246,20 @@ class InvestingNewsClient:
                 provider = art.find("span", {"data-test": "news-provider-name"})
                 author = provider.get_text(strip=True) if provider else ""
 
+                # Extract comment count if visible
+                comment_count = 0
+                comment_el = art.find("span", {"data-test": "article-comments"})
+                if comment_el:
+                    m = re.search(r"(\d+)", comment_el.get_text())
+                    if m:
+                        comment_count = int(m.group(1))
+
                 # Extract category from URL path
                 url_category = self._category_from_url(href)
+
+                raw: dict[str, object] = {}
+                if comment_count:
+                    raw["comments"] = comment_count
 
                 items.append(ScrapedNewsItem(
                     source="investing",
@@ -238,6 +269,7 @@ class InvestingNewsClient:
                     description=description,
                     author=author,
                     category=url_category or category,
+                    raw_json=raw,
                 ))
             except Exception:
                 continue

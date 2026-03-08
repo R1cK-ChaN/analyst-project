@@ -141,6 +141,7 @@ Implemented in `src/analyst/ingestion/`:
 
 - `InvestingCalendarClient`: economic calendar scraper (Investing.com) — uses `curl_cffi` for Cloudflare TLS bypass
 - `ForexFactoryCalendarClient`: economic calendar scraper (ForexFactory) — uses `curl_cffi` for Cloudflare TLS bypass
+- `TradingEconomicsCalendarClient`: economic calendar scraper with per-event importance (3 requests) — uses `curl_cffi`
 - `http_transport.py`: transport factory (`create_cf_session`) using `curl_cffi` browser impersonation with graceful fallback to `requests.Session`
 - `FREDIngestionClient`: FRED API adapter for 25+ macro series (inflation, employment, growth, rates, liquidity, FX, credit)
 - `FedIngestionClient`: Fed RSS feed parser for press releases, speeches, and testimony
@@ -153,6 +154,12 @@ Implemented in `src/analyst/ingestion/`:
 - Investing calendar retry/backoff and multi-day refresh window (`days_back=1`, `days_forward=3`)
 - Investing calendar parsing for currency text and revised previous values
 - scheduled news refresh every 15 minutes
+- standalone scrapers (`src/analyst/ingestion/scrapers/`):
+  - `InvestingNewsClient`: news with pagination (`page` param + `fetch_all_news`), comment count capture
+  - `ForexFactoryNewsClient`: news with pagination, thumbnail capture
+  - `TradingEconomicsNewsClient`: news stream with pagination (`start`/`count` + `fetch_all_news`), image/thumbnail/html/type capture
+  - `TradingEconomicsIndicatorsClient`: indicator tables with native tab-pane taxonomy (falls back to keyword heuristic)
+  - `TradingEconomicsMarketsClient`: market quotes with `data-symbol` and `data-decimals` capture
 
 ### Environment resolver
 
@@ -268,7 +275,7 @@ Done:
 - engine contract layer
 - regime summary, pre-market briefing, Q&A, draft, and meeting-prep paths (demo)
 - SQLite store with typed market/research/trader/sales tables and managed connections
-- ingestion adapters: Investing.com calendar, ForexFactory calendar, FRED API (25+ series), Fed RSS, yfinance market prices, RSS news ingestion
+- ingestion adapters: Investing.com calendar, ForexFactory calendar, TradingEconomics calendar/news/indicators/markets, FRED API (25+ series), Fed RSS, yfinance market prices, RSS news ingestion
 - enriched calendar event storage with `revised_previous` and `currency`
 - news article storage with structured metadata, provider tracking, and FTS-backed retrieval
 - calendar query surface for recent, upcoming, today, week, and indicator-history views

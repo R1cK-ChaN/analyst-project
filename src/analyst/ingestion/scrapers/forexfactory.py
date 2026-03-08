@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -124,11 +125,24 @@ class ForexFactoryNewsClient:
             "Accept": "text/html,application/xhtml+xml",
         })
 
-    def fetch_news(self) -> list[ScrapedNewsItem]:
-        """Fetch latest news from the ForexFactory news page."""
-        response = self.session.get(self.BASE_URL, timeout=30)
+    def fetch_news(self, *, page: int = 1) -> list[ScrapedNewsItem]:
+        """Fetch news from the ForexFactory news page (*page* >= 1)."""
+        url = self.BASE_URL if page <= 1 else f"{self.BASE_URL}?page={page}"
+        response = self.session.get(url, timeout=30)
         response.raise_for_status()
         return self._parse_news_html(response.text)
+
+    def fetch_all_news(self, *, max_pages: int = 3) -> list[ScrapedNewsItem]:
+        """Paginate through up to *max_pages* of ForexFactory news."""
+        all_items: list[ScrapedNewsItem] = []
+        for p in range(1, max_pages + 1):
+            items = self.fetch_news(page=p)
+            all_items.extend(items)
+            if not items:
+                break
+            if p < max_pages:
+                time.sleep(1.5)
+        return all_items
 
     def _parse_news_html(self, html: str) -> list[ScrapedNewsItem]:
         soup = BeautifulSoup(html, "html.parser")
@@ -161,6 +175,13 @@ class ForexFactoryNewsClient:
                 preview_div = parent.find("div", {"class": "news-block__preview"}) if parent else None
                 preview = preview_div.get_text(strip=True) if preview_div else ""
 
+                # Extract thumbnail
+                thumbnail = ""
+                if parent:
+                    img = parent.find("img")
+                    if img:
+                        thumbnail = img.get("src", "") or img.get("data-src", "")
+
                 # Extract impact level
                 importance = ""
                 if parent:
@@ -181,6 +202,7 @@ class ForexFactoryNewsClient:
                     description=preview,
                     author=source,
                     importance=importance,
+                    image_url=thumbnail,
                     raw_json={
                         "time_ago": time_ago,
                         "comments": comments,

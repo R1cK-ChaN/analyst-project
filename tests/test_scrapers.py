@@ -177,6 +177,7 @@ class TestInvestingNewsParsing:
                     </div>
                 </li>
             </ul>
+            <span data-test="article-comments">15 Comments</span>
         </div>
     </article>
     <article class="news-analysis-v2_article__wW0pT flex w-full" data-test="article-item">
@@ -206,7 +207,9 @@ class TestInvestingNewsParsing:
         assert items[0].published_at == "2026-03-08 07:00:00"
         assert items[0].description == "This is the description."
         assert items[0].category == "economy-news"
+        assert items[0].raw_json["comments"] == 15
         assert items[1].category == "forex-news"
+        assert items[1].raw_json == {}  # no comment element
 
     def test_fallback_to_articleitem_format(self):
         html = """
@@ -237,6 +240,7 @@ class TestForexFactoryNewsParsing:
     SAMPLE_HTML = """
     <html><body>
     <div class="some-parent">
+        <img src="https://www.forexfactory.com/images/news/oil-thumb.jpg" />
         <div class="news-block__title fadeout-end">
             <a href="/news/12345-test-article">Oil Surges on Mideast Tensions</a>
         </div>
@@ -269,12 +273,14 @@ class TestForexFactoryNewsParsing:
         assert items[0].author == "reuters.com"
         assert items[0].importance == "high"
         assert items[0].description == "Oil prices jumped sharply as tensions escalated."
+        assert items[0].image_url == "https://www.forexfactory.com/images/news/oil-thumb.jpg"
         assert items[0].raw_json["time_ago"] == "2 hr ago"
         assert items[0].raw_json["comments"] == 5
 
         assert items[1].title == "Fed Meeting Minutes"
         assert items[1].importance == "medium"
         assert items[1].author == "@WallStJournal"
+        assert items[1].image_url == ""  # no thumbnail present
 
     def test_parse_details_helper(self):
         src, t, c = ForexFactoryNewsClient._parse_details(
@@ -305,12 +311,12 @@ class TestTradingEconomicsNewsParsing:
             "author": "John Doe",
             "country": "United States",
             "category": "GDP Growth Rate",
-            "image": "",
+            "image": "https://d3fy651gv2fhd3.cloudfront.net/charts/gdp.png",
             "importance": 3,
             "date": "2026-03-07T10:00:00",
             "expiration": "2026-04-06T23:59:00",
-            "html": null,
-            "type": null,
+            "html": "<p>GDP expanded at <a href='/us/gdp'>1.4%</a></p>",
+            "type": "indicator",
             "thumbnail": null
         },
         {
@@ -327,7 +333,7 @@ class TestTradingEconomicsNewsParsing:
             "expiration": "2026-03-08T09:00:00",
             "html": null,
             "type": null,
-            "thumbnail": null
+            "thumbnail": "https://d3fy651gv2fhd3.cloudfront.net/thumbs/crypto.png"
         }
     ]"""
 
@@ -342,8 +348,14 @@ class TestTradingEconomicsNewsParsing:
         assert items[0].category == "GDP Growth Rate"
         assert items[0].importance == "high"
         assert items[0].raw_json["country"] == "United States"
+        # Structured content preserved
+        assert items[0].image_url == "https://d3fy651gv2fhd3.cloudfront.net/charts/gdp.png"
+        assert items[0].raw_json["html"] == "<p>GDP expanded at <a href='/us/gdp'>1.4%</a></p>"
+        assert items[0].raw_json["type"] == "indicator"
 
         assert items[1].importance == "low"
+        # Thumbnail fallback when image is null
+        assert items[1].image_url == "https://d3fy651gv2fhd3.cloudfront.net/thumbs/crypto.png"
 
     def test_invalid_json(self):
         client = TradingEconomicsNewsClient.__new__(TradingEconomicsNewsClient)
@@ -357,6 +369,24 @@ class TestTradingEconomicsNewsParsing:
 class TestTradingEconomicsIndicatorsParsing:
     SAMPLE_HTML = """
     <html><body>
+    <div id="labour">
+        <table class="table table-hover">
+            <tr><th></th><th>Last</th><th>Previous</th><th>Highest</th><th>Lowest</th><th></th><th></th></tr>
+            <tr>
+                <td><a href="/united-states/unemployment-rate">Unemployment Rate</a></td>
+                <td>4.4</td><td>4.3</td><td>14.8</td><td>2.5</td><td>percent</td><td>Feb/26</td>
+            </tr>
+            <tr>
+                <td><a href="/united-states/non-farm-payrolls">Non Farm Payrolls</a></td>
+                <td>-92</td><td>126</td><td>4631</td><td>-20469</td><td>Thousand</td><td>Feb/26</td>
+            </tr>
+        </table>
+    </div>
+    </body></html>
+    """
+
+    SAMPLE_HTML_NO_PANE = """
+    <html><body>
     <h3>Labour</h3>
     <table class="table table-hover">
         <tr><th></th><th>Last</th><th>Previous</th><th>Highest</th><th>Lowest</th><th></th><th></th></tr>
@@ -364,15 +394,12 @@ class TestTradingEconomicsIndicatorsParsing:
             <td><a href="/united-states/unemployment-rate">Unemployment Rate</a></td>
             <td>4.4</td><td>4.3</td><td>14.8</td><td>2.5</td><td>percent</td><td>Feb/26</td>
         </tr>
-        <tr>
-            <td><a href="/united-states/non-farm-payrolls">Non Farm Payrolls</a></td>
-            <td>-92</td><td>126</td><td>4631</td><td>-20469</td><td>Thousand</td><td>Feb/26</td>
-        </tr>
     </table>
     </body></html>
     """
 
-    def test_parse_indicators(self):
+    def test_parse_indicators_native_category(self):
+        """Tab-pane ID is used as category when present."""
         client = TradingEconomicsIndicatorsClient.__new__(TradingEconomicsIndicatorsClient)
         indicators = client._parse_indicators_html(self.SAMPLE_HTML, "united-states")
         assert len(indicators) == 2
@@ -385,8 +412,34 @@ class TestTradingEconomicsIndicatorsParsing:
         assert indicators[0].unit == "percent"
         assert indicators[0].date == "Feb/26"
         assert indicators[0].country == "US"
-        assert indicators[0].category == "employment"
+        # Native category from tab-pane id, not heuristic
+        assert indicators[0].category == "labour"
+        assert indicators[1].category == "labour"
         assert "/unemployment-rate" in indicators[0].url
+
+    def test_parse_indicators_heading_fallback(self):
+        """Preceding heading is used when no tab-pane is found."""
+        client = TradingEconomicsIndicatorsClient.__new__(TradingEconomicsIndicatorsClient)
+        indicators = client._parse_indicators_html(self.SAMPLE_HTML_NO_PANE, "united-states")
+        assert len(indicators) == 1
+        assert indicators[0].category == "labour"
+
+    def test_parse_indicators_heuristic_fallback(self):
+        """Falls back to categorize_event when no native category is available."""
+        html = """
+        <html><body>
+        <table class="table">
+            <tr>
+                <td><a href="/us/gdp">GDP Growth Rate</a></td>
+                <td>1.4</td><td>4.4</td><td>5.0</td><td>-3.4</td><td>percent</td><td>Q4/25</td>
+            </tr>
+        </table>
+        </body></html>
+        """
+        client = TradingEconomicsIndicatorsClient.__new__(TradingEconomicsIndicatorsClient)
+        indicators = client._parse_indicators_html(html, "united-states")
+        assert len(indicators) == 1
+        assert indicators[0].category == "growth"
 
     def test_empty_html(self):
         client = TradingEconomicsIndicatorsClient.__new__(TradingEconomicsIndicatorsClient)
@@ -399,14 +452,14 @@ class TestTradingEconomicsMarketsParsing:
     <div id="Commodity">
         <table class="table table-condensed">
             <tr><th></th><th>Actual</th><th>Chg</th><th>%Chg</th></tr>
-            <tr><td><a href="/commodity/crude-oil">Crude Oil</a></td><td>90.900</td><td>9.89</td><td>12.21%</td></tr>
-            <tr><td><a href="/commodity/gold">Gold</a></td><td>5158.89</td><td>74.70</td><td>1.47%</td></tr>
+            <tr data-symbol="CL1:COM" data-decimals="3"><td><a href="/commodity/crude-oil">Crude Oil</a></td><td>90.900</td><td>9.89</td><td>12.21%</td></tr>
+            <tr data-symbol="XAUUSD:CUR" data-decimals="2"><td><a href="/commodity/gold">Gold</a></td><td>5158.89</td><td>74.70</td><td>1.47%</td></tr>
         </table>
     </div>
     <div id="Crypto">
         <table class="table table-condensed">
             <tr><th></th><th>Actual</th><th>Chg</th><th>%Chg</th></tr>
-            <tr><td><a href="/btcusd:cur">Bitcoin</a></td><td>67184</td><td>85</td><td>-0.13%</td></tr>
+            <tr data-symbol="BTCUSD:CUR"><td><a href="/btcusd:cur">Bitcoin</a></td><td>67184</td><td>85</td><td>-0.13%</td></tr>
         </table>
     </div>
     </body></html>
@@ -423,9 +476,15 @@ class TestTradingEconomicsMarketsParsing:
         assert quotes[0].change == "9.89"
         assert quotes[0].change_pct == "12.21%"
         assert "/commodity/crude-oil" in quotes[0].url
+        assert quotes[0].symbol == "CL1:COM"
+        assert quotes[0].raw_json["decimals"] == "3"
+
+        assert quotes[1].symbol == "XAUUSD:CUR"
 
         assert quotes[2].name == "Bitcoin"
         assert quotes[2].asset_class == "crypto"
+        assert quotes[2].symbol == "BTCUSD:CUR"
+        assert quotes[2].raw_json == {}  # no data-decimals
 
     def test_empty_html(self):
         client = TradingEconomicsMarketsClient.__new__(TradingEconomicsMarketsClient)

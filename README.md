@@ -6,7 +6,7 @@ Current WS1 status on March 8, 2026:
 
 - the live WS1 engine is implemented under `src/analyst/engine/`, `src/analyst/storage/`, and `src/analyst/ingestion/`
 - local live commands now cover refresh, flash commentary, briefing, wrap, regime refresh, calendar inspection, and news inspection
-- the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, yfinance, and macro-finance RSS news ingestion
+- the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, TradingEconomics, yfinance, and macro-finance RSS news ingestion
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
 - the current memory implementation is pipeline-shaped: research publishes into `research_artifacts`, trader state/artifacts have FK lineage, and sales uses `client_profiles`, `conversation_messages`, and `delivery_queue`
 - a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and cross-agent tools (web search via OpenRouter plugins API, live calendar fetch via curl_cffi); both LiveAnalystEngine and sales agent use it
@@ -60,6 +60,7 @@ analyst-project/
 ├── tests/                          ← LOCAL VALIDATION
 │   ├── test_news_ingestion.py      WS1 news ingestion, extraction, search, and retrieval ranking tests
 │   ├── test_product_layer.py       End-to-end contract and routing smoke tests
+│   ├── test_scrapers.py            Scraper parsers, pagination, dataclasses, and live integration tests
 │   ├── test_telegram.py            Telegram formatter, bot wiring, and transport regression tests
 │   └── test_ws1_engine.py          WS1 live engine + calendar: store, scraper, env, CLI, regime parsing
 │
@@ -74,7 +75,7 @@ analyst-project/
 │   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
 │   ├── storage/                    SQLite store (market state, research artifacts, trader state, sales memory)
 │   ├── memory/                     Context builders and sales profile extraction
-│   ├── ingestion/                  Source adapters (Investing.com, ForexFactory, FRED, Fed RSS, yfinance, RSS news)
+│   ├── ingestion/                  Source adapters (Investing.com, ForexFactory, TradingEconomics, FRED, Fed RSS, yfinance, RSS news)
 │   ├── delivery/                   Persona-driven Telegram agent bot (陈襄) + WeCom/Telegram formatting
 │   └── integration/                Message routing
 │
