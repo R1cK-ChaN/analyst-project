@@ -9,6 +9,7 @@ description = "Standalone Analyst product scaffold"
 requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4",
+    "curl_cffi",
     "feedparser",
     "httpx",
     "markdownify",

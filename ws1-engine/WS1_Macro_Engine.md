@@ -1,6 +1,6 @@
 # WS1: Macro Engine — Detailed Specification
 
-Status note on March 7, 2026:
+Status note on March 8, 2026:
 Month 1 scope (data pipeline + analyst agent) is implemented and merged to main. The live engine path is in `src/analyst/engine/`, `src/analyst/storage/`, and `src/analyst/ingestion/`. The shipped source set now includes calendar ingestion, FRED, Fed RSS, yfinance market prices, and RSS-based macro-finance news ingestion with article extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking. Live OpenRouter/FRED execution has been tested locally with mocks; end-to-end network verification is pending. For full implementation status, see `00-overview/Implementation_Status.md`.
 
 Implementation delta now live in `main`:
@@ -8,6 +8,10 @@ Implementation delta now live in `main`:
 - `NewsIngestionClient` refreshes curated RSS/Google News feeds on a 15-minute schedule
 - `news_articles` and `news_fts` support persistence, search, and ranking of macro-finance news
 - CLI and agent tools now expose recent news and keyword search alongside the calendar/event tooling
+- Calendar scraping now uses `curl_cffi` (Chrome TLS impersonation) to bypass Cloudflare — both Investing.com and ForexFactory fetch live data successfully
+- `fetch_live_calendar` tool in `src/analyst/tools/_live_calendar.py` lets the agent fetch real-time calendar data on demand; results are also persisted to SQLite for other tools
+- `get_today_calendar` and `get_upcoming_calendar` auto-refresh when data is >1 hour stale
+- `refresh_calendar` has error isolation so one source failing does not block the other
 
 ## Owner: Technical Founder
 ## Timeline: Month 1–2

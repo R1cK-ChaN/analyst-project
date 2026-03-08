@@ -9,7 +9,7 @@ Current WS1 status on March 8, 2026:
 - the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, yfinance, and macro-finance RSS news ingestion
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
 - the current memory implementation is pipeline-shaped: research publishes into `research_artifacts`, trader state/artifacts have FK lineage, and sales uses `client_profiles`, `conversation_messages`, and `delivery_queue`
-- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and cross-agent tools (web search via OpenRouter plugins API); both LiveAnalystEngine and sales agent use it
+- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and cross-agent tools (web search via OpenRouter plugins API, live calendar fetch via curl_cffi); both LiveAnalystEngine and sales agent use it
 - China-specific ingestion, live end-to-end provider verification, and delivery integration are still pending
 
 ## What's Inside
@@ -70,7 +70,7 @@ analyst-project/
 │   ├── env.py                      Multi-file .env resolver
 │   ├── information/                Local information layer using bundled demo data
 │   ├── runtime/                    Runtime and prompt profiles
-│   ├── tools/                      Unified tools layer — ToolKit builder + cross-agent tools (web search)
+│   ├── tools/                      Unified tools layer — ToolKit builder + cross-agent tools (web search, live calendar)
 │   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
 │   ├── storage/                    SQLite store (market state, research artifacts, trader state, sales memory)
 │   ├── memory/                     Context builders and sales profile extraction
@@ -180,7 +180,7 @@ This validates the current standalone implementation:
 
 - bundled demo data + demo engine path
 - WS1 live engine: SQLite store, ingestion adapters, calendar/news query surface, agent loop, OpenRouter provider
-- unified tools layer: ToolKit composable builder + web search via OpenRouter plugins API
+- unified tools layer: ToolKit composable builder + web search via OpenRouter plugins API + live calendar fetch via curl_cffi
 - WeCom and Telegram formatters
 - Telegram agent bot with persona (陈襄) and autonomous tool access
 - integration router

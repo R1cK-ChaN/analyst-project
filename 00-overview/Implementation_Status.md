@@ -1,6 +1,6 @@
 # Analyst — Implementation Status
 
-**Status date:** March 8, 2026 (updated after unified tools layer and web search integration)
+**Status date:** March 8, 2026 (updated after live calendar transport fix and fetch_live_calendar tool)
 
 This document is the current implementation snapshot for `analyst-project/`.
 
@@ -107,7 +107,13 @@ Implemented in `src/analyst/tools/`:
   - the web search makes an independent API call — does not pollute the agent's main conversation context
   - returns structured JSON: `summary`, `results` (title/url/snippet), `result_count`
   - the agent decides when to search (Option C) — saves tokens vs auto-search
-- both `LiveAnalystEngine._build_tools()` and `build_sales_tools()` now use `ToolKit` to assemble their tool lists, with `web_search` as the first universal tool
+- live calendar tool (`_live_calendar.py`): fetches economic calendar events live from Investing.com and/or ForexFactory via `curl_cffi` browser impersonation
+  - `LiveCalendarHandler` stateful callable that scrapes both sources, persists to SQLite, and returns filtered results
+  - `build_live_calendar_tool(store)` factory returning an `AgentTool`
+  - supports `source` (investing/forexfactory/both), `importance`, and `country` filters
+  - the agent decides when to fetch live data vs reading from the local store
+- web page fetch tool (`_web_fetch.py`): fetches and extracts readable content from web pages as markdown via `ArticleFetcher`
+- both `LiveAnalystEngine._build_tools()` and `build_sales_tools()` now use `ToolKit` to assemble their tool lists, with universal tools (web search, live calendar, web fetch) composed per-agent
 - adding future universal tools follows the same pattern: create `_new_tool.py` with handler + `build_*_tool()` factory, export from `__init__.py`, agents opt in via `kit.add()`
 
 ### Storage layer
@@ -133,8 +139,9 @@ Implemented in `src/analyst/storage/`:
 
 Implemented in `src/analyst/ingestion/`:
 
-- `InvestingCalendarClient`: economic calendar scraper (Investing.com)
-- `ForexFactoryCalendarClient`: economic calendar scraper (ForexFactory)
+- `InvestingCalendarClient`: economic calendar scraper (Investing.com) — uses `curl_cffi` for Cloudflare TLS bypass
+- `ForexFactoryCalendarClient`: economic calendar scraper (ForexFactory) — uses `curl_cffi` for Cloudflare TLS bypass
+- `http_transport.py`: transport factory (`create_cf_session`) using `curl_cffi` browser impersonation with graceful fallback to `requests.Session`
 - `FREDIngestionClient`: FRED API adapter for 25+ macro series (inflation, employment, growth, rates, liquidity, FX, credit)
 - `FedIngestionClient`: Fed RSS feed parser for press releases, speeches, and testimony
 - `MarketPriceClient`: cross-asset price scraper via yfinance (equities, FX, bonds, commodities, crypto)
@@ -275,8 +282,10 @@ Done:
 - regime state scoring with clamped numeric axes and cross-asset implications
 - environment resolver with multi-file `.env` fallback
 - CLI commands: refresh, schedule, flash, briefing, wrap, regime-refresh, live-calendar, news-refresh, news-latest, news-search, news-feeds
-- agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, surprise summaries, recent news, news search, and web search
-- unified tools layer (`src/analyst/tools/`): `ToolKit` composable builder + `web_search` via OpenRouter plugins API (agent-initiated, independent API call)
+- agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, surprise summaries, recent news, news search, web search, and live calendar fetch
+- unified tools layer (`src/analyst/tools/`): `ToolKit` composable builder + `web_search` via OpenRouter plugins API + `fetch_live_calendar` via curl_cffi (agent-initiated)
+- auto-refresh staleness check on `get_today_calendar` and `get_upcoming_calendar` tools (refreshes calendar if data is >1 hour stale)
+- error isolation in `refresh_calendar`: Investing.com and ForexFactory failures are independent — one source failing does not block the other
 - research publication into `research_artifacts` plus `analytical_observations`
 - typed trader-state schema with FK lineage ready for a future trader runtime
 - focused WS1 tests covering store, scraper retry paths, loop, env, CLI, calendar query behavior, news ingestion, search, and ranking regressions

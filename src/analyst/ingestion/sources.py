@@ -9,14 +9,18 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import feedparser
+import logging
 import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
 
 from analyst.env import get_env_value
+from analyst.ingestion.http_transport import create_cf_session
 from analyst.ingestion.news_extract import extract_news_metadata
 from analyst.ingestion.news_feeds import FeedInfo, RSS_FEEDS, get_feeds
 from analyst.ingestion.news_fetcher import ArticleFetcher
+
+logger = logging.getLogger(__name__)
 from analyst.storage import (
     CentralBankCommunicationRecord,
     IndicatorObservationRecord,
@@ -240,34 +244,31 @@ class InvestingCalendarClient:
     BASE_URL = "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData"
 
     def __init__(self, countries: list[str] | None = None) -> None:
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-                ),
-                "Accept": "application/json",
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": "https://www.investing.com/economic-calendar/",
-            }
-        )
+        self.session = create_cf_session(headers={
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": "https://www.investing.com/economic-calendar/",
+        })
         target_countries = countries or ["US", "EU", "JP", "UK", "CA", "AU", "CN", "SG"]
         self.country_ids = [country_id for country_id, code in COUNTRY_MAP.items() if code in target_countries]
 
     def fetch(self, *, date_from: str | None = None, date_to: str | None = None) -> list[StoredEventRecord]:
         date_from = date_from or datetime.now(OPEN_UTC_PLUS_8).strftime("%Y-%m-%d")
         date_to = date_to or date_from
-        payload = {
-            "dateFrom": date_from,
-            "dateTo": date_to,
-            "country[]": self.country_ids,
-            "importance[]": [1, 2, 3],
-            "timeZone": 8,
-            "timeFilter": "timeRemain",
-            "currentTab": "custom",
-            "limit_from": 0,
-        }
+        # Use list-of-tuples so repeated keys (country[], importance[])
+        # are encoded correctly by both requests and curl_cffi.
+        payload: list[tuple[str, str]] = [
+            ("dateFrom", date_from),
+            ("dateTo", date_to),
+            ("timeZone", "8"),
+            ("timeFilter", "timeRemain"),
+            ("currentTab", "custom"),
+            ("limit_from", "0"),
+        ]
+        for cid in self.country_ids:
+            payload.append(("country[]", str(cid)))
+        for imp in (1, 2, 3):
+            payload.append(("importance[]", str(imp)))
         last_error: Exception | None = None
         for attempt in range(3):
             try:
@@ -388,13 +389,9 @@ class ForexFactoryCalendarClient:
     BASE_URL = "https://www.forexfactory.com/calendar"
 
     def __init__(self) -> None:
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-                "Accept": "text/html,application/xhtml+xml",
-            }
-        )
+        self.session = create_cf_session(headers={
+            "Accept": "text/html,application/xhtml+xml",
+        })
 
     def fetch(self, *, week: str = "this") -> list[StoredEventRecord]:
         url = self.BASE_URL if week == "this" else f"{self.BASE_URL}?week={week}"
@@ -809,12 +806,18 @@ class IngestionOrchestrator:
 
     def refresh_calendar(self) -> dict[str, int]:
         total = 0
-        for event in self.investing.fetch_range(days_back=1, days_forward=3):
-            self.store.upsert_calendar_event(event)
-            total += 1
-        for event in self.forexfactory.fetch():
-            self.store.upsert_calendar_event(event)
-            total += 1
+        try:
+            for event in self.investing.fetch_range(days_back=1, days_forward=3):
+                self.store.upsert_calendar_event(event)
+                total += 1
+        except Exception:
+            logger.warning("Investing.com calendar refresh failed", exc_info=True)
+        try:
+            for event in self.forexfactory.fetch():
+                self.store.upsert_calendar_event(event)
+                total += 1
+        except Exception:
+            logger.warning("ForexFactory calendar refresh failed", exc_info=True)
         return {"calendar": total}
 
     def refresh_market(self) -> dict[str, int]:

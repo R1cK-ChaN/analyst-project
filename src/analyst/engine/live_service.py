@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from analyst.contracts import Event, Importance, RegimeScore, RegimeState, ResearchNote, utc_now
 from analyst.ingestion import IngestionOrchestrator
 from analyst.memory import build_research_context
 from analyst.storage import NewsArticleRecord, SQLiteEngineStore, StoredEventRecord
 
-from analyst.tools import ToolKit, build_web_fetch_tool, build_web_search_tool
+from analyst.tools import ToolKit, build_live_calendar_tool, build_web_fetch_tool, build_web_search_tool
 
 from .agent_loop import AgentLoopConfig, PythonAgentLoop
 from .live_prompts import SYSTEM_PROMPT, briefing_prompt, flash_prompt, regime_prompt, wrap_prompt
@@ -63,6 +67,16 @@ class LiveAnalystEngine:
         self.provider = provider
         self.ingestion = ingestion or IngestionOrchestrator(store)
         self.config = config or LiveEngineConfig()
+        self._last_calendar_refresh: float = 0.0
+
+    def _ensure_calendar_fresh(self, *, max_age_seconds: int = 3600) -> None:
+        if time.time() - self._last_calendar_refresh < max_age_seconds:
+            return
+        try:
+            self.ingestion.refresh_calendar()
+            self._last_calendar_refresh = time.time()
+        except Exception:
+            logger.warning("Auto-refresh of calendar data failed", exc_info=True)
 
     def refresh_all_sources(self) -> dict[str, int]:
         return self.ingestion.refresh_all()
@@ -329,6 +343,7 @@ class LiveAnalystEngine:
             },
             handler=self._tool_search_news,
         ))
+        kit.add(build_live_calendar_tool(self.store))
         return kit.to_list()
 
     def _loop(self) -> PythonAgentLoop:
@@ -354,6 +369,7 @@ class LiveAnalystEngine:
         return {"events": [self._stored_event_to_dict(event) for event in events]}
 
     def _tool_upcoming_calendar(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_calendar_fresh()
         events = self.store.list_upcoming_events(limit=int(arguments.get("limit", 10)))
         return {"events": [self._stored_event_to_dict(event) for event in events]}
 
@@ -416,6 +432,7 @@ class LiveAnalystEngine:
         return {"regime": snapshot.regime_json}
 
     def _tool_today_calendar(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_calendar_fresh()
         events = self.store.list_today_events(
             importance=arguments.get("importance"),
             country=arguments.get("country"),
