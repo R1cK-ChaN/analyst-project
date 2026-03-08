@@ -98,16 +98,29 @@ def build_sales_services(
     return agent_loop, tools, store
 
 
+def _has_cjk(text: str) -> bool:
+    """Check for CJK characters AND CJK punctuation (。，！？、：；「」etc.)."""
+    for ch in text:
+        cp = ord(ch)
+        if (
+            0x4E00 <= cp <= 0x9FFF          # CJK Unified Ideographs
+            or 0x3000 <= cp <= 0x303F        # CJK Symbols and Punctuation (。、「」等)
+            or 0x3400 <= cp <= 0x4DBF        # CJK Extension A
+            or 0xFF01 <= cp <= 0xFF60        # Fullwidth Forms (！＂＃等)
+        ):
+            return True
+    return False
+
+
 def _detect_language(text: str, *, fallback: str = "") -> str:
     """Detect language from text. For short/ambiguous messages, return *fallback*."""
-    cjk = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff')
-    alpha = sum(1 for ch in text if ch.isalpha())
-    # Short messages with no CJK and few alpha chars are ambiguous ("ok", "haha", "good")
-    # — don't flip language on these, let the stored preference hold.
-    if cjk == 0 and alpha <= 8:
-        return fallback
-    if cjk > 0:
+    if _has_cjk(text):
         return "zh"
+    alpha = sum(1 for ch in text if ch.isalpha())
+    # Short messages with no CJK and few alpha chars are ambiguous ("ok", "hh", "..")
+    # — don't flip language on these, let the stored preference hold.
+    if alpha <= 8:
+        return fallback
     return "en"
 
 
