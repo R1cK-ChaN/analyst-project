@@ -297,24 +297,30 @@ the generic `ArticleFetcher`.
 
 ## 5. Bloomberg (`bloomberg.py`)
 
-> **Transport:** Playwright + stealth (not `curl_cffi`). Bloomberg is
-> React-rendered with aggressive bot detection, so a real browser is required.
+> **Transport:** `curl_cffi` with TLS fingerprint impersonation. Cookies
+> are exported from a real Chrome session via `browser_cookie3`.
 
 ### Setup
 
 ```bash
-pip install playwright playwright-stealth
-playwright install chromium
+pip install browser-cookie3
 ```
 
-**First-time login** — opens a headful Chromium window for manual sign-in.
-Cookies are saved to `~/.analyst/bloomberg_cookies.json` for subsequent
-headless runs:
+**Cookie export** — log in to bloomberg.com in your regular Chrome browser,
+then export cookies:
 
 ```python
-from analyst.ingestion.scrapers.bloomberg import _BloombergBrowser
-with _BloombergBrowser(headless=False) as b:
-    b.login()
+import browser_cookie3, json
+from pathlib import Path
+
+cj = list(browser_cookie3.chrome(domain_name=".bloomberg.com"))
+cookies = [{"name": c.name, "value": c.value, "domain": c.domain,
+            "path": c.path, "expires": c.expires or -1,
+            "secure": bool(c.secure), "httpOnly": False, "sameSite": "Lax"}
+           for c in cj]
+out = Path.home() / ".analyst" / "bloomberg_cookies.json"
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps(cookies, indent=2))
 ```
 
 ### BloombergNewsClient
@@ -326,7 +332,7 @@ with Playwright, then parsing the rendered HTML via three strategies:
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `fetch_news(section="markets")` | `list[ScrapedNewsItem]` | Articles for a single section page |
-| `fetch_all_news(sections, sleep_between=7.0)` | `list[ScrapedNewsItem]` | Multiple sections with 7 s delay, dedup by URL |
+| `fetch_all_news(sections, sleep_between=1.5)` | `list[ScrapedNewsItem]` | Multiple sections with 1.5 s delay, dedup by URL |
 
 **Supported sections:** `markets`, `economics`, `technology`, `politics`,
 `wealth`, `opinion`, `green`.
@@ -350,7 +356,7 @@ Requires an authenticated session (cookies from `login()`).
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `fetch_article(url)` | `BloombergArticle` | Single article with full text and metadata |
-| `fetch_articles(urls, sleep_between=7.0)` | `list[BloombergArticle]` | Batch fetch with 7 s delay |
+| `fetch_articles(urls, sleep_between=1.5)` | `list[BloombergArticle]` | Batch fetch with 1.5 s delay |
 
 **Metadata sources (3-tier):**
 
@@ -458,6 +464,199 @@ Markets API (`markets.newyorkfed.org`).
 
 ---
 
+## 8. Financial Times (`ft.py`)
+
+> **Transport:** `curl_cffi` with TLS fingerprint impersonation. Cookies
+> are exported from a real Chrome session via `browser_cookie3`.
+
+### Setup
+
+```bash
+pip install browser-cookie3
+```
+
+**Cookie export** — log in to ft.com in your regular Chrome browser,
+then export cookies:
+
+```python
+import browser_cookie3, json
+from pathlib import Path
+
+cj = list(browser_cookie3.chrome(domain_name=".ft.com"))
+cj += list(browser_cookie3.chrome(domain_name="ft.com"))
+seen, cookies = set(), []
+for c in cj:
+    key = (c.name, c.domain)
+    if key not in seen and "ft.com" in c.domain:
+        seen.add(key)
+        cookies.append({"name": c.name, "value": c.value, "domain": c.domain,
+                        "path": c.path, "expires": c.expires or -1,
+                        "secure": bool(c.secure), "httpOnly": False, "sameSite": "Lax"})
+out = Path.home() / ".analyst" / "ft_cookies.json"
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps(cookies, indent=2))
+```
+
+### FTNewsClient
+
+Scrapes **article listings** from FT section pages by navigating
+with Playwright, then parsing the rendered HTML via three strategies:
+`__NEXT_DATA__` JSON → JSON-LD → DOM `<article>` elements.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fetch_news(section="markets")` | `list[ScrapedNewsItem]` | Articles for a single section page |
+| `fetch_all_news(sections, sleep_between=1.5)` | `list[ScrapedNewsItem]` | Multiple sections with 1.5 s delay, dedup by URL |
+
+**Supported sections:** `markets`, `world`, `companies`, `opinion`,
+`climate`, `technology`.
+
+**Fields per item:**
+
+| Field | Example |
+|-------|---------|
+| `title` | "Bank of England holds rates amid inflation uncertainty" |
+| `url` | `https://www.ft.com/content/abc123-…` |
+| `published_at` | `2026-03-08T14:30:00Z` |
+| `description` | Article standfirst / summary |
+| `category` | Section or primary category from JSON |
+| `image_url` | Lead image URL |
+
+### FTArticleClient
+
+Fetches and parses **full FT articles** with structured metadata.
+Requires an authenticated session (cookies from `login()`).
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fetch_article(url)` | `FTArticle` | Single article with full text and metadata |
+| `fetch_articles(urls, sleep_between=1.5)` | `list[FTArticle]` | Batch fetch with 1.5 s delay |
+
+**Metadata sources (3-tier):**
+
+1. **JSON-LD** (`@type: "Article"`): `headline`, `datePublished`, `author`,
+   `articleSection`, `keywords`, `image`.
+2. **OpenGraph meta tags**: `og:title`, `og:image`, `article:published_time`,
+   `article:author`, `article:section`.
+3. **DOM selectors**: `<h1>` for headline, `<a href="/stream/…">` for byline,
+   `<time>` for date, `<p>` elements in body container for content.
+
+**`FTArticle` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `url` | `str` | Article URL |
+| `title` | `str` | "Bank of England holds rates amid inflation uncertainty" |
+| `content` | `str` | Full body as plain text (paragraphs joined by `\n\n`) |
+| `authors` | `list[str]` | `["Chris Giles", "Valentina Romei"]` |
+| `published_at` | `str` | `2026-03-08T14:30:00Z` |
+| `section` | `str` | "Markets" |
+| `keywords` | `list[str]` | `["bank of england", "interest rates"]` |
+| `image_url` | `str` | Lead image URL |
+| `standfirst` | `str` | FT-specific subheading summary |
+| `fetched` | `bool` | `True` on success |
+| `error` | `str \| None` | Error message on failure |
+
+**Body filtering:** Sign-up prompts, newsletter CTAs, subscriber barriers,
+and topic-follow prompts are stripped from article content.
+
+---
+
+## 9. Wall Street Journal (`wsj.py`)
+
+> **Transport:** `curl_cffi` with TLS fingerprint impersonation. WSJ's bot
+> detection blocks Playwright, so cookies are exported from a real Chrome
+> session via `browser_cookie3`.
+
+### Setup
+
+```bash
+pip install browser-cookie3
+```
+
+**Cookie export** — log in to wsj.com in your regular Chrome browser,
+then export cookies:
+
+```python
+import browser_cookie3, json
+from pathlib import Path
+
+cj = browser_cookie3.chrome(domain_name=".wsj.com")
+cookies = [{"name": c.name, "value": c.value, "domain": c.domain,
+            "path": c.path, "expires": c.expires or -1,
+            "secure": bool(c.secure), "httpOnly": False, "sameSite": "Lax"}
+           for c in cj]
+out = Path.home() / ".analyst" / "wsj_cookies.json"
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps(cookies, indent=2))
+```
+
+### WSJNewsClient
+
+Scrapes **article listings** from WSJ section pages by navigating
+with Playwright, then parsing the rendered HTML via three strategies:
+`__NEXT_DATA__` JSON → JSON-LD → DOM `<article>` elements.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fetch_news(section="markets")` | `list[ScrapedNewsItem]` | Articles for a single section page |
+| `fetch_all_news(sections, sleep_between=1.5)` | `list[ScrapedNewsItem]` | Multiple sections with 1.5 s delay, dedup by URL |
+
+**Supported sections:** `markets`, `economy`, `business`, `tech`,
+`politics`, `opinion`, `world`.
+
+**Fields per item:**
+
+| Field | Example |
+|-------|---------|
+| `title` | "Treasury Yields Rise on Stronger-Than-Expected Jobs Data" |
+| `url` | `https://www.wsj.com/finance/stocks/treasury-yields-…` |
+| `published_at` | `2026-03-08T14:30:00Z` |
+| `description` | Article dek / summary |
+| `category` | Section or primary category from JSON |
+| `image_url` | Lead image URL |
+
+### WSJArticleClient
+
+Fetches and parses **full WSJ articles** with structured metadata.
+Requires an authenticated session (cookies from `login()`).
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fetch_article(url)` | `WSJArticle` | Single article with full text and metadata |
+| `fetch_articles(urls, sleep_between=1.5)` | `list[WSJArticle]` | Batch fetch with 1.5 s delay |
+
+**Metadata sources (3-tier):**
+
+1. **JSON-LD** (`@type: "Article"`): `headline`, `datePublished`, `author`,
+   `articleSection`, `keywords`, `image`.
+2. **OpenGraph/meta tags**: `og:title`, `og:image`, `article:published_time`,
+   `article:section`, `<meta name="author">` for byline.
+3. **DOM selectors**: `<h1>` for headline, `<a href="/author/…">` for byline,
+   `<time>` for date, `<p class="…Paragraph…">` for body content.
+
+**`WSJArticle` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `url` | `str` | Article URL |
+| `title` | `str` | "Treasury Yields Rise on Stronger-Than-Expected Jobs Data" |
+| `content` | `str` | Full body as plain text (paragraphs joined by `\n\n`) |
+| `authors` | `list[str]` | `["Sam Goldfarb", "Matt Grossman"]` |
+| `published_at` | `str` | `2026-03-08T14:30:00Z` |
+| `section` | `str` | "Markets" |
+| `keywords` | `list[str]` | `["treasurys", "bond market"]` |
+| `image_url` | `str` | Lead image URL |
+| `dek` | `str` | WSJ-specific sub-headline summary |
+| `fetched` | `bool` | `True` on success |
+| `error` | `str \| None` | Error message on failure |
+
+**Body filtering:** Subscribe prompts, copyright notices, Dow Jones
+legalese, and "What to Read Next" sections are stripped from article
+content.
+
+---
+
 ## Summary Matrix
 
 | Site | Calendar | News | Articles | Indicators | Markets |
@@ -467,6 +666,8 @@ Markets API (`markets.newyorkfed.org`).
 | **TradingEconomics** | `TradingEconomicsCalendarClient` | `TradingEconomicsNewsClient` | — | `TradingEconomicsIndicatorsClient` | `TradingEconomicsMarketsClient` |
 | **Reuters** | — | `ReutersNewsClient` | `ReutersArticleClient` | — | — |
 | **Bloomberg** | — | `BloombergNewsClient` | `BloombergArticleClient` | — | — |
+| **FT** | — | `FTNewsClient` | `FTArticleClient` | — | — |
+| **WSJ** | — | `WSJNewsClient` | `WSJArticleClient` | — | — |
 | **rateprobability.com** | — | — | — | `RateProbabilityClient` | — |
 | **NY Fed** | — | — | — | `NYFedRatesClient` | — |
 
