@@ -38,6 +38,7 @@ class Importance(str, Enum):
 class InteractionMode(str, Enum):
     QA = "qa"
     DRAFT = "draft"
+    FOLLOW_UP = "follow_up"
     MEETING_PREP = "meeting_prep"
     REGIME = "regime"
     CALENDAR = "calendar"

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
+from pathlib import Path
 
+from analyst.delivery.sales_chat import build_sales_services, generate_sales_reply
+from analyst.memory import build_sales_context, record_sales_interaction
 from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
 
 from .app import build_demo_app, build_live_engine_app
@@ -67,6 +71,19 @@ def build_parser() -> argparse.ArgumentParser:
     news_feeds_parser = subparsers.add_parser("news-feeds")
     news_feeds_parser.add_argument("--category", default=None)
 
+    sales_chat = subparsers.add_parser("sales-chat")
+    sales_chat.add_argument("--client-id", default="cli-demo")
+    sales_chat.add_argument("--channel-id", default="cli:local")
+    sales_chat.add_argument("--thread-id", default="main")
+    sales_chat.add_argument("--focus", default="global")
+    sales_chat.add_argument("--db-path", default=None)
+    sales_chat.add_argument("--once", default=None, help="Run a single sales chat turn and exit.")
+    sales_chat.add_argument(
+        "--show-profile",
+        action="store_true",
+        help="Print the stored client profile after each assistant reply.",
+    )
+
     return parser
 
 
@@ -92,6 +109,89 @@ def format_news_headline(article: NewsArticleRecord) -> str:
         f"{dt}  {country:>2} [{impact:<8}]  [{article.source_feed:<20}]  "
         f"{article.title}{subject}"
     )
+
+
+def _print_sales_profile(store, client_id: str) -> None:
+    profile = store.get_client_profile(client_id)
+    print("\n[profile]")
+    print(json.dumps(asdict(profile), ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _run_sales_chat(args: argparse.Namespace) -> int:
+    db_path = Path(args.db_path) if args.db_path else None
+    agent_loop, tools, store = build_sales_services(db_path=db_path)
+    history: list[dict[str, str]] = []
+
+    def handle_turn(user_text: str) -> None:
+        memory_context = build_sales_context(
+            store=store,
+            client_id=args.client_id,
+            channel_id=args.channel_id,
+            thread_id=args.thread_id,
+            query=user_text,
+        )
+        reply = generate_sales_reply(
+            user_text,
+            history=history,
+            agent_loop=agent_loop,
+            tools=tools,
+            memory_context=memory_context,
+        )
+        history.append({"role": "user", "content": user_text})
+        history.append({"role": "assistant", "content": reply.text})
+        record_sales_interaction(
+            store=store,
+            client_id=args.client_id,
+            channel_id=args.channel_id,
+            thread_id=args.thread_id,
+            user_text=user_text,
+            assistant_text=reply.text,
+            assistant_profile_update=reply.profile_update,
+        )
+        print(f"\nassistant> {reply.text}")
+        if args.show_profile:
+            _print_sales_profile(store, args.client_id)
+
+    if args.once:
+        handle_turn(args.once)
+        return 0
+
+    print("Interactive sales chat test")
+    print("Type /exit to quit, /memory to inspect current memory, /profile to inspect stored profile, /reset to clear in-memory history.")
+    while True:
+        try:
+            user_text = input("\nyou> ").strip()
+        except EOFError:
+            print()
+            return 0
+        except KeyboardInterrupt:
+            print()
+            return 130
+
+        if not user_text:
+            continue
+        if user_text in {"/exit", "/quit"}:
+            return 0
+        if user_text == "/reset":
+            history.clear()
+            print("history cleared")
+            continue
+        if user_text == "/profile":
+            _print_sales_profile(store, args.client_id)
+            continue
+        if user_text == "/memory":
+            memory_context = build_sales_context(
+                store=store,
+                client_id=args.client_id,
+                channel_id=args.channel_id,
+                thread_id=args.thread_id,
+                query="",
+            )
+            print("\n[memory]")
+            print(memory_context or "(empty)")
+            continue
+
+        handle_turn(user_text)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -203,6 +303,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{feed.category:<16}] {feed.name}")
         print(f"\nTotal: {len(feeds)} feeds")
         return 0
+    if args.command == "sales-chat":
+        return _run_sales_chat(args)
 
     parser.error("unknown command")
     return 2

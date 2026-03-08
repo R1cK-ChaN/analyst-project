@@ -9,7 +9,7 @@ from analyst.storage import (
     StoredEventRecord,
 )
 
-from .profile import extract_client_profile_update
+from .profile import ClientProfileUpdate, extract_client_profile_update, merge_client_profile_updates
 from .render import RenderBudget, render_context_sections, trim_text
 
 
@@ -150,8 +150,12 @@ def record_sales_interaction(
     thread_id: str,
     user_text: str,
     assistant_text: str,
+    assistant_profile_update: ClientProfileUpdate | None = None,
 ) -> None:
-    update = extract_client_profile_update(user_text)
+    update = merge_client_profile_updates(
+        extract_client_profile_update(user_text),
+        assistant_profile_update or ClientProfileUpdate(),
+    )
     store.record_sales_interaction(
         client_id=client_id,
         channel=channel_id,
@@ -164,6 +168,15 @@ def record_sales_interaction(
             "response_style": update.response_style,
             "risk_appetite": update.risk_appetite,
             "investment_horizon": update.investment_horizon,
+            "institution_type": update.institution_type,
+            "risk_preference": update.risk_preference,
+            "asset_focus": update.asset_focus,
+            "market_focus": update.market_focus,
+            "expertise_level": update.expertise_level,
+            "activity": update.activity,
+            "current_mood": update.current_mood,
+            "confidence": update.confidence,
+            "notes": update.notes,
         },
     )
 
@@ -180,6 +193,25 @@ def _render_client_profile(profile: ClientProfileRecord) -> list[str]:
         lines.append(f"- risk_appetite: {profile.risk_appetite}")
     if profile.investment_horizon:
         lines.append(f"- investment_horizon: {profile.investment_horizon}")
+    if profile.institution_type:
+        lines.append(f"- institution_type: {profile.institution_type}")
+    if profile.risk_preference:
+        lines.append(f"- risk_preference: {profile.risk_preference}")
+    if profile.asset_focus:
+        lines.append(f"- asset_focus: {', '.join(profile.asset_focus)}")
+    if profile.market_focus:
+        lines.append(f"- market_focus: {', '.join(profile.market_focus)}")
+    if profile.expertise_level:
+        lines.append(f"- expertise_level: {profile.expertise_level}")
+    if profile.activity:
+        lines.append(f"- activity: {profile.activity}")
+    if profile.current_mood:
+        lines.append(f"- current_mood: {profile.current_mood}")
+    effective_confidence = profile.confidence or ("低" if profile.total_interactions < 3 else "")
+    if effective_confidence:
+        lines.append(f"- confidence: {effective_confidence}")
+    if profile.notes:
+        lines.append(f"- notes: {trim_text(profile.notes, max_chars=160)}")
     if profile.total_interactions:
         lines.append(f"- total_interactions: {profile.total_interactions}")
     return lines

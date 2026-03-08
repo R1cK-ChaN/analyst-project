@@ -15,6 +15,7 @@ from analyst.engine import AnalystEngine
 
 PATTERNS = {
     InteractionMode.DRAFT: re.compile(r"(帮我写|帮我准备一段|起草|草拟|帮我发|写一段)"),
+    InteractionMode.FOLLOW_UP: re.compile(r"(跟进一下|继续跟进|follow[\s-]?up|追一下|顺便发一条|帮我续一下)"),
     InteractionMode.MEETING_PREP: re.compile(r"(准备要点|沟通要点|会议准备|客户沟通|帮我准备.*会|怎么跟客户说)"),
     InteractionMode.REGIME: re.compile(r"(宏观状态|体系状态|regime|风险偏好|现在宏观|整体怎么看)"),
     InteractionMode.CALENDAR: re.compile(r"(今天有什么|日历|数据发布|今天数据|本周数据|接下来有什么)"),
@@ -52,6 +53,9 @@ class AnalystIntegrationService:
         mode = detect_mode(message)
         if mode == InteractionMode.DRAFT:
             response = self.engine.generate_draft(message, user_id=user_id, focus=focus, memory_context=memory_context)
+            return self.formatter.format_draft(response)
+        if mode == InteractionMode.FOLLOW_UP:
+            response = self.engine.generate_follow_up(message, user_id=user_id, focus=focus, memory_context=memory_context)
             return self.formatter.format_draft(response)
         if mode == InteractionMode.MEETING_PREP:
             response = self.engine.generate_meeting_prep(message, user_id=user_id, focus=focus, memory_context=memory_context)

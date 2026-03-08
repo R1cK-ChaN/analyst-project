@@ -48,6 +48,22 @@ class AnalystEngine:
             memory_context=memory_context,
         )
 
+    def generate_follow_up(
+        self,
+        request: str,
+        user_id: str,
+        focus: str = "global",
+        memory_context: str = "",
+    ) -> DraftResponse:
+        return self._generate_response(
+            mode=InteractionMode.FOLLOW_UP,
+            instruction=request,
+            user_id=user_id,
+            audience="client_follow_up",
+            focus=focus,
+            memory_context=memory_context,
+        )
+
     def generate_meeting_prep(
         self,
         request: str,

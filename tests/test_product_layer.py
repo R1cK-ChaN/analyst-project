@@ -23,6 +23,12 @@ class ProductLayerTest(unittest.TestCase):
             InteractionMode.DRAFT,
         )
 
+    def test_detect_mode_routes_follow_up(self) -> None:
+        self.assertEqual(
+            detect_mode("帮我跟进一下上周聊过的港股观点"),
+            InteractionMode.FOLLOW_UP,
+        )
+
     def test_end_to_end_draft_reply_contains_compliance_notice(self) -> None:
         reply = self.app.route(
             "帮我写一段关于今晚非农数据的客户消息",

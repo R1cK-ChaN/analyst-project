@@ -153,6 +153,10 @@ Quick local usage:
 PYTHONPATH=src python3 -m analyst regime
 PYTHONPATH=src python3 -m analyst route "帮我写一段关于今晚非农数据的客户消息"
 
+# Local sales-agent prompt testing (requires OpenRouter model env)
+PYTHONPATH=src python3 -m analyst sales-chat --once "最近太难做了"
+PYTHONPATH=src python3 -m analyst sales-chat --client-id demo-user --db-path /tmp/analyst-sales.db
+
 # WS1 live engine commands (requires .env with API keys — see .env.example)
 PYTHONPATH=src python3 -m analyst refresh --once
 PYTHONPATH=src python3 -m analyst live-calendar --scope today

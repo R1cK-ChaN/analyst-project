@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from analyst.memory import (
+    ClientProfileUpdate,
     build_research_context,
     build_sales_context,
     build_trading_context,
@@ -164,6 +165,44 @@ class MemoryPipelineTest(unittest.TestCase):
             self.assertIn("gold", profile.watchlist_topics)
             self.assertIn("oil", profile.watchlist_topics)
             self.assertEqual(profile.total_interactions, 2)
+
+    def test_assistant_profile_update_is_merged_and_hidden_from_storage_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            record_sales_interaction(
+                store=store,
+                client_id="client-a",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="最近市场太难做了，我主要看港股。",
+                assistant_text="先别急，我晚点把图发你。",
+                assistant_profile_update=ClientProfileUpdate(
+                    institution_type="私募",
+                    market_focus=["港股"],
+                    current_mood="焦虑",
+                    confidence="中",
+                    notes="更在意港股和情绪拐点。",
+                ),
+            )
+
+            profile = store.get_client_profile("client-a")
+            self.assertEqual(profile.institution_type, "私募")
+            self.assertIn("港股", profile.market_focus)
+            self.assertEqual(profile.current_mood, "焦虑")
+            self.assertEqual(profile.confidence, "中")
+            self.assertIn("情绪拐点", profile.notes)
+
+            context = build_sales_context(
+                store=store,
+                client_id="client-a",
+                channel_id="telegram:1",
+                thread_id="main",
+                query="港股今天怎么看？",
+            )
+            self.assertIn("institution_type: 私募", context)
+            self.assertIn("market_focus: 港股", context)
+            self.assertIn("current_mood: 焦虑", context)
 
     def test_sales_context_uses_delivery_history_for_future_threads(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -18,6 +18,7 @@ from analyst.contracts import (
 DISCLAIMERS: dict[InteractionMode, str] = {
     InteractionMode.QA: "内部研究辅助内容，请结合最新数据和合规要求复核。",
     InteractionMode.DRAFT: "客户外发前请人工编辑并完成合规复核。",
+    InteractionMode.FOLLOW_UP: "客户外发前请人工编辑并完成合规复核。",
     InteractionMode.MEETING_PREP: "仅供会前准备，正式口径请结合团队统一表述。",
     InteractionMode.REGIME: "宏观状态为研究框架，不构成投资建议。",
     InteractionMode.CALENDAR: "日历信息仅供提醒，实际发布时间以官方披露为准。",

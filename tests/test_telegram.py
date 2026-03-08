@@ -311,8 +311,8 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
         self._set_loop_response("x" * 5000)
         result = await _chat_reply("hi", self.mock_context, self.mock_loop, self.mock_tools)
 
-        self.assertLessEqual(len(result), MAX_TELEGRAM_LENGTH)
-        self.assertTrue(result.endswith("..."))
+        self.assertLessEqual(len(result.text), MAX_TELEGRAM_LENGTH)
+        self.assertTrue(result.text.endswith("..."))
 
     async def test_history_trimming(self) -> None:
         from analyst.delivery.bot import MAX_HISTORY_TURNS, _chat_reply
@@ -333,9 +333,21 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
         self.mock_loop.run.side_effect = RuntimeError("API down")
         result = await _chat_reply("hello", self.mock_context, self.mock_loop, self.mock_tools)
 
-        self.assertIn("抱歉", result)
+        self.assertIn("抱歉", result.text)
         history = self.mock_context.user_data["history"]
         self.assertEqual(len(history), 2)
+
+    async def test_strips_profile_update_and_markdown_from_public_reply(self) -> None:
+        from analyst.delivery.bot import _chat_reply
+
+        self._set_loop_response(
+            "### 直接回答\n- 我偏谨慎。\n<profile_update>{\"current_mood\":\"谨慎\",\"confidence\":\"中\"}</profile_update>"
+        )
+        result = await _chat_reply("hello", self.mock_context, self.mock_loop, self.mock_tools)
+
+        self.assertEqual(result.text, "直接回答\n我偏谨慎。")
+        self.assertEqual(result.profile_update.current_mood, "谨慎")
+        self.assertEqual(result.profile_update.confidence, "中")
 
 
 if __name__ == "__main__":

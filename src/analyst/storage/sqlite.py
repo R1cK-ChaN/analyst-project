@@ -215,6 +215,15 @@ class ClientProfileRecord:
     response_style: str
     risk_appetite: str
     investment_horizon: str
+    institution_type: str
+    risk_preference: str
+    asset_focus: list[str]
+    market_focus: list[str]
+    expertise_level: str
+    activity: str
+    current_mood: str
+    confidence: str
+    notes: str
     last_active_at: str
     total_interactions: int
     updated_at: str
@@ -588,11 +597,35 @@ class SQLiteEngineStore:
                     response_style TEXT NOT NULL DEFAULT '',
                     risk_appetite TEXT NOT NULL DEFAULT '',
                     investment_horizon TEXT NOT NULL DEFAULT '',
+                    institution_type TEXT NOT NULL DEFAULT '',
+                    risk_preference TEXT NOT NULL DEFAULT '',
+                    asset_focus_json TEXT NOT NULL DEFAULT '[]',
+                    market_focus_json TEXT NOT NULL DEFAULT '[]',
+                    expertise_level TEXT NOT NULL DEFAULT '',
+                    activity TEXT NOT NULL DEFAULT '',
+                    current_mood TEXT NOT NULL DEFAULT '',
+                    confidence TEXT NOT NULL DEFAULT '',
+                    notes TEXT NOT NULL DEFAULT '',
                     last_active_at TEXT NOT NULL DEFAULT '',
                     total_interactions INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL
                 )
                 """
+            )
+            self._ensure_table_columns(
+                connection,
+                table_name="client_profiles",
+                columns={
+                    "institution_type": "TEXT NOT NULL DEFAULT ''",
+                    "risk_preference": "TEXT NOT NULL DEFAULT ''",
+                    "asset_focus_json": "TEXT NOT NULL DEFAULT '[]'",
+                    "market_focus_json": "TEXT NOT NULL DEFAULT '[]'",
+                    "expertise_level": "TEXT NOT NULL DEFAULT ''",
+                    "activity": "TEXT NOT NULL DEFAULT ''",
+                    "current_mood": "TEXT NOT NULL DEFAULT ''",
+                    "confidence": "TEXT NOT NULL DEFAULT ''",
+                    "notes": "TEXT NOT NULL DEFAULT ''",
+                },
             )
             connection.execute(
                 """
@@ -663,6 +696,22 @@ class SQLiteEngineStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_delivery_queue_client_created ON delivery_queue(client_id, channel, thread_id, id DESC)"
             )
+
+    def _ensure_table_columns(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        table_name: str,
+        columns: dict[str, str],
+    ) -> None:
+        existing = {
+            row["name"]
+            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        for column_name, column_def in columns.items():
+            if column_name in existing:
+                continue
+            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
 
     def upsert_calendar_event(self, event: StoredEventRecord) -> None:
         with self._connection(commit=True) as connection:
@@ -2028,6 +2077,15 @@ class SQLiteEngineStore:
         response_style: str | None = None,
         risk_appetite: str | None = None,
         investment_horizon: str | None = None,
+        institution_type: str | None = None,
+        risk_preference: str | None = None,
+        asset_focus: list[str] | None = None,
+        market_focus: list[str] | None = None,
+        expertise_level: str | None = None,
+        activity: str | None = None,
+        current_mood: str | None = None,
+        confidence: str | None = None,
+        notes: str | None = None,
         last_active_at: str | None = None,
         interaction_increment: int = 0,
     ) -> ClientProfileRecord:
@@ -2040,6 +2098,15 @@ class SQLiteEngineStore:
                 response_style=response_style,
                 risk_appetite=risk_appetite,
                 investment_horizon=investment_horizon,
+                institution_type=institution_type,
+                risk_preference=risk_preference,
+                asset_focus=asset_focus,
+                market_focus=market_focus,
+                expertise_level=expertise_level,
+                activity=activity,
+                current_mood=current_mood,
+                confidence=confidence,
+                notes=notes,
                 last_active_at=last_active_at,
                 interaction_increment=interaction_increment,
             )
@@ -2308,6 +2375,15 @@ class SQLiteEngineStore:
                 response_style=profile_updates.get("response_style"),
                 risk_appetite=profile_updates.get("risk_appetite"),
                 investment_horizon=profile_updates.get("investment_horizon"),
+                institution_type=profile_updates.get("institution_type"),
+                risk_preference=profile_updates.get("risk_preference"),
+                asset_focus=profile_updates.get("asset_focus"),
+                market_focus=profile_updates.get("market_focus"),
+                expertise_level=profile_updates.get("expertise_level"),
+                activity=profile_updates.get("activity"),
+                current_mood=profile_updates.get("current_mood"),
+                confidence=profile_updates.get("confidence"),
+                notes=profile_updates.get("notes"),
                 last_active_at=assistant_timestamp,
                 interaction_increment=1,
             )
@@ -2391,6 +2467,15 @@ class SQLiteEngineStore:
                 response_style="",
                 risk_appetite="",
                 investment_horizon="",
+                institution_type="",
+                risk_preference="",
+                asset_focus=[],
+                market_focus=[],
+                expertise_level="",
+                activity="",
+                current_mood="",
+                confidence="",
+                notes="",
                 last_active_at="",
                 total_interactions=0,
                 updated_at="",
@@ -2402,6 +2487,15 @@ class SQLiteEngineStore:
             response_style=row["response_style"],
             risk_appetite=row["risk_appetite"],
             investment_horizon=row["investment_horizon"],
+            institution_type=row["institution_type"],
+            risk_preference=row["risk_preference"],
+            asset_focus=json.loads(row["asset_focus_json"]),
+            market_focus=json.loads(row["market_focus_json"]),
+            expertise_level=row["expertise_level"],
+            activity=row["activity"],
+            current_mood=row["current_mood"],
+            confidence=row["confidence"],
+            notes=row["notes"],
             last_active_at=row["last_active_at"],
             total_interactions=int(row["total_interactions"]),
             updated_at=row["updated_at"],
@@ -2433,6 +2527,15 @@ class SQLiteEngineStore:
         response_style: str | None = None,
         risk_appetite: str | None = None,
         investment_horizon: str | None = None,
+        institution_type: str | None = None,
+        risk_preference: str | None = None,
+        asset_focus: list[str] | None = None,
+        market_focus: list[str] | None = None,
+        expertise_level: str | None = None,
+        activity: str | None = None,
+        current_mood: str | None = None,
+        confidence: str | None = None,
+        notes: str | None = None,
         last_active_at: str | None = None,
         interaction_increment: int = 0,
     ) -> ClientProfileRecord:
@@ -2440,12 +2543,25 @@ class SQLiteEngineStore:
         merged_topics = current.watchlist_topics
         if watchlist_topics:
             merged_topics = sorted(set(current.watchlist_topics).union(watchlist_topics))
+        merged_asset_focus = current.asset_focus
+        if asset_focus:
+            merged_asset_focus = sorted(set(current.asset_focus).union(asset_focus))
+        merged_market_focus = current.market_focus
+        if market_focus:
+            merged_market_focus = sorted(set(current.market_focus).union(market_focus))
         next_language = preferred_language if preferred_language is not None else current.preferred_language
         next_response_style = response_style if response_style is not None else current.response_style
         next_risk_appetite = risk_appetite if risk_appetite is not None else current.risk_appetite
         next_investment_horizon = (
             investment_horizon if investment_horizon is not None else current.investment_horizon
         )
+        next_institution_type = institution_type if institution_type is not None else current.institution_type
+        next_risk_preference = risk_preference if risk_preference is not None else current.risk_preference
+        next_expertise_level = expertise_level if expertise_level is not None else current.expertise_level
+        next_activity = activity if activity is not None else current.activity
+        next_current_mood = current_mood if current_mood is not None else current.current_mood
+        next_confidence = confidence if confidence is not None else current.confidence
+        next_notes = notes if notes is not None else current.notes
         next_last_active = last_active_at if last_active_at is not None else current.last_active_at
         updated_at = utc_now().isoformat()
         total_interactions = current.total_interactions + interaction_increment
@@ -2458,16 +2574,34 @@ class SQLiteEngineStore:
                 response_style,
                 risk_appetite,
                 investment_horizon,
+                institution_type,
+                risk_preference,
+                asset_focus_json,
+                market_focus_json,
+                expertise_level,
+                activity,
+                current_mood,
+                confidence,
+                notes,
                 last_active_at,
                 total_interactions,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(client_id) DO UPDATE SET
                 preferred_language = excluded.preferred_language,
                 watchlist_topics_json = excluded.watchlist_topics_json,
                 response_style = excluded.response_style,
                 risk_appetite = excluded.risk_appetite,
                 investment_horizon = excluded.investment_horizon,
+                institution_type = excluded.institution_type,
+                risk_preference = excluded.risk_preference,
+                asset_focus_json = excluded.asset_focus_json,
+                market_focus_json = excluded.market_focus_json,
+                expertise_level = excluded.expertise_level,
+                activity = excluded.activity,
+                current_mood = excluded.current_mood,
+                confidence = excluded.confidence,
+                notes = excluded.notes,
                 last_active_at = excluded.last_active_at,
                 total_interactions = excluded.total_interactions,
                 updated_at = excluded.updated_at
@@ -2479,6 +2613,15 @@ class SQLiteEngineStore:
                 next_response_style,
                 next_risk_appetite,
                 next_investment_horizon,
+                next_institution_type,
+                next_risk_preference,
+                json.dumps(merged_asset_focus, ensure_ascii=False, sort_keys=True),
+                json.dumps(merged_market_focus, ensure_ascii=False, sort_keys=True),
+                next_expertise_level,
+                next_activity,
+                next_current_mood,
+                next_confidence,
+                next_notes,
                 next_last_active,
                 total_interactions,
                 updated_at,
@@ -2491,6 +2634,15 @@ class SQLiteEngineStore:
             response_style=next_response_style,
             risk_appetite=next_risk_appetite,
             investment_horizon=next_investment_horizon,
+            institution_type=next_institution_type,
+            risk_preference=next_risk_preference,
+            asset_focus=merged_asset_focus,
+            market_focus=merged_market_focus,
+            expertise_level=next_expertise_level,
+            activity=next_activity,
+            current_mood=next_current_mood,
+            confidence=next_confidence,
+            notes=next_notes,
             last_active_at=next_last_active,
             total_interactions=total_interactions,
             updated_at=updated_at,

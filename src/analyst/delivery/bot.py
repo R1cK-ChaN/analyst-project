@@ -22,7 +22,6 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import Any
 
 from telegram import Update
 from telegram.constants import ChatAction
@@ -41,20 +40,22 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(_PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
-from analyst.engine import OpenRouterAnalystEngine  # noqa: E402
-from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop  # noqa: E402
-from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider  # noqa: E402
-from analyst.engine.live_types import AgentTool, ConversationMessage  # noqa: E402
+from analyst.engine.agent_loop import PythonAgentLoop  # noqa: E402
+from analyst.engine.live_provider import OpenRouterConfig  # noqa: E402
+from analyst.engine.live_types import AgentTool  # noqa: E402
 from analyst.env import get_env_value  # noqa: E402
-from analyst.information import (  # noqa: E402
-    AnalystInformationService,
-    FileBackedInformationRepository,
+from analyst.memory import (  # noqa: E402
+    ClientProfileUpdate,
+    build_sales_context,
+    record_sales_interaction,
 )
-from analyst.memory import build_sales_context, record_sales_interaction  # noqa: E402
-from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig  # noqa: E402
 from analyst.storage import SQLiteEngineStore  # noqa: E402
 
-from .soul import SOUL_SYSTEM_PROMPT  # noqa: E402
+from .sales_chat import (  # noqa: E402
+    SalesChatReply,
+    build_sales_services,
+    generate_sales_reply,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,57 +81,9 @@ def _append_history(context: ContextTypes.DEFAULT_TYPE, role: str, content: str)
         del history[: len(history) - max_messages]
 
 
-def _system_prompt_with_memory(memory_context: str = "") -> str:
-    if not memory_context:
-        return SOUL_SYSTEM_PROMPT
-    return f"{SOUL_SYSTEM_PROMPT}\n\n### 客户上下文\n{memory_context}"
-
-
 # ---------------------------------------------------------------------------
 # Tool definitions
 # ---------------------------------------------------------------------------
-
-def _build_tools(engine: OpenRouterAnalystEngine) -> list[AgentTool]:
-    """Create agent tools that wrap engine data-fetching methods."""
-
-    def get_regime(arguments: dict[str, Any]) -> str:
-        note = engine.get_regime_summary()
-        return note.body_markdown
-
-    def get_calendar(arguments: dict[str, Any]) -> str:
-        items = engine.get_calendar(limit=5)
-        if not items:
-            return "No upcoming calendar events."
-        return "\n".join(
-            f"- {item.indicator} ({item.country}) | "
-            f"预期 {item.expected or '待定'} | 前值 {item.previous or '未知'} | {item.notes}"
-            for item in items
-        )
-
-    def get_premarket(arguments: dict[str, Any]) -> str:
-        note = engine.build_premarket_briefing()
-        return note.body_markdown
-
-    return [
-        AgentTool(
-            name="get_regime_summary",
-            description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_regime,
-        ),
-        AgentTool(
-            name="get_calendar",
-            description="Fetch upcoming economic data releases (calendar events).",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_calendar,
-        ),
-        AgentTool(
-            name="get_premarket_briefing",
-            description="Fetch the pre-market briefing including overnight highlights and today's key data.",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_premarket,
-        ),
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -143,31 +96,33 @@ async def _chat_reply(
     agent_loop: PythonAgentLoop,
     tools: list[AgentTool],
     memory_context: str = "",
-) -> str:
+) -> SalesChatReply:
     """Send user_text through the agent loop with persona, history, tools, and sales context."""
     history = _get_history(context)
-    history_messages = [ConversationMessage(role=msg["role"], content=msg["content"]) for msg in history]
 
     try:
         result = await asyncio.to_thread(
-            agent_loop.run,
-            system_prompt=_system_prompt_with_memory(memory_context),
-            user_prompt=user_text,
+            generate_sales_reply,
+            user_text,
+            history=history,
+            agent_loop=agent_loop,
             tools=tools,
-            history=history_messages,
+            memory_context=memory_context,
         )
-        response_text = result.final_text
+        response_text = result.text
+        profile_update = result.profile_update
     except Exception:
         logger.exception("Agent loop error")
         response_text = "抱歉，我这边出了点小状况，稍后再试试？"
-
-    _append_history(context, "user", user_text)
-    _append_history(context, "assistant", response_text)
+        profile_update = ClientProfileUpdate()
 
     if len(response_text) > MAX_TELEGRAM_LENGTH:
         response_text = response_text[: MAX_TELEGRAM_LENGTH - 3] + "..."
 
-    return response_text
+    _append_history(context, "user", user_text)
+    _append_history(context, "assistant", response_text)
+
+    return SalesChatReply(text=response_text, profile_update=profile_update)
 
 
 # ---------------------------------------------------------------------------
@@ -176,36 +131,7 @@ async def _chat_reply(
 
 def _build_services() -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
     """Wire up the agent loop, tools, and sales-memory store."""
-    repository = FileBackedInformationRepository()
-    info_service = AnalystInformationService(repository)
-    or_config = OpenRouterConfig.from_env(
-        model_keys=(
-            "ANALYST_TELEGRAM_OPENROUTER_MODEL",
-            "ANALYST_OPENROUTER_MODEL",
-            "LLM_MODEL",
-        ),
-        default_model="google/gemini-3.1-flash-lite-preview",
-    )
-    runtime = OpenRouterAgentRuntime(
-        provider_config=or_config,
-        config=OpenRouterRuntimeConfig(
-            model_keys=(
-                "ANALYST_TELEGRAM_OPENROUTER_MODEL",
-                "ANALYST_OPENROUTER_MODEL",
-                "LLM_MODEL",
-            ),
-            default_model="google/gemini-3.1-flash-lite-preview",
-        ),
-    )
-    engine = OpenRouterAnalystEngine(info_service=info_service, runtime=runtime)
-    provider = OpenRouterProvider(or_config)
-    agent_loop = PythonAgentLoop(
-        provider=provider,
-        config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
-    )
-    tools = _build_tools(engine)
-    store = SQLiteEngineStore()
-    return agent_loop, tools, store
+    return build_sales_services()
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +150,7 @@ def _make_start_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
             agent_loop,
             tools,
         )
-        await update.effective_message.reply_text(reply)
+        await update.effective_message.reply_text(reply.text)
 
     return start
 
@@ -240,7 +166,7 @@ def _make_help_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
             agent_loop,
             tools,
         )
-        await update.effective_message.reply_text(reply)
+        await update.effective_message.reply_text(reply.text)
 
     return help_command
 
@@ -256,7 +182,7 @@ def _make_regime_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
             agent_loop,
             tools,
         )
-        await update.effective_message.reply_text(reply)
+        await update.effective_message.reply_text(reply.text)
 
     return regime
 
@@ -272,7 +198,7 @@ def _make_calendar_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
             agent_loop,
             tools,
         )
-        await update.effective_message.reply_text(reply)
+        await update.effective_message.reply_text(reply.text)
 
     return calendar
 
@@ -288,7 +214,7 @@ def _make_premarket_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool])
             agent_loop,
             tools,
         )
-        await update.effective_message.reply_text(reply)
+        await update.effective_message.reply_text(reply.text)
 
     return premarket
 
@@ -328,9 +254,10 @@ def _make_message_handler(
             channel_id=channel_id,
             thread_id=thread_id,
             user_text=text,
-            assistant_text=reply,
+            assistant_text=reply.text,
+            assistant_profile_update=reply.profile_update,
         )
-        await update.effective_message.reply_text(reply)
+        await update.effective_message.reply_text(reply.text)
 
     return handle_message
 

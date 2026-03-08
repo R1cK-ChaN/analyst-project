@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -11,17 +13,66 @@ class ClientProfileUpdate:
     response_style: str | None = None
     risk_appetite: str | None = None
     investment_horizon: str | None = None
+    institution_type: str | None = None
+    risk_preference: str | None = None
+    asset_focus: list[str] = field(default_factory=list)
+    market_focus: list[str] = field(default_factory=list)
+    expertise_level: str | None = None
+    activity: str | None = None
+    current_mood: str | None = None
+    confidence: str | None = None
+    notes: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ClientProfileUpdate":
+        if not isinstance(payload, dict):
+            return cls()
+        return cls(
+            preferred_language=_clean_scalar(payload.get("preferred_language")),
+            watchlist_topics=_clean_list(payload.get("watchlist_topics")),
+            response_style=_clean_scalar(payload.get("response_style")),
+            risk_appetite=_clean_scalar(payload.get("risk_appetite")),
+            investment_horizon=_clean_scalar(payload.get("investment_horizon")),
+            institution_type=_clean_scalar(payload.get("institution_type")),
+            risk_preference=_clean_scalar(payload.get("risk_preference")),
+            asset_focus=_clean_list(payload.get("asset_focus")),
+            market_focus=_clean_list(payload.get("market_focus")),
+            expertise_level=_clean_scalar(payload.get("expertise_level")),
+            activity=_clean_scalar(payload.get("activity")),
+            current_mood=_clean_scalar(payload.get("current_mood")),
+            confidence=_clean_scalar(payload.get("confidence")),
+            notes=_clean_scalar(payload.get("notes")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "preferred_language": self.preferred_language,
+            "watchlist_topics": self.watchlist_topics,
+            "response_style": self.response_style,
+            "risk_appetite": self.risk_appetite,
+            "investment_horizon": self.investment_horizon,
+            "institution_type": self.institution_type,
+            "risk_preference": self.risk_preference,
+            "asset_focus": self.asset_focus,
+            "market_focus": self.market_focus,
+            "expertise_level": self.expertise_level,
+            "activity": self.activity,
+            "current_mood": self.current_mood,
+            "confidence": self.confidence,
+            "notes": self.notes,
+        }
 
 
 _WATCHLIST_PATTERNS = {
-    "fed": re.compile(r"(?:\b(?:fed|fomc|powell)\b|美联储)", re.IGNORECASE),
+    "fed": re.compile(r"(?:\b(?:fed|fomc|powell)\b|美联储|联储)", re.IGNORECASE),
     "cpi": re.compile(r"(?:\b(?:cpi|inflation)\b|通胀)", re.IGNORECASE),
     "jobs": re.compile(r"(?:\b(?:nfp|payroll|employment)\b|非农|就业)", re.IGNORECASE),
-    "rates": re.compile(r"(?:\b(?:rates?|yield)\b|利率|美债)", re.IGNORECASE),
-    "crypto": re.compile(r"(?:\b(?:bitcoin|btc|eth|crypto)\b|加密)", re.IGNORECASE),
+    "rates": re.compile(r"(?:\b(?:rates?|yield|treasury)\b|利率|美债|收益率)", re.IGNORECASE),
+    "crypto": re.compile(r"(?:\b(?:bitcoin|btc|eth|crypto)\b|加密|比特币|以太坊)", re.IGNORECASE),
     "gold": re.compile(r"(?:\b(?:gold)\b|黄金)", re.IGNORECASE),
-    "oil": re.compile(r"(?:\b(?:oil)\b|原油)", re.IGNORECASE),
-    "equities": re.compile(r"(?:\b(?:equity|stocks?|nasdaq|spx)\b|A股|港股|美股)", re.IGNORECASE),
+    "oil": re.compile(r"(?:\b(?:oil|crude)\b|原油)", re.IGNORECASE),
+    "equities": re.compile(r"(?:\b(?:equity|stocks?|nasdaq|spx|hang seng)\b|A股|港股|美股|股票)", re.IGNORECASE),
+    "fx": re.compile(r"(?:\b(?:fx|usd|dxy|eurusd|usdcny)\b|汇率|美元|人民币|外汇)", re.IGNORECASE),
 }
 
 _STYLE_PATTERNS = {
@@ -34,10 +85,64 @@ _RISK_PATTERNS = {
     "aggressive": re.compile(r"(进取|激进|高弹性|aggressive)", re.IGNORECASE),
 }
 
-_HORIZON_PATTERNS = {
-    "short_term": re.compile(r"(短线|今天|本周|short[- ]?term)", re.IGNORECASE),
-    "long_term": re.compile(r"(长线|中长期|季度|long[- ]?term)", re.IGNORECASE),
+_RISK_PREFERENCE_PATTERNS = {
+    "防守": re.compile(r"(稳健|保守|低风险|回撤控制|先别激进)", re.IGNORECASE),
+    "进攻": re.compile(r"(进取|激进|高弹性|想搏一把|愿意加风险)", re.IGNORECASE),
+    "均衡": re.compile(r"(均衡|平衡|中性一点|别太极端)", re.IGNORECASE),
 }
+
+_HORIZON_PATTERNS = {
+    "short_term": re.compile(r"(短线|今天|本周|盘中|short[- ]?term)", re.IGNORECASE),
+    "long_term": re.compile(r"(长线|中长期|季度|半年|long[- ]?term)", re.IGNORECASE),
+}
+
+_INSTITUTION_PATTERNS = {
+    "公募": re.compile(r"(公募|基金公司|公募基金)", re.IGNORECASE),
+    "私募": re.compile(r"(私募|对冲|hedge|量化私募)", re.IGNORECASE),
+    "保险": re.compile(r"(保险|险资)", re.IGNORECASE),
+    "银行理财": re.compile(r"(银行理财|理财子|理财经理|银行资金)", re.IGNORECASE),
+    "海外": re.compile(r"(海外|offshore|overseas)", re.IGNORECASE),
+    "散户": re.compile(r"(散户|个人投资|自己炒|自己做)", re.IGNORECASE),
+}
+
+_ASSET_PATTERNS = {
+    "权益": re.compile(r"(权益|股票|股市|beta|仓位)", re.IGNORECASE),
+    "固收": re.compile(r"(固收|债|利率债|信用债|久期)", re.IGNORECASE),
+    "衍生品": re.compile(r"(期权|期货|衍生品|互换|swap|gamma|vega)", re.IGNORECASE),
+    "商品": re.compile(r"(商品|原油|黄金|铜|黑色)", re.IGNORECASE),
+    "多资产": re.compile(r"(多资产|资产配置|跨资产)", re.IGNORECASE),
+}
+
+_MARKET_PATTERNS = {
+    "A股": re.compile(r"(A股|沪深|上证|深证|创业板|科创板)", re.IGNORECASE),
+    "港股": re.compile(r"(港股|恒生|恒指|H股)", re.IGNORECASE),
+    "美股": re.compile(r"(美股|纳指|标普|道指|nasdaq|spx)", re.IGNORECASE),
+    "债市": re.compile(r"(债市|国债|信用债|美债|收益率曲线)", re.IGNORECASE),
+    "商品": re.compile(r"(商品|原油|黄金|铜|大宗)", re.IGNORECASE),
+    "外汇": re.compile(r"(外汇|汇率|美元|人民币|日元|欧元|fx)", re.IGNORECASE),
+}
+
+_EXPERTISE_PATTERNS = {
+    "资深": re.compile(r"(组合|净值|回撤|久期|carry|vega|basis|赔率|仓位管理)", re.IGNORECASE),
+    "初级": re.compile(r"(刚开始|小白|入门|不太懂|科普一下)", re.IGNORECASE),
+}
+
+_ACTIVITY_PATTERNS = {
+    "高频": re.compile(r"(每天|天天|盘中|实时|高频|一直盯)", re.IGNORECASE),
+    "低频": re.compile(r"(偶尔|不常|低频|佛系|很少看盘)", re.IGNORECASE),
+    "中频": re.compile(r"(每周|隔三差五|有空会看)", re.IGNORECASE),
+}
+
+_MOOD_PATTERNS = {
+    "焦虑": re.compile(r"(太难做|崩了|慌|焦虑|扛不住|难受|亏麻了)", re.IGNORECASE),
+    "谨慎": re.compile(r"(谨慎|先看看|再观察|别急|不太敢)", re.IGNORECASE),
+    "乐观": re.compile(r"(乐观|看多|有信心|挺稳|问题不大)", re.IGNORECASE),
+}
+
+_PROFILE_UPDATE_PATTERN = re.compile(
+    r"<profile_update>\s*(\{.*?\})\s*</profile_update>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 def extract_client_profile_update(text: str) -> ClientProfileUpdate:
@@ -47,24 +152,32 @@ def extract_client_profile_update(text: str) -> ClientProfileUpdate:
 
     preferred_language = "zh" if re.search(r"[\u4e00-\u9fff]", stripped) else "en"
     watchlist_topics = [name for name, pattern in _WATCHLIST_PATTERNS.items() if pattern.search(stripped)]
+    asset_focus = [name for name, pattern in _ASSET_PATTERNS.items() if pattern.search(stripped)]
+    market_focus = [name for name, pattern in _MARKET_PATTERNS.items() if pattern.search(stripped)]
 
-    response_style = None
-    for value, pattern in _STYLE_PATTERNS.items():
-        if pattern.search(stripped):
-            response_style = value
-            break
+    response_style = _first_match(_STYLE_PATTERNS, stripped)
+    risk_appetite = _first_match(_RISK_PATTERNS, stripped)
+    investment_horizon = _first_match(_HORIZON_PATTERNS, stripped)
+    institution_type = _first_match(_INSTITUTION_PATTERNS, stripped)
+    risk_preference = _first_match(_RISK_PREFERENCE_PATTERNS, stripped)
+    activity = _first_match(_ACTIVITY_PATTERNS, stripped)
+    current_mood = _first_match(_MOOD_PATTERNS, stripped)
 
-    risk_appetite = None
-    for value, pattern in _RISK_PATTERNS.items():
-        if pattern.search(stripped):
-            risk_appetite = value
-            break
+    expertise_level = _first_match(_EXPERTISE_PATTERNS, stripped)
+    if expertise_level is None and (watchlist_topics or asset_focus or market_focus):
+        expertise_level = "中等"
 
-    investment_horizon = None
-    for value, pattern in _HORIZON_PATTERNS.items():
-        if pattern.search(stripped):
-            investment_horizon = value
-            break
+    confidence = "低"
+    if institution_type or expertise_level == "资深" or len(asset_focus) + len(market_focus) >= 2:
+        confidence = "中"
+    if expertise_level == "资深" and (institution_type or activity == "高频"):
+        confidence = "高"
+
+    if risk_preference is None:
+        if risk_appetite == "aggressive":
+            risk_preference = "进攻"
+        elif risk_appetite == "conservative":
+            risk_preference = "防守"
 
     return ClientProfileUpdate(
         preferred_language=preferred_language,
@@ -72,4 +185,91 @@ def extract_client_profile_update(text: str) -> ClientProfileUpdate:
         response_style=response_style,
         risk_appetite=risk_appetite,
         investment_horizon=investment_horizon,
+        institution_type=institution_type,
+        risk_preference=risk_preference,
+        asset_focus=asset_focus,
+        market_focus=market_focus,
+        expertise_level=expertise_level,
+        activity=activity,
+        current_mood=current_mood,
+        confidence=confidence,
     )
+
+
+def extract_embedded_profile_update(text: str) -> ClientProfileUpdate:
+    matches = _PROFILE_UPDATE_PATTERN.findall(text)
+    if not matches:
+        return ClientProfileUpdate()
+    raw_payload = matches[-1]
+    try:
+        decoded = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return ClientProfileUpdate()
+    return ClientProfileUpdate.from_dict(decoded)
+
+
+def strip_embedded_profile_update(text: str) -> str:
+    return _PROFILE_UPDATE_PATTERN.sub("", text).strip()
+
+
+def split_reply_and_profile_update(text: str) -> tuple[str, ClientProfileUpdate]:
+    return strip_embedded_profile_update(text), extract_embedded_profile_update(text)
+
+
+def merge_client_profile_updates(*updates: ClientProfileUpdate) -> ClientProfileUpdate:
+    merged = ClientProfileUpdate()
+    for update in updates:
+        if update is None:
+            continue
+        merged = ClientProfileUpdate(
+            preferred_language=update.preferred_language or merged.preferred_language,
+            watchlist_topics=_merge_lists(merged.watchlist_topics, update.watchlist_topics),
+            response_style=update.response_style or merged.response_style,
+            risk_appetite=update.risk_appetite or merged.risk_appetite,
+            investment_horizon=update.investment_horizon or merged.investment_horizon,
+            institution_type=update.institution_type or merged.institution_type,
+            risk_preference=update.risk_preference or merged.risk_preference,
+            asset_focus=_merge_lists(merged.asset_focus, update.asset_focus),
+            market_focus=_merge_lists(merged.market_focus, update.market_focus),
+            expertise_level=update.expertise_level or merged.expertise_level,
+            activity=update.activity or merged.activity,
+            current_mood=update.current_mood or merged.current_mood,
+            confidence=update.confidence or merged.confidence,
+            notes=update.notes or merged.notes,
+        )
+    return merged
+
+
+def _clean_scalar(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    return str(value).strip() or None
+
+
+def _clean_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        candidates = re.split(r"[，,、/]", value)
+    elif isinstance(value, list):
+        candidates = [str(item) for item in value]
+    else:
+        return []
+    cleaned = [item.strip() for item in candidates if str(item).strip()]
+    return list(dict.fromkeys(cleaned))
+
+
+def _first_match(patterns: dict[str, re.Pattern[str]], text: str) -> str | None:
+    for value, pattern in patterns.items():
+        if pattern.search(text):
+            return value
+    return None
+
+
+def _merge_lists(left: list[str], right: list[str]) -> list[str]:
+    if not left and not right:
+        return []
+    return list(dict.fromkeys([*left, *right]))

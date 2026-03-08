@@ -38,6 +38,8 @@ class TemplateAgentRuntime:
     def generate(self, context: RuntimeContext) -> RuntimeResult:
         if context.mode == InteractionMode.DRAFT:
             markdown = self._build_draft(context)
+        elif context.mode == InteractionMode.FOLLOW_UP:
+            markdown = self._build_follow_up(context)
         elif context.mode == InteractionMode.MEETING_PREP:
             markdown = self._build_meeting_prep(context)
         elif context.mode == InteractionMode.REGIME:
@@ -92,6 +94,15 @@ class TemplateAgentRuntime:
             f"{memory_block}\n\n"
             "### 风险提示\n"
             "以上是供客户经理编辑的内部初稿，正式发送前请结合客户持仓和合规要求人工复核。"
+        )
+
+    def _build_follow_up(self, context: RuntimeContext) -> str:
+        anchor = context.supporting_points[0] if context.supporting_points else context.regime_state.summary
+        return (
+            "### 跟进消息\n"
+            f"想到你前面聊过这条线，今天新的变化主要还是 {anchor}。"
+            "短线情绪有些波动，但我觉得更值得看的是节奏有没有真变。"
+            "如果你要，我把今天的快评顺手发你。"
         )
 
     def _build_meeting_prep(self, context: RuntimeContext) -> str:
