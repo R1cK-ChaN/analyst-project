@@ -11,7 +11,7 @@ from analyst.ingestion import IngestionOrchestrator
 from analyst.memory import build_research_context
 from analyst.storage import NewsArticleRecord, SQLiteEngineStore, StoredEventRecord
 
-from analyst.tools import ToolKit, build_web_search_tool
+from analyst.tools import ToolKit, build_web_fetch_tool, build_web_search_tool
 
 from .agent_loop import AgentLoopConfig, PythonAgentLoop
 from .live_prompts import SYSTEM_PROMPT, briefing_prompt, flash_prompt, regime_prompt, wrap_prompt
@@ -195,6 +195,7 @@ class LiveAnalystEngine:
     def _build_tools(self) -> list[AgentTool]:
         kit = ToolKit()
         kit.add(build_web_search_tool())
+        kit.add(build_web_fetch_tool())
         kit.add(AgentTool(
             name="get_recent_releases",
             description="Retrieve recent released macro events from the local SQLite store.",

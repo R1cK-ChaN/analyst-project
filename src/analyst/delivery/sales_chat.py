@@ -7,7 +7,7 @@ from analyst.engine import OpenRouterAnalystEngine
 from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
 from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider
 from analyst.engine.live_types import AgentTool, ConversationMessage
-from analyst.tools import ToolKit, build_web_search_tool
+from analyst.tools import ToolKit, build_web_fetch_tool, build_web_search_tool
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.memory import ClientProfileUpdate, split_reply_and_profile_update
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
@@ -43,6 +43,7 @@ def build_sales_tools(engine: OpenRouterAnalystEngine) -> list[AgentTool]:
 
     kit = ToolKit()
     kit.add(build_web_search_tool())
+    kit.add(build_web_fetch_tool())
     kit.add(AgentTool(
         name="get_regime_summary",
         description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
