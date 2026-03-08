@@ -23,6 +23,8 @@ from analyst.ingestion.scrapers import (
     InvestingCalendarClient,
     TradingEconomicsCalendarClient,
 )
+from analyst.ingestion.scrapers.nyfed import NYFedRatesClient
+from analyst.ingestion.scrapers.rateprobability import RateProbabilityClient
 
 logger = logging.getLogger(__name__)
 from analyst.storage import (
@@ -465,6 +467,8 @@ class IngestionOrchestrator:
         fed: FedIngestionClient | None = None,
         market: MarketPriceClient | None = None,
         news: NewsIngestionClient | None = None,
+        rate_probability: RateProbabilityClient | None = None,
+        nyfed: NYFedRatesClient | None = None,
     ) -> None:
         self.store = store
         self.fred = fred or FREDIngestionClient()
@@ -474,6 +478,8 @@ class IngestionOrchestrator:
         self.fed = fed or FedIngestionClient()
         self.market = market or MarketPriceClient()
         self.news = news or NewsIngestionClient()
+        self.rate_probability = rate_probability or RateProbabilityClient()
+        self.nyfed = nyfed or NYFedRatesClient()
 
     def refresh_calendar(self) -> dict[str, int]:
         total = 0
@@ -517,9 +523,73 @@ class IngestionOrchestrator:
         stats = self.news.refresh(self.store, category=category)
         return {stats.source: stats.count}
 
+    def refresh_rate_probability(self) -> dict[str, int]:
+        count = 0
+        try:
+            prob = self.rate_probability.fetch_probabilities()
+            for m in prob.meetings:
+                self.store.upsert_indicator_observation(
+                    IndicatorObservationRecord(
+                        series_id=f"FEDPROB_{m.meeting_date}",
+                        source="rateprobability",
+                        date=prob.as_of[:10] if len(prob.as_of) >= 10 else prob.as_of,
+                        value=m.implied_rate,
+                        metadata={
+                            "prob_move_pct": m.prob_move_pct,
+                            "is_cut": m.is_cut,
+                            "num_moves": m.num_moves,
+                            "change_bps": m.change_bps,
+                            "current_band": prob.current_band,
+                        },
+                    )
+                )
+                count += 1
+        except Exception:
+            logger.warning("rateprobability.com refresh failed", exc_info=True)
+        return {"rate_probability": count}
+
+    def refresh_nyfed_rates(self) -> dict[str, int]:
+        count = 0
+        try:
+            for rate in self.nyfed.fetch_all_rates(last_n=5):
+                metadata: dict[str, Any] = {}
+                if rate.percentile_1 is not None:
+                    metadata["percentile_1"] = rate.percentile_1
+                if rate.percentile_25 is not None:
+                    metadata["percentile_25"] = rate.percentile_25
+                if rate.percentile_75 is not None:
+                    metadata["percentile_75"] = rate.percentile_75
+                if rate.percentile_99 is not None:
+                    metadata["percentile_99"] = rate.percentile_99
+                if rate.volume_billions is not None:
+                    metadata["volume_billions"] = rate.volume_billions
+                if rate.target_rate_from is not None:
+                    metadata["target_range"] = f"{rate.target_rate_from}-{rate.target_rate_to}"
+                self.store.upsert_indicator_observation(
+                    IndicatorObservationRecord(
+                        series_id=f"NYFED_{rate.type}",
+                        source="nyfed",
+                        date=rate.date,
+                        value=rate.rate,
+                        metadata=metadata,
+                    )
+                )
+                count += 1
+        except Exception:
+            logger.warning("NY Fed rates refresh failed", exc_info=True)
+        return {"nyfed_rates": count}
+
     def refresh_all(self) -> dict[str, int]:
         results: dict[str, int] = {}
-        for batch in (self.refresh_calendar(), self.refresh_fed(), self.refresh_market(), self.refresh_fred_daily(), self.refresh_news()):
+        for batch in (
+            self.refresh_calendar(),
+            self.refresh_fed(),
+            self.refresh_market(),
+            self.refresh_fred_daily(),
+            self.refresh_news(),
+            self.refresh_rate_probability(),
+            self.refresh_nyfed_rates(),
+        ):
             results.update(batch)
         return results
 
@@ -530,6 +600,8 @@ class IngestionOrchestrator:
             "market": {"interval": 1800, "handler": self.refresh_market},
             "fred_daily": {"interval": 86_400, "handler": self.refresh_fred_daily},
             "news": {"interval": 900, "handler": self.refresh_news},
+            "rate_probability": {"interval": 3600, "handler": self.refresh_rate_probability},
+            "nyfed_rates": {"interval": 86_400, "handler": self.refresh_nyfed_rates},
         }
         next_run = {name: 0.0 for name in jobs}
         self.refresh_all()

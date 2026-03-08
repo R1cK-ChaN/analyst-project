@@ -5,6 +5,12 @@ from .forexfactory import ForexFactoryCalendarClient, ForexFactoryNewsClient
 from .investing import InvestingCalendarClient, InvestingNewsClient
 from .bloomberg import BloombergArticle, BloombergArticleClient, BloombergNewsClient
 from .reuters import ReutersArticle, ReutersArticleClient, ReutersNewsClient
+from .nyfed import NYFedRate, NYFedRatesClient
+from .rateprobability import (
+    FedMeetingProbability,
+    FedRateProbability,
+    RateProbabilityClient,
+)
 from .tradingeconomics import (
     TradingEconomicsCalendarClient,
     TradingEconomicsIndicatorsClient,
@@ -15,6 +21,9 @@ from .tradingeconomics import (
 __all__ = [
     # Data classes
     "BloombergArticle",
+    "FedMeetingProbability",
+    "FedRateProbability",
+    "NYFedRate",
     "ReutersArticle",
     "ScrapedIndicator",
     "ScrapedMarketQuote",
@@ -35,4 +44,7 @@ __all__ = [
     # Indicators & Markets
     "TradingEconomicsIndicatorsClient",
     "TradingEconomicsMarketsClient",
+    # Rate Probabilities & Reference Rates
+    "NYFedRatesClient",
+    "RateProbabilityClient",
 ]

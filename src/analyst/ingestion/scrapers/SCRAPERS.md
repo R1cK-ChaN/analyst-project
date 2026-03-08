@@ -382,6 +382,82 @@ and related teasers are stripped from article content.
 
 ---
 
+## 6. rateprobability.com (`rateprobability.py`)
+
+> **Transport:** Plain `requests.Session` — no Cloudflare or bot protection.
+
+### RateProbabilityClient
+
+Fetches **FedWatch-equivalent FOMC rate probabilities** from the
+rateprobability.com JSON API (`/api/latest`). Updated every 2 minutes at source.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fetch_probabilities()` | `FedRateProbability` | Full snapshot of current rate probabilities and historical comparisons |
+
+**`FedRateProbability` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `as_of` | `str` | `"2026-03-08T14:30:00Z"` |
+| `current_band` | `str` | `"4.25-4.50"` |
+| `midpoint` | `float` | `4.375` |
+| `effr` | `float` | `4.33` |
+| `meetings` | `list[FedMeetingProbability]` | Per-meeting probability data |
+| `snapshots` | `dict[str, list]` | Historical comparisons (1w, 3w, 6w, 10w ago) |
+
+**`FedMeetingProbability` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `meeting_date` | `str` | `"2026-06-17"` |
+| `implied_rate` | `float` | `4.125` |
+| `prob_move_pct` | `float` | `72.5` |
+| `is_cut` | `bool` | `True` |
+| `num_moves` | `int` | `1` |
+| `change_bps` | `float` | `-25.0` |
+
+**Storage:** Upserted into `indicators` table as `FEDPROB_{meeting_date}`
+series (source `rateprobability`), value = `implied_rate`.
+
+---
+
+## 7. NY Fed Markets API (`nyfed.py`)
+
+> **Transport:** Plain `requests.Session` — official public API, no bot protection.
+
+### NYFedRatesClient
+
+Fetches **daily reference rates** (SOFR, EFFR, OBFR) from the NY Fed
+Markets API (`markets.newyorkfed.org`).
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fetch_sofr(last_n=5)` | `list[NYFedRate]` | Last N SOFR observations |
+| `fetch_effr(last_n=5)` | `list[NYFedRate]` | Last N EFFR observations |
+| `fetch_obfr(last_n=5)` | `list[NYFedRate]` | Last N OBFR observations |
+| `fetch_all_rates(last_n=5)` | `list[NYFedRate]` | All three rate types with 0.5 s delay between |
+
+**`NYFedRate` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `date` | `str` | `"2026-03-07"` |
+| `type` | `str` | `"SOFR"`, `"EFFR"`, `"OBFR"` |
+| `rate` | `float` | `4.31` |
+| `percentile_1` | `float \| None` | `4.30` |
+| `percentile_25` | `float \| None` | `4.31` |
+| `percentile_75` | `float \| None` | `4.32` |
+| `percentile_99` | `float \| None` | `4.34` |
+| `volume_billions` | `float \| None` | `2180.0` |
+| `target_rate_from` | `float \| None` | `4.25` (EFFR only) |
+| `target_rate_to` | `float \| None` | `4.50` (EFFR only) |
+
+**Storage:** Upserted into `indicators` table as `NYFED_SOFR`,
+`NYFED_EFFR`, `NYFED_OBFR` series (source `nyfed`), value = rate.
+
+---
+
 ## Summary Matrix
 
 | Site | Calendar | News | Articles | Indicators | Markets |
@@ -391,6 +467,8 @@ and related teasers are stripped from article content.
 | **TradingEconomics** | `TradingEconomicsCalendarClient` | `TradingEconomicsNewsClient` | — | `TradingEconomicsIndicatorsClient` | `TradingEconomicsMarketsClient` |
 | **Reuters** | — | `ReutersNewsClient` | `ReutersArticleClient` | — | — |
 | **Bloomberg** | — | `BloombergNewsClient` | `BloombergArticleClient` | — | — |
+| **rateprobability.com** | — | — | — | `RateProbabilityClient` | — |
+| **NY Fed** | — | — | — | `NYFedRatesClient` | — |
 
 ## Running Tests
 
