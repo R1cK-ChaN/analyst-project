@@ -1,12 +1,14 @@
+from .scrapers import (
+    ForexFactoryCalendarClient,
+    InvestingCalendarClient,
+    TradingEconomicsCalendarClient,
+)
 from .sources import (
     FREDIngestionClient,
     FedIngestionClient,
     IngestionOrchestrator,
-    InvestingCalendarClient,
     MarketPriceClient,
-    ForexFactoryCalendarClient,
     NewsIngestionClient,
-    TradingEconomicsCalendarClient,
 )
 
 __all__ = [
