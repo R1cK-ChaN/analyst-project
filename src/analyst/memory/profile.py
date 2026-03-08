@@ -86,9 +86,9 @@ _RISK_PATTERNS = {
 }
 
 _RISK_PREFERENCE_PATTERNS = {
-    "防守": re.compile(r"(稳健|保守|低风险|回撤控制|先别激进)", re.IGNORECASE),
-    "进攻": re.compile(r"(进取|激进|高弹性|想搏一把|愿意加风险)", re.IGNORECASE),
-    "均衡": re.compile(r"(均衡|平衡|中性一点|别太极端)", re.IGNORECASE),
+    "defensive": re.compile(r"(稳健|保守|低风险|回撤控制|先别激进)", re.IGNORECASE),
+    "offensive": re.compile(r"(进取|激进|高弹性|想搏一把|愿意加风险)", re.IGNORECASE),
+    "balanced": re.compile(r"(均衡|平衡|中性一点|别太极端)", re.IGNORECASE),
 }
 
 _HORIZON_PATTERNS = {
@@ -97,46 +97,46 @@ _HORIZON_PATTERNS = {
 }
 
 _INSTITUTION_PATTERNS = {
-    "公募": re.compile(r"(公募|基金公司|公募基金)", re.IGNORECASE),
-    "私募": re.compile(r"(私募|对冲|hedge|量化私募)", re.IGNORECASE),
-    "保险": re.compile(r"(保险|险资)", re.IGNORECASE),
-    "银行理财": re.compile(r"(银行理财|理财子|理财经理|银行资金)", re.IGNORECASE),
-    "海外": re.compile(r"(海外|offshore|overseas)", re.IGNORECASE),
-    "散户": re.compile(r"(散户|个人投资|自己炒|自己做)", re.IGNORECASE),
+    "mutual_fund": re.compile(r"(公募|基金公司|公募基金)", re.IGNORECASE),
+    "hedge_fund": re.compile(r"(私募|对冲|hedge|量化私募)", re.IGNORECASE),
+    "insurance": re.compile(r"(保险|险资)", re.IGNORECASE),
+    "bank_wm": re.compile(r"(银行理财|理财子|理财经理|银行资金)", re.IGNORECASE),
+    "offshore": re.compile(r"(海外|offshore|overseas)", re.IGNORECASE),
+    "retail": re.compile(r"(散户|个人投资|自己炒|自己做)", re.IGNORECASE),
 }
 
 _ASSET_PATTERNS = {
-    "权益": re.compile(r"(权益|股票|股市|beta|仓位)", re.IGNORECASE),
-    "固收": re.compile(r"(固收|债|利率债|信用债|久期)", re.IGNORECASE),
-    "衍生品": re.compile(r"(期权|期货|衍生品|互换|swap|gamma|vega)", re.IGNORECASE),
-    "商品": re.compile(r"(商品|原油|黄金|铜|黑色)", re.IGNORECASE),
-    "多资产": re.compile(r"(多资产|资产配置|跨资产)", re.IGNORECASE),
+    "equity": re.compile(r"(权益|股票|股市|beta|仓位)", re.IGNORECASE),
+    "fixed_income": re.compile(r"(固收|债|利率债|信用债|久期)", re.IGNORECASE),
+    "derivatives": re.compile(r"(期权|期货|衍生品|互换|swap|gamma|vega)", re.IGNORECASE),
+    "commodities": re.compile(r"(商品|原油|黄金|铜|黑色)", re.IGNORECASE),
+    "multi_asset": re.compile(r"(多资产|资产配置|跨资产)", re.IGNORECASE),
 }
 
 _MARKET_PATTERNS = {
-    "A股": re.compile(r"(A股|沪深|上证|深证|创业板|科创板)", re.IGNORECASE),
-    "港股": re.compile(r"(港股|恒生|恒指|H股)", re.IGNORECASE),
-    "美股": re.compile(r"(美股|纳指|标普|道指|nasdaq|spx)", re.IGNORECASE),
-    "债市": re.compile(r"(债市|国债|信用债|美债|收益率曲线)", re.IGNORECASE),
-    "商品": re.compile(r"(商品|原油|黄金|铜|大宗)", re.IGNORECASE),
-    "外汇": re.compile(r"(外汇|汇率|美元|人民币|日元|欧元|fx)", re.IGNORECASE),
+    "a_shares": re.compile(r"(A股|沪深|上证|深证|创业板|科创板)", re.IGNORECASE),
+    "hk_equities": re.compile(r"(港股|恒生|恒指|H股)", re.IGNORECASE),
+    "us_equities": re.compile(r"(美股|纳指|标普|道指|nasdaq|spx)", re.IGNORECASE),
+    "bonds": re.compile(r"(债市|国债|信用债|美债|收益率曲线)", re.IGNORECASE),
+    "commodities": re.compile(r"(商品|原油|黄金|铜|大宗)", re.IGNORECASE),
+    "fx": re.compile(r"(外汇|汇率|美元|人民币|日元|欧元|fx)", re.IGNORECASE),
 }
 
 _EXPERTISE_PATTERNS = {
-    "资深": re.compile(r"(组合|净值|回撤|久期|carry|vega|basis|赔率|仓位管理)", re.IGNORECASE),
-    "初级": re.compile(r"(刚开始|小白|入门|不太懂|科普一下)", re.IGNORECASE),
+    "senior": re.compile(r"(组合|净值|回撤|久期|carry|vega|basis|赔率|仓位管理)", re.IGNORECASE),
+    "junior": re.compile(r"(刚开始|小白|入门|不太懂|科普一下)", re.IGNORECASE),
 }
 
 _ACTIVITY_PATTERNS = {
-    "高频": re.compile(r"(每天|天天|盘中|实时|高频|一直盯)", re.IGNORECASE),
-    "低频": re.compile(r"(偶尔|不常|低频|佛系|很少看盘)", re.IGNORECASE),
-    "中频": re.compile(r"(每周|隔三差五|有空会看)", re.IGNORECASE),
+    "high": re.compile(r"(每天|天天|盘中|实时|高频|一直盯)", re.IGNORECASE),
+    "low": re.compile(r"(偶尔|不常|低频|佛系|很少看盘)", re.IGNORECASE),
+    "medium": re.compile(r"(每周|隔三差五|有空会看)", re.IGNORECASE),
 }
 
 _MOOD_PATTERNS = {
-    "焦虑": re.compile(r"(太难做|崩了|慌|焦虑|扛不住|难受|亏麻了)", re.IGNORECASE),
-    "谨慎": re.compile(r"(谨慎|先看看|再观察|别急|不太敢)", re.IGNORECASE),
-    "乐观": re.compile(r"(乐观|看多|有信心|挺稳|问题不大)", re.IGNORECASE),
+    "anxious": re.compile(r"(太难做|崩了|慌|焦虑|扛不住|难受|亏麻了)", re.IGNORECASE),
+    "cautious": re.compile(r"(谨慎|先看看|再观察|别急|不太敢)", re.IGNORECASE),
+    "optimistic": re.compile(r"(乐观|看多|有信心|挺稳|问题不大)", re.IGNORECASE),
 }
 
 _PROFILE_UPDATE_PATTERN = re.compile(
@@ -165,19 +165,19 @@ def extract_client_profile_update(text: str) -> ClientProfileUpdate:
 
     expertise_level = _first_match(_EXPERTISE_PATTERNS, stripped)
     if expertise_level is None and (watchlist_topics or asset_focus or market_focus):
-        expertise_level = "中等"
+        expertise_level = "intermediate"
 
-    confidence = "低"
-    if institution_type or expertise_level == "资深" or len(asset_focus) + len(market_focus) >= 2:
-        confidence = "中"
-    if expertise_level == "资深" and (institution_type or activity == "高频"):
-        confidence = "高"
+    confidence = "low"
+    if institution_type or expertise_level == "senior" or len(asset_focus) + len(market_focus) >= 2:
+        confidence = "medium"
+    if expertise_level == "senior" and (institution_type or activity == "high"):
+        confidence = "high"
 
     if risk_preference is None:
         if risk_appetite == "aggressive":
-            risk_preference = "进攻"
+            risk_preference = "offensive"
         elif risk_appetite == "conservative":
-            risk_preference = "防守"
+            risk_preference = "defensive"
 
     return ClientProfileUpdate(
         preferred_language=preferred_language,
@@ -240,13 +240,52 @@ def merge_client_profile_updates(*updates: ClientProfileUpdate) -> ClientProfile
     return merged
 
 
+_ZH_TO_EN: dict[str, str] = {
+    # confidence
+    "低": "low", "中": "medium", "高": "high",
+    # mood
+    "焦虑": "anxious", "谨慎": "cautious", "乐观": "optimistic",
+    "疲惫": "exhausted", "自嘲": "self-deprecating", "兴奋": "excited",
+    # expertise
+    "资深": "senior", "初级": "junior", "中等": "intermediate",
+    # activity
+    "高频": "high", "中频": "medium", "低频": "low",
+    # risk_preference
+    "防守": "defensive", "进攻": "offensive", "均衡": "balanced",
+    # institution
+    "公募": "mutual_fund", "私募": "hedge_fund", "保险": "insurance",
+    "银行理财": "bank_wm", "海外": "offshore", "散户": "retail",
+    # asset
+    "权益": "equity", "固收": "fixed_income", "衍生品": "derivatives",
+    "商品": "commodities", "多资产": "multi_asset",
+    # market
+    "A股": "a_shares", "港股": "hk_equities", "美股": "us_equities",
+    "债市": "bonds", "外汇": "fx",
+    # style
+    "简短": "concise", "详细": "detailed",
+    # risk_appetite
+    "保守": "conservative", "激进": "aggressive", "稳健": "conservative",
+}
+
+
+def _normalize(value: str | None) -> str | None:
+    """Translate known Chinese profile values to English."""
+    if value is None:
+        return None
+    return _ZH_TO_EN.get(value, value)
+
+
+def _normalize_list(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(_ZH_TO_EN.get(v, v) for v in values))
+
+
 def _clean_scalar(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
         cleaned = value.strip()
-        return cleaned or None
-    return str(value).strip() or None
+        return _normalize(cleaned) if cleaned else None
+    return _normalize(str(value).strip()) or None
 
 
 def _clean_list(value: Any) -> list[str]:
@@ -259,7 +298,7 @@ def _clean_list(value: Any) -> list[str]:
     else:
         return []
     cleaned = [item.strip() for item in candidates if str(item).strip()]
-    return list(dict.fromkeys(cleaned))
+    return _normalize_list(list(dict.fromkeys(cleaned)))
 
 
 def _first_match(patterns: dict[str, re.Pattern[str]], text: str) -> str | None:

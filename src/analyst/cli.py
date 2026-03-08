@@ -5,7 +5,7 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 
-from analyst.delivery.sales_chat import build_sales_services, generate_sales_reply
+from analyst.delivery.sales_chat import build_sales_services, generate_sales_reply, split_into_bubbles
 from analyst.memory import build_sales_context, record_sales_interaction
 from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
 
@@ -130,12 +130,14 @@ def _run_sales_chat(args: argparse.Namespace) -> int:
             thread_id=args.thread_id,
             query=user_text,
         )
+        profile = store.get_client_profile(args.client_id)
         reply = generate_sales_reply(
             user_text,
             history=history,
             agent_loop=agent_loop,
             tools=tools,
             memory_context=memory_context,
+            preferred_language=profile.preferred_language,
         )
         history.append({"role": "user", "content": user_text})
         history.append({"role": "assistant", "content": reply.text})
@@ -148,7 +150,9 @@ def _run_sales_chat(args: argparse.Namespace) -> int:
             assistant_text=reply.text,
             assistant_profile_update=reply.profile_update,
         )
-        print(f"\nassistant> {reply.text}")
+        bubbles = split_into_bubbles(reply.text)
+        for bubble in bubbles:
+            print(f"\nassistant> {bubble}")
         if args.show_profile:
             _print_sales_profile(store, args.client_id)
 

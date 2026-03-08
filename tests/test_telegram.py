@@ -264,7 +264,7 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
         await _chat_reply("hi", self.mock_context, self.mock_loop, self.mock_tools)
 
         call_kwargs = self.mock_loop.run.call_args.kwargs
-        self.assertEqual(call_kwargs["system_prompt"], SOUL_SYSTEM_PROMPT)
+        self.assertIn(SOUL_SYSTEM_PROMPT, call_kwargs["system_prompt"])
         self.assertIn("陈襄", call_kwargs["system_prompt"])
 
     async def test_passes_tools_to_agent_loop(self) -> None:
@@ -346,8 +346,8 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
         result = await _chat_reply("hello", self.mock_context, self.mock_loop, self.mock_tools)
 
         self.assertEqual(result.text, "直接回答\n我偏谨慎。")
-        self.assertEqual(result.profile_update.current_mood, "谨慎")
-        self.assertEqual(result.profile_update.confidence, "中")
+        self.assertEqual(result.profile_update.current_mood, "cautious")
+        self.assertEqual(result.profile_update.confidence, "medium")
 
 
 if __name__ == "__main__":

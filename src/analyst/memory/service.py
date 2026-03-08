@@ -124,15 +124,15 @@ def build_sales_context(
 
     sections = [
         (
-            "客户画像",
+            "client_profile",
             _render_client_profile(profile),
         ),
         (
-            "已发送内容",
+            "sent_content",
             _render_delivery_history(relevant_deliveries, limits=limits),
         ),
         (
-            "当前线程",
+            "current_thread",
             [
                 f"- {message.role}: {trim_text(message.content, max_chars=limits.max_item_chars)}"
                 for message in recent_messages
@@ -207,7 +207,7 @@ def _render_client_profile(profile: ClientProfileRecord) -> list[str]:
         lines.append(f"- activity: {profile.activity}")
     if profile.current_mood:
         lines.append(f"- current_mood: {profile.current_mood}")
-    effective_confidence = profile.confidence or ("低" if profile.total_interactions < 3 else "")
+    effective_confidence = profile.confidence or ("low" if profile.total_interactions < 3 else "")
     if effective_confidence:
         lines.append(f"- confidence: {effective_confidence}")
     if profile.notes:

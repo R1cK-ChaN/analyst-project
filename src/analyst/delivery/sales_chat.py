@@ -98,14 +98,36 @@ def build_sales_services(
     return agent_loop, tools, store
 
 
-def system_prompt_with_memory(memory_context: str = "") -> str:
-    if not memory_context:
-        return SOUL_SYSTEM_PROMPT
-    return (
-        f"{SOUL_SYSTEM_PROMPT}\n\n"
-        "下面这段是系统整理的客户上下文，只给你内部参考，不要把画像判断直接说给客户：\n"
-        f"{memory_context}"
-    )
+def _detect_language(text: str, *, fallback: str = "") -> str:
+    """Detect language from text. For short/ambiguous messages, return *fallback*."""
+    cjk = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff')
+    alpha = sum(1 for ch in text if ch.isalpha())
+    # Short messages with no CJK and few alpha chars are ambiguous ("ok", "haha", "good")
+    # — don't flip language on these, let the stored preference hold.
+    if cjk == 0 and alpha <= 8:
+        return fallback
+    if cjk > 0:
+        return "zh"
+    return "en"
+
+
+def system_prompt_with_memory(memory_context: str = "", *, user_lang: str = "") -> str:
+    parts = [SOUL_SYSTEM_PROMPT]
+    if user_lang:
+        lang_label = "Chinese" if user_lang == "zh" else "English"
+        parts.append(
+            f"\n[LANGUAGE OVERRIDE] The user is writing in {lang_label}. "
+            f"You MUST reply in {lang_label}."
+        )
+    if memory_context:
+        parts.append(
+            "\n[INTERNAL CLIENT CONTEXT — for your reference only, never reveal profile inferences to the client]\n"
+            + memory_context
+        )
+    return "\n".join(parts)
+
+
+SPLIT_MARKER = "[SPLIT]"
 
 
 def normalize_sales_reply(text: str) -> str:
@@ -130,6 +152,13 @@ def normalize_sales_reply(text: str) -> str:
     return cleaned
 
 
+def split_into_bubbles(text: str) -> list[str]:
+    """Split a reply on [SPLIT] markers into separate chat bubbles."""
+    parts = text.split(SPLIT_MARKER)
+    bubbles = [p.strip() for p in parts if p.strip()]
+    return bubbles or [text]
+
+
 def generate_sales_reply(
     user_text: str,
     *,
@@ -137,13 +166,15 @@ def generate_sales_reply(
     agent_loop: PythonAgentLoop,
     tools: list[AgentTool],
     memory_context: str = "",
+    preferred_language: str = "",
 ) -> SalesChatReply:
     history_messages = [
         ConversationMessage(role=message["role"], content=message["content"])
         for message in (history or [])
     ]
+    user_lang = _detect_language(user_text, fallback=preferred_language)
     result = agent_loop.run(
-        system_prompt=system_prompt_with_memory(memory_context),
+        system_prompt=system_prompt_with_memory(memory_context, user_lang=user_lang),
         user_prompt=user_text,
         tools=tools,
         history=history_messages,

@@ -96,6 +96,7 @@ async def _chat_reply(
     agent_loop: PythonAgentLoop,
     tools: list[AgentTool],
     memory_context: str = "",
+    preferred_language: str = "",
 ) -> SalesChatReply:
     """Send user_text through the agent loop with persona, history, tools, and sales context."""
     history = _get_history(context)
@@ -108,6 +109,7 @@ async def _chat_reply(
             agent_loop=agent_loop,
             tools=tools,
             memory_context=memory_context,
+            preferred_language=preferred_language,
         )
         response_text = result.text
         profile_update = result.profile_update
@@ -241,12 +243,14 @@ def _make_message_handler(
             thread_id=thread_id,
             query=text,
         )
+        profile = store.get_client_profile(user_id)
         reply = await _chat_reply(
             text,
             context,
             agent_loop,
             tools,
             memory_context=memory_context,
+            preferred_language=profile.preferred_language,
         )
         record_sales_interaction(
             store=store,
@@ -257,7 +261,10 @@ def _make_message_handler(
             assistant_text=reply.text,
             assistant_profile_update=reply.profile_update,
         )
-        await update.effective_message.reply_text(reply.text)
+        from analyst.delivery.sales_chat import split_into_bubbles
+        bubbles = split_into_bubbles(reply.text)
+        for bubble in bubbles:
+            await update.effective_message.reply_text(bubble)
 
     return handle_message
 
