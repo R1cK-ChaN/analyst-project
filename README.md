@@ -2,13 +2,14 @@
 
 Standalone Analyst product scaffold. This folder now contains its own installable Python package under `src/analyst/` and can run without importing from the sibling `information/` repo.
 
-Current WS1 status on March 7, 2026:
+Current WS1 status on March 8, 2026:
 
 - the live WS1 engine is implemented under `src/analyst/engine/`, `src/analyst/storage/`, and `src/analyst/ingestion/`
 - local live commands now cover refresh, flash commentary, briefing, wrap, regime refresh, calendar inspection, and news inspection
 - the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, yfinance, and macro-finance RSS news ingestion
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
 - the current memory implementation is pipeline-shaped: research publishes into `research_artifacts`, trader state/artifacts have FK lineage, and sales uses `client_profiles`, `conversation_messages`, and `delivery_queue`
+- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and cross-agent tools (web search via OpenRouter plugins API); both LiveAnalystEngine and sales agent use it
 - China-specific ingestion, live end-to-end provider verification, and delivery integration are still pending
 
 ## What's Inside
@@ -69,6 +70,7 @@ analyst-project/
 │   ├── env.py                      Multi-file .env resolver
 │   ├── information/                Local information layer using bundled demo data
 │   ├── runtime/                    Runtime and prompt profiles
+│   ├── tools/                      Unified tools layer — ToolKit builder + cross-agent tools (web search)
 │   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
 │   ├── storage/                    SQLite store (market state, research artifacts, trader state, sales memory)
 │   ├── memory/                     Context builders and sales profile extraction
@@ -178,6 +180,7 @@ This validates the current standalone implementation:
 
 - bundled demo data + demo engine path
 - WS1 live engine: SQLite store, ingestion adapters, calendar/news query surface, agent loop, OpenRouter provider
+- unified tools layer: ToolKit composable builder + web search via OpenRouter plugins API
 - WeCom and Telegram formatters
 - Telegram agent bot with persona (陈襄) and autonomous tool access
 - integration router

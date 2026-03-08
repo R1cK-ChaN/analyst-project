@@ -11,6 +11,8 @@ from analyst.ingestion import IngestionOrchestrator
 from analyst.memory import build_research_context
 from analyst.storage import NewsArticleRecord, SQLiteEngineStore, StoredEventRecord
 
+from analyst.tools import ToolKit, build_web_search_tool
+
 from .agent_loop import AgentLoopConfig, PythonAgentLoop
 from .live_prompts import SYSTEM_PROMPT, briefing_prompt, flash_prompt, regime_prompt, wrap_prompt
 from .live_provider import OpenRouterConfig, OpenRouterProvider
@@ -191,141 +193,142 @@ class LiveAnalystEngine:
         )
 
     def _build_tools(self) -> list[AgentTool]:
-        return [
-            AgentTool(
-                name="get_recent_releases",
-                description="Retrieve recent released macro events from the local SQLite store.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "days": {"type": "integer", "default": 7},
-                        "limit": {"type": "integer", "default": 10},
-                        "importance": {"type": "string"},
-                        "country": {"type": "string", "description": "Filter by country code, e.g. US, JP, EU"},
-                        "category": {"type": "string", "description": "Filter by category, e.g. inflation, growth, employment"},
-                    },
+        kit = ToolKit()
+        kit.add(build_web_search_tool())
+        kit.add(AgentTool(
+            name="get_recent_releases",
+            description="Retrieve recent released macro events from the local SQLite store.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "default": 7},
+                    "limit": {"type": "integer", "default": 10},
+                    "importance": {"type": "string"},
+                    "country": {"type": "string", "description": "Filter by country code, e.g. US, JP, EU"},
+                    "category": {"type": "string", "description": "Filter by category, e.g. inflation, growth, employment"},
                 },
-                handler=self._tool_recent_releases,
-            ),
-            AgentTool(
-                name="get_upcoming_calendar",
-                description="Retrieve upcoming scheduled macro events from the local SQLite store.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "limit": {"type": "integer", "default": 10},
-                    },
+            },
+            handler=self._tool_recent_releases,
+        ))
+        kit.add(AgentTool(
+            name="get_upcoming_calendar",
+            description="Retrieve upcoming scheduled macro events from the local SQLite store.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "default": 10},
                 },
-                handler=self._tool_upcoming_calendar,
-            ),
-            AgentTool(
-                name="get_market_snapshot",
-                description="Retrieve the latest cross-asset market snapshot from the local SQLite store.",
-                parameters={"type": "object", "properties": {}},
-                handler=self._tool_market_snapshot,
-            ),
-            AgentTool(
-                name="get_recent_fed_comms",
-                description="Retrieve recent Fed communications from the local SQLite store.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "days": {"type": "integer", "default": 14},
-                        "limit": {"type": "integer", "default": 5},
-                    },
+            },
+            handler=self._tool_upcoming_calendar,
+        ))
+        kit.add(AgentTool(
+            name="get_market_snapshot",
+            description="Retrieve the latest cross-asset market snapshot from the local SQLite store.",
+            parameters={"type": "object", "properties": {}},
+            handler=self._tool_market_snapshot,
+        ))
+        kit.add(AgentTool(
+            name="get_recent_fed_comms",
+            description="Retrieve recent Fed communications from the local SQLite store.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "default": 14},
+                    "limit": {"type": "integer", "default": 5},
                 },
-                handler=self._tool_recent_fed_comms,
-            ),
-            AgentTool(
-                name="get_indicator_history",
-                description="Retrieve recent FRED history for a known series id.",
-                parameters={
-                    "type": "object",
-                    "required": ["series_id"],
-                    "properties": {
-                        "series_id": {"type": "string"},
-                        "limit": {"type": "integer", "default": 12},
-                    },
+            },
+            handler=self._tool_recent_fed_comms,
+        ))
+        kit.add(AgentTool(
+            name="get_indicator_history",
+            description="Retrieve recent FRED history for a known series id.",
+            parameters={
+                "type": "object",
+                "required": ["series_id"],
+                "properties": {
+                    "series_id": {"type": "string"},
+                    "limit": {"type": "integer", "default": 12},
                 },
-                handler=self._tool_indicator_history,
-            ),
-            AgentTool(
-                name="get_latest_regime_state",
-                description="Retrieve the latest persisted macro regime state.",
-                parameters={"type": "object", "properties": {}},
-                handler=self._tool_latest_regime_state,
-            ),
-            AgentTool(
-                name="get_today_calendar",
-                description="Retrieve today's scheduled and released economic calendar events.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "importance": {"type": "string"},
-                        "country": {"type": "string"},
-                        "category": {"type": "string"},
-                    },
+            },
+            handler=self._tool_indicator_history,
+        ))
+        kit.add(AgentTool(
+            name="get_latest_regime_state",
+            description="Retrieve the latest persisted macro regime state.",
+            parameters={"type": "object", "properties": {}},
+            handler=self._tool_latest_regime_state,
+        ))
+        kit.add(AgentTool(
+            name="get_today_calendar",
+            description="Retrieve today's scheduled and released economic calendar events.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "importance": {"type": "string"},
+                    "country": {"type": "string"},
+                    "category": {"type": "string"},
                 },
-                handler=self._tool_today_calendar,
-            ),
-            AgentTool(
-                name="get_indicator_trend",
-                description="Retrieve historical releases for a specific indicator keyword to track trends over time.",
-                parameters={
-                    "type": "object",
-                    "required": ["indicator_keyword"],
-                    "properties": {
-                        "indicator_keyword": {"type": "string", "description": "Keyword to match indicator names, e.g. CPI, NFP, GDP"},
-                        "limit": {"type": "integer", "default": 12},
-                    },
+            },
+            handler=self._tool_today_calendar,
+        ))
+        kit.add(AgentTool(
+            name="get_indicator_trend",
+            description="Retrieve historical releases for a specific indicator keyword to track trends over time.",
+            parameters={
+                "type": "object",
+                "required": ["indicator_keyword"],
+                "properties": {
+                    "indicator_keyword": {"type": "string", "description": "Keyword to match indicator names, e.g. CPI, NFP, GDP"},
+                    "limit": {"type": "integer", "default": 12},
                 },
-                handler=self._tool_indicator_trend,
-            ),
-            AgentTool(
-                name="get_surprise_summary",
-                description="Summarize recent data surprises grouped by category with beat/miss counts.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "days": {"type": "integer", "default": 14},
-                    },
+            },
+            handler=self._tool_indicator_trend,
+        ))
+        kit.add(AgentTool(
+            name="get_surprise_summary",
+            description="Summarize recent data surprises grouped by category with beat/miss counts.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "default": 14},
                 },
-                handler=self._tool_surprise_summary,
-            ),
-            AgentTool(
-                name="get_recent_news",
-                description="Retrieve recent news articles ranked by time-decay and impact. Supports filtering by impact level, feed category, finance category, country, and asset class.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "days": {"type": "integer", "default": 3},
-                        "limit": {"type": "integer", "default": 15},
-                        "impact_level": {"type": "string", "description": "critical, high, medium, low, info"},
-                        "feed_category": {"type": "string", "description": "markets, forex, bonds, centralbanks, china, etc."},
-                        "finance_category": {"type": "string", "description": "monetary_policy, inflation, rates, etc."},
-                        "country": {"type": "string", "description": "Country code, e.g. US, CN, EU, Global"},
-                        "asset_class": {"type": "string", "description": "Asset class, e.g. Macro, Fixed Income, Equity, FX, Commodity"},
-                    },
+            },
+            handler=self._tool_surprise_summary,
+        ))
+        kit.add(AgentTool(
+            name="get_recent_news",
+            description="Retrieve recent news articles ranked by time-decay and impact. Supports filtering by impact level, feed category, finance category, country, and asset class.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "default": 3},
+                    "limit": {"type": "integer", "default": 15},
+                    "impact_level": {"type": "string", "description": "critical, high, medium, low, info"},
+                    "feed_category": {"type": "string", "description": "markets, forex, bonds, centralbanks, china, etc."},
+                    "finance_category": {"type": "string", "description": "monetary_policy, inflation, rates, etc."},
+                    "country": {"type": "string", "description": "Country code, e.g. US, CN, EU, Global"},
+                    "asset_class": {"type": "string", "description": "Asset class, e.g. Macro, Fixed Income, Equity, FX, Commodity"},
                 },
-                handler=self._tool_recent_news,
-            ),
-            AgentTool(
-                name="search_news",
-                description="Search news articles by keyword using full-text search, ranked by time-decay and impact.",
-                parameters={
-                    "type": "object",
-                    "required": ["query"],
-                    "properties": {
-                        "query": {"type": "string"},
-                        "limit": {"type": "integer", "default": 15},
-                        "days": {"type": "integer", "default": 7},
-                        "country": {"type": "string", "description": "Country code, e.g. US, CN, EU"},
-                        "asset_class": {"type": "string", "description": "Asset class filter"},
-                    },
+            },
+            handler=self._tool_recent_news,
+        ))
+        kit.add(AgentTool(
+            name="search_news",
+            description="Search news articles by keyword using full-text search, ranked by time-decay and impact.",
+            parameters={
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 15},
+                    "days": {"type": "integer", "default": 7},
+                    "country": {"type": "string", "description": "Country code, e.g. US, CN, EU"},
+                    "asset_class": {"type": "string", "description": "Asset class filter"},
                 },
-                handler=self._tool_search_news,
-            ),
-        ]
+            },
+            handler=self._tool_search_news,
+        ))
+        return kit.to_list()
 
     def _loop(self) -> PythonAgentLoop:
         provider = self.provider or OpenRouterProvider(OpenRouterConfig.from_env())

@@ -7,6 +7,7 @@ from analyst.engine import OpenRouterAnalystEngine
 from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
 from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider
 from analyst.engine.live_types import AgentTool, ConversationMessage
+from analyst.tools import ToolKit, build_web_search_tool
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.memory import ClientProfileUpdate, split_reply_and_profile_update
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
@@ -40,26 +41,27 @@ def build_sales_tools(engine: OpenRouterAnalystEngine) -> list[AgentTool]:
         note = engine.build_premarket_briefing()
         return note.body_markdown
 
-    return [
-        AgentTool(
-            name="get_regime_summary",
-            description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_regime,
-        ),
-        AgentTool(
-            name="get_calendar",
-            description="Fetch upcoming economic data releases (calendar events).",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_calendar,
-        ),
-        AgentTool(
-            name="get_premarket_briefing",
-            description="Fetch the pre-market briefing including overnight highlights and today's key data.",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_premarket,
-        ),
-    ]
+    kit = ToolKit()
+    kit.add(build_web_search_tool())
+    kit.add(AgentTool(
+        name="get_regime_summary",
+        description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
+        parameters={"type": "object", "properties": {}, "required": []},
+        handler=get_regime,
+    ))
+    kit.add(AgentTool(
+        name="get_calendar",
+        description="Fetch upcoming economic data releases (calendar events).",
+        parameters={"type": "object", "properties": {}, "required": []},
+        handler=get_calendar,
+    ))
+    kit.add(AgentTool(
+        name="get_premarket_briefing",
+        description="Fetch the pre-market briefing including overnight highlights and today's key data.",
+        parameters={"type": "object", "properties": {}, "required": []},
+        handler=get_premarket,
+    ))
+    return kit.to_list()
 
 
 def build_sales_services(
