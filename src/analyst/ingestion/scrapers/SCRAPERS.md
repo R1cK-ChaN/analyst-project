@@ -295,6 +295,93 @@ the generic `ArticleFetcher`.
 
 ---
 
+## 5. Bloomberg (`bloomberg.py`)
+
+> **Transport:** Playwright + stealth (not `curl_cffi`). Bloomberg is
+> React-rendered with aggressive bot detection, so a real browser is required.
+
+### Setup
+
+```bash
+pip install playwright playwright-stealth
+playwright install chromium
+```
+
+**First-time login** — opens a headful Chromium window for manual sign-in.
+Cookies are saved to `~/.analyst/bloomberg_cookies.json` for subsequent
+headless runs:
+
+```python
+from analyst.ingestion.scrapers.bloomberg import _BloombergBrowser
+with _BloombergBrowser(headless=False) as b:
+    b.login()
+```
+
+### BloombergNewsClient
+
+Scrapes **article listings** from Bloomberg section pages by navigating
+with Playwright, then parsing the rendered HTML via three strategies:
+`__NEXT_DATA__` JSON → JSON-LD → DOM `<article>` elements.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fetch_news(section="markets")` | `list[ScrapedNewsItem]` | Articles for a single section page |
+| `fetch_all_news(sections, sleep_between=7.0)` | `list[ScrapedNewsItem]` | Multiple sections with 7 s delay, dedup by URL |
+
+**Supported sections:** `markets`, `economics`, `technology`, `politics`,
+`wealth`, `opinion`, `green`.
+
+**Fields per item:**
+
+| Field | Example |
+|-------|---------|
+| `title` | "Fed Signals Further Rate Cuts Amid Slowdown" |
+| `url` | `https://www.bloomberg.com/news/articles/2026-03-…` |
+| `published_at` | `2026-03-08T14:30:00Z` |
+| `description` | Article summary / abstract |
+| `category` | Section or primary category from JSON |
+| `image_url` | Lead image URL |
+
+### BloombergArticleClient
+
+Fetches and parses **full Bloomberg articles** with structured metadata.
+Requires an authenticated session (cookies from `login()`).
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fetch_article(url)` | `BloombergArticle` | Single article with full text and metadata |
+| `fetch_articles(urls, sleep_between=7.0)` | `list[BloombergArticle]` | Batch fetch with 7 s delay |
+
+**Metadata sources (3-tier):**
+
+1. **JSON-LD** (`@type: "Article"`): `headline`, `datePublished`, `author`,
+   `articleSection`, `keywords`, `image`.
+2. **OpenGraph meta tags**: `og:title`, `og:image`, `article:published_time`,
+   `article:author`, `article:section`.
+3. **DOM selectors**: `<h1>` for headline, `<a href="/authors/…">` for byline,
+   `<time>` for date, `<p>` elements in body container for content.
+
+**`BloombergArticle` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `url` | `str` | Article URL |
+| `title` | `str` | "Fed Signals Further Rate Cuts Amid Slowdown" |
+| `content` | `str` | Full body as plain text (paragraphs joined by `\n\n`) |
+| `authors` | `list[str]` | `["Craig Torres", "Liz Capo McCormick"]` |
+| `published_at` | `str` | `2026-03-08T14:30:00Z` |
+| `section` | `str` | "Markets" |
+| `keywords` | `list[str]` | `["federal reserve", "interest rates"]` |
+| `image_url` | `str` | Lead image URL |
+| `lede` | `str` | Bloomberg-specific article summary / description |
+| `fetched` | `bool` | `True` on success |
+| `error` | `str \| None` | Error message on failure |
+
+**Body filtering:** Sign-up prompts, newsletter CTAs, terms-of-service links,
+and related teasers are stripped from article content.
+
+---
+
 ## Summary Matrix
 
 | Site | Calendar | News | Articles | Indicators | Markets |
@@ -303,6 +390,7 @@ the generic `ArticleFetcher`.
 | **ForexFactory** | `ForexFactoryCalendarClient` | `ForexFactoryNewsClient` | — | — | — |
 | **TradingEconomics** | `TradingEconomicsCalendarClient` | `TradingEconomicsNewsClient` | — | `TradingEconomicsIndicatorsClient` | `TradingEconomicsMarketsClient` |
 | **Reuters** | — | `ReutersNewsClient` | `ReutersArticleClient` | — | — |
+| **Bloomberg** | — | `BloombergNewsClient` | `BloombergArticleClient` | — | — |
 
 ## Running Tests
 

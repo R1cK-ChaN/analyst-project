@@ -3,6 +3,7 @@
 from ._common import ScrapedIndicator, ScrapedMarketQuote, ScrapedNewsItem
 from .forexfactory import ForexFactoryCalendarClient, ForexFactoryNewsClient
 from .investing import InvestingCalendarClient, InvestingNewsClient
+from .bloomberg import BloombergArticle, BloombergArticleClient, BloombergNewsClient
 from .reuters import ReutersArticle, ReutersArticleClient, ReutersNewsClient
 from .tradingeconomics import (
     TradingEconomicsCalendarClient,
@@ -13,6 +14,7 @@ from .tradingeconomics import (
 
 __all__ = [
     # Data classes
+    "BloombergArticle",
     "ReutersArticle",
     "ScrapedIndicator",
     "ScrapedMarketQuote",
@@ -22,11 +24,13 @@ __all__ = [
     "InvestingCalendarClient",
     "TradingEconomicsCalendarClient",
     # News
+    "BloombergNewsClient",
     "ForexFactoryNewsClient",
     "InvestingNewsClient",
     "ReutersNewsClient",
     "TradingEconomicsNewsClient",
     # Articles
+    "BloombergArticleClient",
     "ReutersArticleClient",
     # Indicators & Markets
     "TradingEconomicsIndicatorsClient",

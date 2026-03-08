@@ -13,6 +13,8 @@ dependencies = [
     "feedparser",
     "httpx",
     "markdownify",
+    "playwright",
+    "playwright-stealth",
     "python-telegram-bot>=21.0,<22",
     "readability-lxml",
     "requests",
