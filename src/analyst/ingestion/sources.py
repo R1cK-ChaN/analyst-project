@@ -478,6 +478,163 @@ class ForexFactoryCalendarClient:
         return round(actual_value - forecast_value, 4)
 
 
+TE_COUNTRY_MAP = {
+    "united states": "US", "china": "CN", "japan": "JP", "germany": "DE",
+    "united kingdom": "UK", "france": "FR", "canada": "CA", "australia": "AU",
+    "new zealand": "NZ", "switzerland": "CH", "singapore": "SG", "south korea": "KR",
+    "india": "IN", "brazil": "BR", "mexico": "MX", "indonesia": "ID",
+    "italy": "IT", "spain": "ES", "netherlands": "NL", "turkey": "TR",
+    "euro area": "EU", "european union": "EU", "hong kong": "HK",
+    "saudi arabia": "SA", "south africa": "ZA", "russia": "RU",
+    "sweden": "SE", "norway": "NO", "denmark": "DK", "poland": "PL",
+    "taiwan": "TW", "thailand": "TH", "malaysia": "MY", "philippines": "PH",
+    "vietnam": "VN", "colombia": "CO", "chile": "CL", "argentina": "AR",
+    "nigeria": "NG", "egypt": "EG", "israel": "IL", "austria": "AT",
+    "belgium": "BE", "ireland": "IE", "portugal": "PT", "greece": "GR",
+    "finland": "FI", "czech republic": "CZ", "romania": "RO", "hungary": "HU",
+}
+
+
+class TradingEconomicsCalendarClient:
+    BASE_URL = "https://tradingeconomics.com/calendar"
+
+    IMPORTANCE_LEVELS = {"3": "high", "2": "medium", "1": "low"}
+
+    def __init__(self) -> None:
+        self.session = create_cf_session(headers={
+            "Accept": "text/html,application/xhtml+xml",
+        })
+
+    def fetch(self) -> list[StoredEventRecord]:
+        """Fetch calendar with per-event importance by making 3 requests."""
+        all_events: list[StoredEventRecord] = []
+        for level, importance in self.IMPORTANCE_LEVELS.items():
+            events = self._fetch_importance_level(level, importance)
+            all_events.extend(events)
+            if level != "1":
+                time.sleep(1.0)
+        return all_events
+
+    def _fetch_importance_level(
+        self, level: str, importance: str,
+    ) -> list[StoredEventRecord]:
+        self.session.cookies.set("calendar-importance", level, domain="tradingeconomics.com")
+        response = self.session.get(self.BASE_URL, timeout=30)
+        response.raise_for_status()
+        return self._parse_calendar_html(response.text, importance)
+
+    def _parse_calendar_html(self, html: str, importance: str) -> list[StoredEventRecord]:
+        soup = BeautifulSoup(html, "html.parser")
+        table = soup.find("table", {"id": "calendar"})
+        if table is None:
+            return []
+        events: list[StoredEventRecord] = []
+        seen_ids: set[str] = set()
+        current_date = datetime.now(OPEN_UTC_PLUS_8).strftime("%Y-%m-%d")
+        for row in table.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) < 9:
+                # Date header row
+                th = row.find("th")
+                if th:
+                    date_text = th.get_text(strip=True)
+                    if date_text and "Actual" not in date_text:
+                        parsed_date = self._parse_header_date(date_text)
+                        if parsed_date:
+                            current_date = parsed_date
+                continue
+            try:
+                # Extract indicator name and period
+                ind_cell = cells[4]
+                event_link = ind_cell.find("a", {"class": "calendar-event"})
+                if event_link:
+                    indicator = event_link.get_text(strip=True)
+                else:
+                    span = ind_cell.find("span")
+                    indicator = span.get_text(strip=True) if span else ind_cell.get_text(strip=True)
+                if not indicator:
+                    continue
+                period_span = ind_cell.find("span", {"class": "calendar-reference"})
+                period = period_span.get_text(strip=True) if period_span else ""
+
+                # Country from data attribute or cell text
+                data_country = row.get("data-country", "")
+                country = TE_COUNTRY_MAP.get(data_country.lower(), cells[1].get_text(strip=True).upper())
+
+                # Time and date
+                time_cell = cells[0]
+                event_time = time_cell.get_text(strip=True) or "00:00"
+                date_class = time_cell.get("class", [])
+                if date_class and date_class[0] not in ("", "calendar-item"):
+                    current_date = date_class[0]
+
+                # Values
+                actual = self._clean_cell_text(cells[5])
+                previous = self._clean_cell_text(cells[6])
+                consensus = self._clean_cell_text(cells[7])
+                te_forecast = self._clean_cell_text(cells[8])
+
+                timestamp = to_utc_iso(date_value=current_date, time_value=event_time)
+                data_id = row.get("data-id", "")
+                event_id = data_id or generate_event_id(country, indicator, timestamp)
+
+                if event_id in seen_ids:
+                    continue
+                seen_ids.add(event_id)
+
+                data_category = row.get("data-category", "")
+                data_symbol = row.get("data-symbol", "")
+
+                events.append(
+                    StoredEventRecord(
+                        source="tradingeconomics",
+                        event_id=str(event_id),
+                        datetime_utc=timestamp,
+                        country=country,
+                        indicator=f"{indicator} ({period})" if period else indicator,
+                        category=categorize_event(indicator),
+                        importance=importance,
+                        actual=actual,
+                        forecast=consensus,
+                        previous=previous,
+                        surprise=self._compute_surprise(actual, consensus),
+                        raw_json={
+                            "te_forecast": te_forecast,
+                            "data_category": data_category,
+                            "data_symbol": data_symbol,
+                            "period": period,
+                            "time": event_time,
+                            "data_country": data_country,
+                        },
+                    )
+                )
+            except Exception:
+                continue
+        return events
+
+    def _parse_header_date(self, text: str) -> str | None:
+        """Parse 'Monday March 09 2026' -> '2026-03-09'."""
+        for fmt in ("%A %B %d %Y", "%a %B %d %Y", "%A %b %d %Y"):
+            try:
+                return datetime.strptime(text.strip(), fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+        return None
+
+    def _clean_cell_text(self, cell: Any) -> str | None:
+        if cell is None:
+            return None
+        value = cell.get_text(strip=True)
+        return value if value and value != "\xa0" else None
+
+    def _compute_surprise(self, actual: str | None, forecast: str | None) -> float | None:
+        actual_value = parse_numeric_value(actual)
+        forecast_value = parse_numeric_value(forecast)
+        if actual_value is None or forecast_value is None:
+            return None
+        return round(actual_value - forecast_value, 4)
+
+
 class FREDIngestionClient:
     BASE_URL = "https://api.stlouisfed.org/fred"
 
@@ -792,6 +949,7 @@ class IngestionOrchestrator:
         fred: FREDIngestionClient | None = None,
         investing: InvestingCalendarClient | None = None,
         forexfactory: ForexFactoryCalendarClient | None = None,
+        tradingeconomics: TradingEconomicsCalendarClient | None = None,
         fed: FedIngestionClient | None = None,
         market: MarketPriceClient | None = None,
         news: NewsIngestionClient | None = None,
@@ -800,6 +958,7 @@ class IngestionOrchestrator:
         self.fred = fred or FREDIngestionClient()
         self.investing = investing or InvestingCalendarClient()
         self.forexfactory = forexfactory or ForexFactoryCalendarClient()
+        self.tradingeconomics = tradingeconomics or TradingEconomicsCalendarClient()
         self.fed = fed or FedIngestionClient()
         self.market = market or MarketPriceClient()
         self.news = news or NewsIngestionClient()
@@ -818,6 +977,12 @@ class IngestionOrchestrator:
                 total += 1
         except Exception:
             logger.warning("ForexFactory calendar refresh failed", exc_info=True)
+        try:
+            for event in self.tradingeconomics.fetch():
+                self.store.upsert_calendar_event(event)
+                total += 1
+        except Exception:
+            logger.warning("TradingEconomics calendar refresh failed", exc_info=True)
         return {"calendar": total}
 
     def refresh_market(self) -> dict[str, int]:

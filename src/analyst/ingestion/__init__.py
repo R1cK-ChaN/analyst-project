@@ -6,6 +6,7 @@ from .sources import (
     MarketPriceClient,
     ForexFactoryCalendarClient,
     NewsIngestionClient,
+    TradingEconomicsCalendarClient,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "InvestingCalendarClient",
     "MarketPriceClient",
     "NewsIngestionClient",
+    "TradingEconomicsCalendarClient",
 ]

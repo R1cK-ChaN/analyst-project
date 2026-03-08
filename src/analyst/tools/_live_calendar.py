@@ -1,4 +1,4 @@
-"""Fetch economic calendar events live from Investing.com and ForexFactory."""
+"""Fetch economic calendar events live from Investing.com, ForexFactory, and TradingEconomics."""
 
 from __future__ import annotations
 
@@ -6,10 +6,16 @@ import logging
 from typing import Any
 
 from analyst.engine.live_types import AgentTool
-from analyst.ingestion.sources import ForexFactoryCalendarClient, InvestingCalendarClient
+from analyst.ingestion.sources import (
+    ForexFactoryCalendarClient,
+    InvestingCalendarClient,
+    TradingEconomicsCalendarClient,
+)
 from analyst.storage import SQLiteEngineStore, StoredEventRecord
 
 logger = logging.getLogger(__name__)
+
+_ALL_SOURCES = ("investing", "forexfactory", "tradingeconomics")
 
 
 class LiveCalendarHandler:
@@ -19,26 +25,26 @@ class LiveCalendarHandler:
         self._store = store
 
     def __call__(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        source = (arguments.get("source") or "both").lower()
+        source = (arguments.get("source") or "all").lower()
         importance_filter = arguments.get("importance")
         country_filter = arguments.get("country")
+
+        sources = _ALL_SOURCES if source == "all" else (source,)
 
         all_events: list[StoredEventRecord] = []
         errors: list[str] = []
 
-        if source in ("investing", "both"):
+        for src in sources:
             try:
-                all_events.extend(InvestingCalendarClient().fetch())
+                if src == "investing":
+                    all_events.extend(InvestingCalendarClient().fetch())
+                elif src == "forexfactory":
+                    all_events.extend(ForexFactoryCalendarClient().fetch())
+                elif src == "tradingeconomics":
+                    all_events.extend(TradingEconomicsCalendarClient().fetch())
             except Exception as exc:
-                logger.warning("Live fetch from Investing.com failed: %s", exc)
-                errors.append(f"Investing.com: {exc}")
-
-        if source in ("forexfactory", "both"):
-            try:
-                all_events.extend(ForexFactoryCalendarClient().fetch())
-            except Exception as exc:
-                logger.warning("Live fetch from ForexFactory failed: %s", exc)
-                errors.append(f"ForexFactory: {exc}")
+                logger.warning("Live fetch from %s failed: %s", src, exc)
+                errors.append(f"{src}: {exc}")
 
         for event in all_events:
             try:
@@ -83,16 +89,17 @@ def build_live_calendar_tool(store: SQLiteEngineStore) -> AgentTool:
     return AgentTool(
         name="fetch_live_calendar",
         description=(
-            "Fetch economic calendar events live from Investing.com and/or ForexFactory right now. "
+            "Fetch economic calendar events live from Investing.com, ForexFactory, and/or TradingEconomics right now. "
             "Use this to get the freshest calendar data when you need real-time event schedules, "
-            "upcoming releases, or just-published actual values. Results are also persisted to the store."
+            "upcoming releases, or just-published actual values. TradingEconomics provides both market consensus "
+            "and its own forecast (in raw_json.te_forecast). Results are also persisted to the store."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "source": {
                     "type": "string",
-                    "description": "Source to fetch from: 'investing', 'forexfactory', or 'both' (default)",
+                    "description": "Source to fetch from: 'investing', 'forexfactory', 'tradingeconomics', or 'all' (default)",
                 },
                 "importance": {
                     "type": "string",
@@ -100,7 +107,7 @@ def build_live_calendar_tool(store: SQLiteEngineStore) -> AgentTool:
                 },
                 "country": {
                     "type": "string",
-                    "description": "Filter results by country code, e.g. US, JP, EU",
+                    "description": "Filter results by country code, e.g. US, JP, EU, CN",
                 },
             },
         },
