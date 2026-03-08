@@ -222,13 +222,87 @@ Scrapes the **market overview tables** from the TE news page sidebar.
 
 ---
 
+## 4. Reuters (`reuters.py`)
+
+### ReutersNewsClient
+
+Scrapes **article listings** from Reuters section pages by parsing three card
+types (`HeroCard`, `BasicCard`, `MediaStoryCard`) via stable `data-testid`
+attributes.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fetch_news(section="markets")` | `list[ScrapedNewsItem]` | Articles for a single section page |
+| `fetch_all_news(sections, sleep_between=1.5)` | `list[ScrapedNewsItem]` | Multiple sections with 1.5 s delay between requests |
+
+**Supported sections:** `markets`, `business`, `world`, `sustainability`,
+`legal`, `technology`.
+
+**Fields per item:**
+
+| Field | Example |
+|-------|---------|
+| `title` | "Iran war threatens prolonged hit to global energy markets" |
+| `url` | `https://www.reuters.com/business/energy/iran-war-…` |
+| `published_at` | `2026-03-07T18:21:43.709Z` (ISO 8601 UTC) |
+| `description` | Body snippet (when present on `MediaStoryCard`) |
+| `category` | Kicker label: "Business", "Energy", "Sustainability" |
+| `image_url` | Card thumbnail URL |
+| `raw_json.card_type` | `HeroCard` / `BasicCard` / `MediaStoryCard` |
+
+**Typical yield:** ~10-15 articles per section, ~25-30 across 3 sections
+(deduplicated).
+
+### ReutersArticleClient
+
+Fetches and parses **full Reuters articles** with structured metadata.
+Uses `curl_cffi` and Reuters-specific selectors for cleaner extraction than
+the generic `ArticleFetcher`.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fetch_article(url)` | `ReutersArticle` | Single article with full text and metadata |
+| `fetch_articles(urls, sleep_between=1.0)` | `list[ReutersArticle]` | Batch fetch with 1.0 s delay |
+
+**Metadata sources:**
+
+- **JSON-LD** (`@type: "NewsArticle"`): `articleSection`, `keywords`,
+  `datePublished`, `image`.
+- **HTML**: `<h1 data-testid="Heading">` for headline,
+  `<a data-testid="AuthorNameLink">` for authors, `<time>` for date.
+- **Body**: paragraph `<div>` elements matched by CSS-module class prefix
+  `article-body-module__paragraph__*`.  Boilerplate lines (sign-up prompts,
+  trust badges) are filtered out.
+
+**`ReutersArticle` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `url` | `str` | Article URL |
+| `title` | `str` | "Iran war threatens prolonged hit to global energy markets" |
+| `content` | `str` | Full body as plain text (paragraphs joined by `\n\n`) |
+| `authors` | `list[str]` | `["Timour Azhari", "Marwa Rashad"]` |
+| `published_at` | `str` | `2026-03-07T11:14:35.637Z` |
+| `section` | `str` | "Energy" |
+| `keywords` | `list[str]` | `["markets commodities energy", "energy oil gas"]` |
+| `image_url` | `str` | Lead image URL |
+| `fetched` | `bool` | `True` on success |
+| `error` | `str \| None` | Error message on failure |
+
+**Keywords cleaning:** Internal Reuters tag codes (`COM`, `ENER`,
+`REPI:OPEC`) are stripped.  `TOPIC:*` tags are cleaned and kept (e.g.
+`TOPIC:ENERGY-OIL-GAS` → `"energy oil gas"`).
+
+---
+
 ## Summary Matrix
 
-| Site | Calendar | News | Indicators | Markets |
-|------|:--------:|:----:|:----------:|:-------:|
-| **Investing.com** | `InvestingCalendarClient` | `InvestingNewsClient` | — | — |
-| **ForexFactory** | `ForexFactoryCalendarClient` | `ForexFactoryNewsClient` | — | — |
-| **TradingEconomics** | `TradingEconomicsCalendarClient` | `TradingEconomicsNewsClient` | `TradingEconomicsIndicatorsClient` | `TradingEconomicsMarketsClient` |
+| Site | Calendar | News | Articles | Indicators | Markets |
+|------|:--------:|:----:|:--------:|:----------:|:-------:|
+| **Investing.com** | `InvestingCalendarClient` | `InvestingNewsClient` | — | — | — |
+| **ForexFactory** | `ForexFactoryCalendarClient` | `ForexFactoryNewsClient` | — | — | — |
+| **TradingEconomics** | `TradingEconomicsCalendarClient` | `TradingEconomicsNewsClient` | — | `TradingEconomicsIndicatorsClient` | `TradingEconomicsMarketsClient` |
+| **Reuters** | — | `ReutersNewsClient` | `ReutersArticleClient` | — | — |
 
 ## Running Tests
 
