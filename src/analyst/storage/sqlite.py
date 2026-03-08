@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from analyst.contracts import utc_now
+from analyst.contracts import epoch_to_datetime, format_epoch_iso, utc_now
 
 
 def default_engine_db_path(root: Path | None = None) -> Path:
@@ -22,7 +22,7 @@ def default_engine_db_path(root: Path | None = None) -> Path:
 class StoredEventRecord:
     source: str
     event_id: str
-    datetime_utc: str
+    timestamp: int
     country: str
     indicator: str
     category: str
@@ -43,7 +43,7 @@ class MarketPriceRecord:
     asset_class: str
     price: float
     change_pct: float | None
-    datetime_utc: str
+    timestamp: int
     name: str = ""
 
 
@@ -52,7 +52,7 @@ class CentralBankCommunicationRecord:
     source: str
     title: str
     url: str
-    published_at: str
+    timestamp: int
     content_type: str
     speaker: str = ""
     summary: str = ""
@@ -75,7 +75,7 @@ class NewsArticleRecord:
     feed_category: str
     title: str
     url: str
-    published_at: str
+    timestamp: int
     description: str
     content_markdown: str
     impact_level: str
@@ -292,7 +292,7 @@ class SQLiteEngineStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source TEXT NOT NULL,
                     event_id TEXT NOT NULL,
-                    datetime_utc TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
                     country TEXT NOT NULL,
                     indicator TEXT NOT NULL,
                     category TEXT NOT NULL,
@@ -322,7 +322,7 @@ class SQLiteEngineStore:
                     name TEXT NOT NULL,
                     price REAL NOT NULL,
                     change_pct REAL,
-                    datetime_utc TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
                     scraped_at TEXT NOT NULL
                 )
                 """
@@ -334,7 +334,7 @@ class SQLiteEngineStore:
                     source TEXT NOT NULL,
                     title TEXT NOT NULL,
                     url TEXT NOT NULL UNIQUE,
-                    published_at TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
                     content_type TEXT NOT NULL,
                     speaker TEXT NOT NULL,
                     summary TEXT NOT NULL,
@@ -366,7 +366,7 @@ class SQLiteEngineStore:
                     feed_category TEXT NOT NULL,
                     title TEXT NOT NULL,
                     url TEXT NOT NULL,
-                    published_at TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
                     description TEXT NOT NULL,
                     content_markdown TEXT NOT NULL,
                     impact_level TEXT NOT NULL,
@@ -399,20 +399,6 @@ class SQLiteEngineStore:
                     connection.execute(f"ALTER TABLE news_articles ADD COLUMN {col_name} {col_def}")
                 except sqlite3.OperationalError:
                     pass
-            # Repair rows written by older builds that truncated published_at
-            # to a bare date. Prefer the original scraped_at when it shares
-            # the same day; otherwise normalize to midnight UTC.
-            connection.execute(
-                """
-                UPDATE news_articles
-                SET published_at = CASE
-                    WHEN substr(scraped_at, 1, 10) = published_at THEN scraped_at
-                    ELSE published_at || 'T00:00:00+00:00'
-                END
-                WHERE length(published_at) = 10
-                  AND published_at LIKE '____-__-__'
-                """
-            )
             # -- FTS5 full-text search for news articles ----------------
             # Guarded: SQLite builds without FTS5 skip this block;
             # search_news() falls back to LIKE queries.
@@ -720,7 +706,7 @@ class SQLiteEngineStore:
                 INSERT OR REPLACE INTO calendar_events (
                     source,
                     event_id,
-                    datetime_utc,
+                    timestamp,
                     country,
                     indicator,
                     category,
@@ -739,7 +725,7 @@ class SQLiteEngineStore:
                 (
                     event.source,
                     event.event_id,
-                    event.datetime_utc,
+                    event.timestamp,
                     event.country,
                     event.indicator,
                     event.category,
@@ -766,7 +752,7 @@ class SQLiteEngineStore:
                     name,
                     price,
                     change_pct,
-                    datetime_utc,
+                    timestamp,
                     scraped_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -776,7 +762,7 @@ class SQLiteEngineStore:
                     price.name,
                     price.price,
                     price.change_pct,
-                    price.datetime_utc,
+                    price.timestamp,
                     utc_now().isoformat(),
                 ),
             )
@@ -789,7 +775,7 @@ class SQLiteEngineStore:
                     source,
                     title,
                     url,
-                    published_at,
+                    timestamp,
                     content_type,
                     speaker,
                     summary,
@@ -801,7 +787,7 @@ class SQLiteEngineStore:
                     communication.source,
                     communication.title,
                     communication.url,
-                    communication.published_at,
+                    communication.timestamp,
                     communication.content_type,
                     communication.speaker,
                     communication.summary,
@@ -1488,8 +1474,8 @@ class SQLiteEngineStore:
         country: str | None = None,
         category: str | None = None,
     ) -> list[StoredEventRecord]:
-        cutoff = (utc_now() - timedelta(days=days)).isoformat()
-        conditions = ["datetime_utc >= ?"]
+        cutoff = int((utc_now() - timedelta(days=days)).timestamp())
+        conditions = ["timestamp >= ?"]
         params: list[Any] = [cutoff]
         if released_only:
             conditions.append("actual IS NOT NULL")
@@ -1509,7 +1495,7 @@ class SQLiteEngineStore:
                 f"""
                 SELECT * FROM calendar_events
                 WHERE {' AND '.join(conditions)}
-                ORDER BY datetime_utc DESC, id DESC
+                ORDER BY timestamp DESC, id DESC
                 LIMIT ?
                 """,
                 params,
@@ -1524,9 +1510,9 @@ class SQLiteEngineStore:
         country: str | None = None,
         category: str | None = None,
     ) -> list[StoredEventRecord]:
-        now_iso = utc_now().isoformat()
-        conditions = ["datetime_utc >= ?"]
-        params: list[Any] = [now_iso]
+        now_epoch = int(utc_now().timestamp())
+        conditions = ["timestamp >= ?"]
+        params: list[Any] = [now_epoch]
         if importance:
             conditions.append("importance = ?")
             params.append(importance)
@@ -1542,7 +1528,7 @@ class SQLiteEngineStore:
                 f"""
                 SELECT * FROM calendar_events
                 WHERE {' AND '.join(conditions)}
-                ORDER BY datetime_utc ASC, id ASC
+                ORDER BY timestamp ASC, id ASC
                 LIMIT ?
                 """,
                 params,
@@ -1552,15 +1538,15 @@ class SQLiteEngineStore:
     def list_events_in_range(
         self,
         *,
-        date_from: str,
-        date_to: str,
+        date_from: int,
+        date_to: int,
         limit: int = 50,
         importance: str | None = None,
         country: str | None = None,
         category: str | None = None,
         released_only: bool = False,
     ) -> list[StoredEventRecord]:
-        conditions = ["datetime_utc >= ?", "datetime_utc <= ?"]
+        conditions = ["timestamp >= ?", "timestamp <= ?"]
         params: list[Any] = [date_from, date_to]
         if released_only:
             conditions.append("actual IS NOT NULL")
@@ -1579,7 +1565,7 @@ class SQLiteEngineStore:
                 f"""
                 SELECT * FROM calendar_events
                 WHERE {' AND '.join(conditions)}
-                ORDER BY datetime_utc ASC, id ASC
+                ORDER BY timestamp ASC, id ASC
                 LIMIT ?
                 """,
                 params,
@@ -1595,8 +1581,8 @@ class SQLiteEngineStore:
         category: str | None = None,
     ) -> list[StoredEventRecord]:
         today = datetime.now(timezone.utc).date()
-        date_from = datetime(today.year, today.month, today.day, tzinfo=timezone.utc).isoformat()
-        date_to = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc).isoformat()
+        date_from = int(datetime(today.year, today.month, today.day, tzinfo=timezone.utc).timestamp())
+        date_to = int(datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc).timestamp())
         return self.list_events_in_range(
             date_from=date_from,
             date_to=date_to,
@@ -1617,7 +1603,7 @@ class SQLiteEngineStore:
                 """
                 SELECT * FROM calendar_events
                 WHERE LOWER(indicator) LIKE ? AND actual IS NOT NULL
-                ORDER BY datetime_utc DESC, id DESC
+                ORDER BY timestamp DESC, id DESC
                 LIMIT ?
                 """,
                 (f"%{indicator_keyword.lower()}%", limit),
@@ -1646,13 +1632,13 @@ class SQLiteEngineStore:
         limit: int = 5,
         days: int = 14,
     ) -> list[CentralBankCommunicationRecord]:
-        cutoff = (utc_now() - timedelta(days=days)).isoformat()
+        cutoff = int((utc_now() - timedelta(days=days)).timestamp())
         with self._connection(commit=False) as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM central_bank_comms
-                WHERE source = ? AND published_at >= ?
-                ORDER BY published_at DESC, id DESC
+                WHERE source = ? AND timestamp >= ?
+                ORDER BY timestamp DESC, id DESC
                 LIMIT ?
                 """,
                 (source, cutoff, limit),
@@ -1703,7 +1689,7 @@ class SQLiteEngineStore:
                 f"""
                 SELECT * FROM calendar_events
                 WHERE {' AND '.join(conditions)}
-                ORDER BY importance DESC, datetime_utc DESC, id DESC
+                ORDER BY importance DESC, timestamp DESC, id DESC
                 LIMIT 1
                 """,
                 params,
@@ -1714,7 +1700,7 @@ class SQLiteEngineStore:
         return StoredEventRecord(
             source=row["source"],
             event_id=row["event_id"],
-            datetime_utc=row["datetime_utc"],
+            timestamp=int(row["timestamp"]),
             country=row["country"],
             indicator=row["indicator"],
             category=row["category"],
@@ -1736,7 +1722,7 @@ class SQLiteEngineStore:
             name=row["name"],
             price=float(row["price"]),
             change_pct=float(row["change_pct"]) if row["change_pct"] is not None else None,
-            datetime_utc=row["datetime_utc"],
+            timestamp=int(row["timestamp"]),
         )
 
     def _row_to_comm(self, row: sqlite3.Row) -> CentralBankCommunicationRecord:
@@ -1744,7 +1730,7 @@ class SQLiteEngineStore:
             source=row["source"],
             title=row["title"],
             url=row["url"],
-            published_at=row["published_at"],
+            timestamp=int(row["timestamp"]),
             content_type=row["content_type"],
             speaker=row["speaker"],
             summary=row["summary"],
@@ -1768,33 +1754,13 @@ class SQLiteEngineStore:
     _TIME_DECAY_MAX_BOOST = 1.5
     _TIME_DECAY_MIN_BOOST = 0.1
 
-    @staticmethod
-    def _normalize_news_published_at(published_at: str) -> str:
-        if not published_at:
-            return published_at
-        try:
-            parsed = datetime.fromisoformat(published_at)
-        except ValueError:
-            return published_at
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.isoformat()
-
-    @staticmethod
-    def _parse_news_published_at(published_at: str) -> datetime:
-        parsed = datetime.fromisoformat(published_at)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed
-
     def upsert_news_article(self, article: NewsArticleRecord) -> None:
-        normalized_published_at = self._normalize_news_published_at(article.published_at)
         with self._connection(commit=True) as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO news_articles (
                     url_hash, source_feed, feed_category, title, url,
-                    published_at, description, content_markdown,
+                    timestamp, description, content_markdown,
                     impact_level, finance_category, confidence,
                     content_fetched, institution, country, market,
                     asset_class, sector, document_type, event_type,
@@ -1809,7 +1775,7 @@ class SQLiteEngineStore:
                     article.feed_category,
                     article.title,
                     article.url,
-                    normalized_published_at,
+                    article.timestamp,
                     article.description,
                     article.content_markdown,
                     article.impact_level,
@@ -1845,8 +1811,8 @@ class SQLiteEngineStore:
         country: str | None = None,
         asset_class: str | None = None,
     ) -> list[NewsArticleRecord]:
-        cutoff = (utc_now() - timedelta(days=days)).isoformat()
-        conditions = ["published_at >= ?"]
+        cutoff = int((utc_now() - timedelta(days=days)).timestamp())
+        conditions = ["timestamp >= ?"]
         params: list[Any] = [cutoff]
         if impact_level:
             conditions.append("impact_level = ?")
@@ -1869,7 +1835,7 @@ class SQLiteEngineStore:
                 f"""
                 SELECT * FROM news_articles
                 WHERE {' AND '.join(conditions)}
-                ORDER BY published_at DESC, id DESC
+                ORDER BY timestamp DESC, id DESC
                 LIMIT ?
                 """,
                 params,
@@ -1884,7 +1850,7 @@ class SQLiteEngineStore:
                     SELECT n.* FROM news_articles n
                     JOIN news_fts ON news_fts.rowid = n.id
                     WHERE news_fts MATCH ?
-                    ORDER BY n.published_at DESC, n.id DESC
+                    ORDER BY n.timestamp DESC, n.id DESC
                     LIMIT ?
                     """,
                     (query, limit),
@@ -1895,7 +1861,7 @@ class SQLiteEngineStore:
                     """
                     SELECT * FROM news_articles
                     WHERE title LIKE ? OR description LIKE ?
-                    ORDER BY published_at DESC, id DESC
+                    ORDER BY timestamp DESC, id DESC
                     LIMIT ?
                     """,
                     (pattern, pattern, limit),
@@ -1915,8 +1881,8 @@ class SQLiteEngineStore:
         asset_class: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve news with time-decay + impact-weight composite scoring."""
-        cutoff = (utc_now() - timedelta(days=days)).isoformat()
-        conditions = ["published_at >= ?"]
+        cutoff = int((utc_now() - timedelta(days=days)).timestamp())
+        conditions = ["timestamp >= ?"]
         params: list[Any] = [cutoff]
         if impact_level:
             conditions.append("impact_level = ?")
@@ -1969,11 +1935,8 @@ class SQLiteEngineStore:
         scored: list[tuple[float, dict[str, Any]]] = []
         for row in rows:
             article = self._row_to_news_article(row)
-            try:
-                pub = self._parse_news_published_at(article.published_at)
-                age_days = max((now - pub).total_seconds() / 86400, 0.0)
-            except (ValueError, TypeError):
-                age_days = float(days)
+            pub = epoch_to_datetime(article.timestamp)
+            age_days = max((now - pub).total_seconds() / 86400, 0.0)
             half_life = self._IMPACT_HALF_LIFE.get(article.impact_level, 2)
             time_decay = self._TIME_DECAY_MIN_BOOST + (
                 (self._TIME_DECAY_MAX_BOOST - self._TIME_DECAY_MIN_BOOST)
@@ -1989,7 +1952,8 @@ class SQLiteEngineStore:
                 "source_feed": article.source_feed,
                 "title": article.title,
                 "url": article.url,
-                "published_at": article.published_at,
+                "timestamp": article.timestamp,
+                "published_at": format_epoch_iso(article.timestamp),
                 "description": desc,
                 "impact_level": article.impact_level,
                 "finance_category": article.finance_category,
@@ -2031,7 +1995,7 @@ class SQLiteEngineStore:
             feed_category=row["feed_category"],
             title=row["title"],
             url=row["url"],
-            published_at=row["published_at"],
+            timestamp=int(row["timestamp"]),
             description=row["description"],
             content_markdown=row["content_markdown"],
             impact_level=row["impact_level"],

@@ -16,7 +16,7 @@ from analyst.ingestion.scrapers._common import (
     categorize_event,
     generate_event_id,
     parse_numeric_value,
-    to_utc_iso,
+    to_epoch,
 )
 from analyst.ingestion.scrapers.investing import (
     InvestingCalendarClient,
@@ -98,19 +98,22 @@ class TestGenerateEventId:
         assert a != b
 
 
-class TestToUtcIso:
+class TestToEpoch:
     def test_basic(self):
-        result = to_utc_iso(date_value="2026-03-08", time_value="14:30")
-        assert "2026-03-08" in result
-        assert result.endswith("+00:00")
+        result = to_epoch(date_value="2026-03-08", time_value="14:30")
+        assert isinstance(result, int)
+        # 14:30 in UTC+8 = 06:30 UTC
+        from datetime import datetime, timezone
+        expected = int(datetime(2026, 3, 8, 6, 30, tzinfo=timezone.utc).timestamp())
+        assert result == expected
 
     def test_all_day(self):
-        result = to_utc_iso(date_value="2026-03-08", time_value="All Day")
-        assert result.endswith("+00:00")
+        result = to_epoch(date_value="2026-03-08", time_value="All Day")
+        assert isinstance(result, int)
 
     def test_none_time(self):
-        result = to_utc_iso(date_value="2026-03-08")
-        assert result.endswith("+00:00")
+        result = to_epoch(date_value="2026-03-08")
+        assert isinstance(result, int)
 
 
 # ---------------------------------------------------------------------------

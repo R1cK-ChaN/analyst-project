@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from analyst.contracts import format_epoch_iso
 from analyst.storage import StoredEventRecord
 
 
@@ -52,7 +53,7 @@ def flash_prompt(trigger_event: StoredEventRecord, baseline_regime: dict[str, ob
 触发事件:
 - 国家: {trigger_event.country}
 - 指标: {trigger_event.indicator}
-- 时间: {trigger_event.datetime_utc}
+- 时间: {format_epoch_iso(trigger_event.timestamp)}
 - 重要性: {trigger_event.importance}
 - 实际值: {trigger_event.actual or "待公布"}
 - 预期值: {trigger_event.forecast or "未知"}

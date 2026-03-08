@@ -5,6 +5,7 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 
+from analyst.contracts import format_epoch
 from analyst.delivery.sales_chat import build_sales_services, generate_sales_reply, split_into_bubbles
 from analyst.memory import build_sales_context, record_sales_interaction
 from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
@@ -92,7 +93,7 @@ def format_calendar_event(event: StoredEventRecord) -> str:
     actual = event.actual or "-"
     forecast = event.forecast or "-"
     previous = event.previous or "-"
-    dt = event.datetime_utc[:16].replace("T", " ")
+    dt = format_epoch(event.timestamp)
     source = event.source.upper()
     return (
         f"{dt}  {event.country:>2} {stars:>3}  [{source:<12}]  "
@@ -101,7 +102,7 @@ def format_calendar_event(event: StoredEventRecord) -> str:
 
 
 def format_news_headline(article: NewsArticleRecord) -> str:
-    dt = article.published_at[:16].replace("T", " ")
+    dt = format_epoch(article.timestamp)
     impact = article.impact_level.upper()
     country = article.country or "--"
     subject = f"  [{article.subject}]" if article.subject else ""

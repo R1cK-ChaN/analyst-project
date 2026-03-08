@@ -21,7 +21,7 @@ from ._common import (
     categorize_event,
     generate_event_id,
     parse_numeric_value,
-    to_utc_iso,
+    to_epoch,
 )
 
 TE_COUNTRY_MAP = {
@@ -128,7 +128,7 @@ class TradingEconomicsCalendarClient:
                 consensus = self._clean_cell_text(cells[7])
                 te_forecast = self._clean_cell_text(cells[8])
 
-                timestamp = to_utc_iso(date_value=current_date, time_value=event_time)
+                timestamp = to_epoch(date_value=current_date, time_value=event_time)
                 data_id = row.get("data-id", "")
                 event_id = data_id or generate_event_id(country, indicator, timestamp)
 
@@ -143,7 +143,7 @@ class TradingEconomicsCalendarClient:
                     StoredEventRecord(
                         source="tradingeconomics",
                         event_id=str(event_id),
-                        datetime_utc=timestamp,
+                        timestamp=timestamp,
                         country=country,
                         indicator=f"{indicator} ({period})" if period else indicator,
                         category=categorize_event(indicator),

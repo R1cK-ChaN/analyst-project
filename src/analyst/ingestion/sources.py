@@ -13,6 +13,7 @@ import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
 
+from analyst.contracts import format_epoch_iso
 from analyst.env import get_env_value
 from analyst.ingestion.news_extract import extract_news_metadata
 from analyst.ingestion.news_feeds import get_feeds
@@ -242,9 +243,9 @@ class FedIngestionClient:
         communications: list[CentralBankCommunicationRecord] = []
         parsed = feedparser.parse(feed_url)
         for entry in parsed.entries:
-            published_at = ""
+            ts = 0
             if hasattr(entry, "published_parsed") and entry.published_parsed:
-                published_at = datetime(*entry.published_parsed[:6], tzinfo=UTC).isoformat()
+                ts = int(datetime(*entry.published_parsed[:6], tzinfo=UTC).timestamp())
             title = entry.get("title", "")
             url = entry.get("link", "")
             summary = BeautifulSoup(entry.get("summary", ""), "html.parser").get_text(" ", strip=True)
@@ -256,7 +257,7 @@ class FedIngestionClient:
                     source="fed",
                     title=title,
                     url=url,
-                    published_at=published_at or datetime.now(UTC).isoformat(),
+                    timestamp=ts or int(datetime.now(UTC).timestamp()),
                     content_type=self._detect_content_type(title, content_type),
                     speaker=extract_speaker(title),
                     summary=summary,
@@ -297,7 +298,7 @@ class FedIngestionClient:
 class MarketPriceClient:
     def refresh(self, store: SQLiteEngineStore) -> RefreshStats:
         count = 0
-        now_iso = datetime.now(UTC).isoformat()
+        now_epoch = int(datetime.now(UTC).timestamp())
         for asset_class, symbols in MACRO_WATCHLIST.items():
             for symbol, name in symbols.items():
                 try:
@@ -321,7 +322,7 @@ class MarketPriceClient:
                             name=name,
                             price=float(price),
                             change_pct=change_pct,
-                            datetime_utc=now_iso,
+                            timestamp=now_epoch,
                         )
                     )
                     count += 1
@@ -391,13 +392,13 @@ class NewsIngestionClient:
                     from bs4 import BeautifulSoup as _BS
                     description = _BS(raw_desc, "html.parser").get_text(" ", strip=True)
 
-                    published_at = ""
+                    ts = 0
                     if hasattr(entry, "published_parsed") and entry.published_parsed:
-                        published_at = datetime(
+                        ts = int(datetime(
                             *entry.published_parsed[:6], tzinfo=timezone.utc
-                        ).isoformat()
-                    if not published_at:
-                        published_at = datetime.now(timezone.utc).isoformat()
+                        ).timestamp())
+                    if not ts:
+                        ts = int(datetime.now(timezone.utc).timestamp())
 
                     article = self._article_fetcher.fetch_article(link, description)
                     extraction = extract_news_metadata(
@@ -406,7 +407,7 @@ class NewsIngestionClient:
                         content_markdown=article.content,
                         source_feed=feed.name,
                         feed_category=feed.category,
-                        published_at=published_at,
+                        published_at=format_epoch_iso(ts),
                     )
 
                     record = NewsArticleRecord(
@@ -415,7 +416,7 @@ class NewsIngestionClient:
                         feed_category=feed.category,
                         title=extraction.title,
                         url=link,
-                        published_at=published_at,
+                        timestamp=ts,
                         description=description,
                         content_markdown=article.content,
                         impact_level=extraction.impact_level,

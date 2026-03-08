@@ -229,7 +229,7 @@ class TestNewsStorage:
             feed_category="markets",
             title="Test Article",
             url=url,
-            published_at=datetime.now(timezone.utc).isoformat(),
+            timestamp=int(datetime.now(timezone.utc).timestamp()),
             description="Test description",
             content_markdown="# Test content",
             impact_level="high",
@@ -353,21 +353,21 @@ class TestNewsStorage:
             url="https://example.com/recent-critical",
             title="Market crash imminent",
             impact_level="critical",
-            published_at=now.isoformat(),
+            timestamp=int(now.timestamp()),
         ))
         # Older high article
         store.upsert_news_article(self._make_article(
             url="https://example.com/old-high",
             title="Fed raises rates",
             impact_level="high",
-            published_at=(now - timedelta(days=5)).isoformat(),
+            timestamp=int((now - timedelta(days=5)).timestamp()),
         ))
         # Recent info article
         store.upsert_news_article(self._make_article(
             url="https://example.com/recent-info",
             title="Company holds meeting",
             impact_level="info",
-            published_at=now.isoformat(),
+            timestamp=int(now.timestamp()),
         ))
         results = store.get_news_context(days=7, limit=10)
         assert len(results) == 3
@@ -389,97 +389,30 @@ class TestNewsStorage:
                 url=f"https://example.com/info-{i}",
                 title=f"Low impact filler item {i}",
                 impact_level="info",
-                published_at=now.isoformat(),
+                timestamp=int(now.timestamp()),
             ))
         # Insert one 5-day-old critical article
         store.upsert_news_article(self._make_article(
             url="https://example.com/old-critical",
             title="Banking crisis erupts",
             impact_level="critical",
-            published_at=(now - timedelta(days=5)).isoformat(),
+            timestamp=int((now - timedelta(days=5)).timestamp()),
         ))
         results = store.get_news_context(days=7, limit=15)
         titles = [r["title"] for r in results]
         assert "Banking crisis erupts" in titles
 
-    def test_full_iso_timestamp_preserved(self, store: SQLiteEngineStore):
-        """published_at must keep the full ISO-8601 timestamp, not truncate to date (fix #1)."""
-        full_ts = "2026-03-07T14:30:00+00:00"
+    def test_epoch_timestamp_round_trip(self, store: SQLiteEngineStore):
+        """timestamp must round-trip as int through the store."""
+        ts = int(datetime(2026, 3, 7, 14, 30, tzinfo=timezone.utc).timestamp())
         store.upsert_news_article(self._make_article(
             url="https://example.com/ts-test",
-            published_at=full_ts,
-        ))
-        results = store.list_recent_news(limit=1, days=1)
-        assert len(results) == 1
-        assert "T" in results[0].published_at
-        assert results[0].published_at.startswith("2026-03-07T")
-
-    def test_upsert_normalizes_date_only_timestamp(self, store: SQLiteEngineStore):
-        """New writes should normalize date-only timestamps to valid ISO datetimes."""
-        store.upsert_news_article(self._make_article(
-            url="https://example.com/date-only",
-            published_at="2026-03-07",
+            timestamp=ts,
         ))
         results = store.list_recent_news(limit=1, days=30)
         assert len(results) == 1
-        assert results[0].published_at == "2026-03-07T00:00:00+00:00"
-
-    def test_init_schema_backfills_legacy_date_only_timestamp(self, tmp_path: Path):
-        """Existing broken rows should be upgraded on startup."""
-        db_path = tmp_path / "legacy-news.db"
-        connection = sqlite3.connect(db_path)
-        connection.execute(
-            """
-            CREATE TABLE news_articles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url_hash TEXT NOT NULL UNIQUE,
-                source_feed TEXT NOT NULL,
-                feed_category TEXT NOT NULL,
-                title TEXT NOT NULL,
-                url TEXT NOT NULL,
-                published_at TEXT NOT NULL,
-                description TEXT NOT NULL,
-                content_markdown TEXT NOT NULL,
-                impact_level TEXT NOT NULL,
-                finance_category TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                content_fetched INTEGER NOT NULL DEFAULT 0,
-                scraped_at TEXT NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            """
-            INSERT INTO news_articles (
-                url_hash, source_feed, feed_category, title, url,
-                published_at, description, content_markdown,
-                impact_level, finance_category, confidence,
-                content_fetched, scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                hashlib.sha256(b"legacy").hexdigest(),
-                "Reuters",
-                "markets",
-                "Legacy Article",
-                "https://example.com/legacy",
-                "2026-03-07",
-                "Legacy description",
-                "Legacy content",
-                "high",
-                "rates",
-                0.8,
-                1,
-                "2026-03-07T14:30:00+00:00",
-            ),
-        )
-        connection.commit()
-        connection.close()
-
-        store = SQLiteEngineStore(db_path=db_path)
-        results = store.list_recent_news(limit=1, days=30)
-        assert len(results) == 1
-        assert results[0].published_at == "2026-03-07T14:30:00+00:00"
+        assert isinstance(results[0].timestamp, int)
+        assert results[0].timestamp == ts
 
 
 # ---------------------------------------------------------------------------

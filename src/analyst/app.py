@@ -95,8 +95,8 @@ class LiveAnalystApplication:
             today = datetime.now(timezone.utc).date()
             start_of_week = today - timedelta(days=today.weekday())
             end_of_week = start_of_week + timedelta(days=6)
-            date_from = datetime(start_of_week.year, start_of_week.month, start_of_week.day, tzinfo=timezone.utc).isoformat()
-            date_to = datetime(end_of_week.year, end_of_week.month, end_of_week.day, 23, 59, 59, tzinfo=timezone.utc).isoformat()
+            date_from = int(datetime(start_of_week.year, start_of_week.month, start_of_week.day, tzinfo=timezone.utc).timestamp())
+            date_to = int(datetime(end_of_week.year, end_of_week.month, end_of_week.day, 23, 59, 59, tzinfo=timezone.utc).timestamp())
             return store.list_events_in_range(
                 date_from=date_from, date_to=date_to, limit=limit,
                 importance=importance, country=country, category=category,

@@ -17,7 +17,7 @@ from ._common import (
     categorize_event,
     generate_event_id,
     parse_numeric_value,
-    to_utc_iso,
+    to_epoch,
 )
 
 
@@ -72,7 +72,7 @@ class ForexFactoryCalendarClient:
                     "CNY": "CN",
                     "SGD": "SG",
                 }.get(currency, currency)
-                timestamp = to_utc_iso(date_value=current_date, time_value=event_time)
+                timestamp = to_epoch(date_value=current_date, time_value=event_time)
                 actual = self._clean_cell_text(row.find("td", {"class": "calendar__actual"}))
                 forecast = self._clean_cell_text(row.find("td", {"class": "calendar__forecast"}))
                 previous = self._clean_cell_text(row.find("td", {"class": "calendar__previous"}))
@@ -80,7 +80,7 @@ class ForexFactoryCalendarClient:
                     StoredEventRecord(
                         source="forexfactory",
                         event_id=generate_event_id(country, event_label, timestamp),
-                        datetime_utc=timestamp,
+                        timestamp=timestamp,
                         country=country,
                         indicator=event_label,
                         category=categorize_event(event_label),

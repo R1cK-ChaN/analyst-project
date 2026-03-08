@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from analyst.contracts import format_epoch_iso
 from analyst.engine.live_types import AgentTool
 from analyst.ingestion.sources import (
     ForexFactoryCalendarClient,
@@ -65,7 +66,8 @@ class LiveCalendarHandler:
                 {
                     "source": e.source,
                     "event_id": e.event_id,
-                    "datetime_utc": e.datetime_utc,
+                    "timestamp": e.timestamp,
+                    "datetime_utc": format_epoch_iso(e.timestamp),
                     "country": e.country,
                     "indicator": e.indicator,
                     "category": e.category,

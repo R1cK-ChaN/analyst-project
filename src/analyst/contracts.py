@@ -10,6 +10,20 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def epoch_to_datetime(ts: int) -> datetime:
+    return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
+def format_epoch(ts: int) -> str:
+    """'2026-03-08 14:30' — for CLI display."""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+
+def format_epoch_iso(ts: int) -> str:
+    """'2026-03-08T14:30:00+00:00' — for LLM-readable dicts and prompts."""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
 class Serializable:
     def to_dict(self) -> dict[str, Any]:
         return _serialize_value(asdict(self))

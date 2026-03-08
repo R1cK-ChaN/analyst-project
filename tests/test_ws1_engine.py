@@ -54,7 +54,7 @@ def seed_store(store: SQLiteEngineStore) -> None:
         StoredEventRecord(
             source="investing",
             event_id="evt-cpi",
-            datetime_utc="2026-03-07T12:30:00+00:00",
+            timestamp=int(datetime(2026, 3, 7, 12, 30, tzinfo=timezone.utc).timestamp()),
             country="US",
             indicator="CPI YoY",
             category="inflation",
@@ -73,7 +73,7 @@ def seed_store(store: SQLiteEngineStore) -> None:
             name="VIX",
             price=18.2,
             change_pct=-1.2,
-            datetime_utc="2026-03-07T12:40:00+00:00",
+            timestamp=int(datetime(2026, 3, 7, 12, 40, tzinfo=timezone.utc).timestamp()),
         )
     )
     store.insert_market_price(
@@ -83,7 +83,7 @@ def seed_store(store: SQLiteEngineStore) -> None:
             name="10Y Treasury Yield",
             price=4.35,
             change_pct=0.14,
-            datetime_utc="2026-03-07T12:40:00+00:00",
+            timestamp=int(datetime(2026, 3, 7, 12, 40, tzinfo=timezone.utc).timestamp()),
         )
     )
     store.upsert_central_bank_comm(
@@ -91,7 +91,7 @@ def seed_store(store: SQLiteEngineStore) -> None:
             source="fed",
             title="Powell remarks",
             url="https://example.com/fed/powell",
-            published_at="2026-03-06T20:00:00+00:00",
+            timestamp=int(datetime(2026, 3, 6, 20, 0, tzinfo=timezone.utc).timestamp()),
             content_type="speech",
             speaker="Powell",
             summary="Policy remains data dependent.",
@@ -117,7 +117,7 @@ class LiveEngineTest(unittest.TestCase):
                 StoredEventRecord(
                     source="investing",
                     event_id="evt-cpi",
-                    datetime_utc="2026-03-07T12:30:00+00:00",
+                    timestamp=int(datetime(2026, 3, 7, 12, 30, tzinfo=timezone.utc).timestamp()),
                     country="US",
                     indicator="CPI YoY",
                     category="inflation",
@@ -133,7 +133,7 @@ class LiveEngineTest(unittest.TestCase):
                 StoredEventRecord(
                     source="investing",
                     event_id="evt-cpi",
-                    datetime_utc="2026-03-07T12:30:00+00:00",
+                    timestamp=int(datetime(2026, 3, 7, 12, 30, tzinfo=timezone.utc).timestamp()),
                     country="US",
                     indicator="CPI YoY",
                     category="inflation",
@@ -149,7 +149,7 @@ class LiveEngineTest(unittest.TestCase):
                 StoredEventRecord(
                     source="forexfactory",
                     event_id="evt-gdp",
-                    datetime_utc="2026-03-08T12:30:00+00:00",
+                    timestamp=int(datetime(2026, 3, 8, 12, 30, tzinfo=timezone.utc).timestamp()),
                     country="US",
                     indicator="GDP QoQ",
                     category="growth",
@@ -341,14 +341,14 @@ class CalendarEnhancementsTest(unittest.TestCase):
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
             store.upsert_calendar_event(
                 StoredEventRecord(
-                    source="investing", event_id="evt-us", datetime_utc="2026-03-07T12:00:00+00:00",
+                    source="investing", event_id="evt-us", timestamp=int(datetime(2026, 3, 7, 12, 0, tzinfo=timezone.utc).timestamp()),
                     country="US", indicator="CPI", category="inflation", importance="high",
                     actual="3.0%", raw_json={},
                 )
             )
             store.upsert_calendar_event(
                 StoredEventRecord(
-                    source="investing", event_id="evt-jp", datetime_utc="2026-03-07T06:00:00+00:00",
+                    source="investing", event_id="evt-jp", timestamp=int(datetime(2026, 3, 7, 6, 0, tzinfo=timezone.utc).timestamp()),
                     country="JP", indicator="GDP", category="growth", importance="medium",
                     actual="1.5%", raw_json={},
                 )
@@ -365,14 +365,14 @@ class CalendarEnhancementsTest(unittest.TestCase):
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
             store.upsert_calendar_event(
                 StoredEventRecord(
-                    source="investing", event_id="evt-infl", datetime_utc="2026-03-07T12:00:00+00:00",
+                    source="investing", event_id="evt-infl", timestamp=int(datetime(2026, 3, 7, 12, 0, tzinfo=timezone.utc).timestamp()),
                     country="US", indicator="CPI", category="inflation", importance="high",
                     actual="3.0%", raw_json={},
                 )
             )
             store.upsert_calendar_event(
                 StoredEventRecord(
-                    source="investing", event_id="evt-grow", datetime_utc="2026-03-07T12:00:00+00:00",
+                    source="investing", event_id="evt-grow", timestamp=int(datetime(2026, 3, 7, 12, 0, tzinfo=timezone.utc).timestamp()),
                     country="US", indicator="GDP", category="growth", importance="medium",
                     actual="2.0%", raw_json={},
                 )
@@ -389,28 +389,28 @@ class CalendarEnhancementsTest(unittest.TestCase):
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
             store.upsert_calendar_event(
                 StoredEventRecord(
-                    source="investing", event_id="evt-d5", datetime_utc="2026-03-05T10:00:00+00:00",
+                    source="investing", event_id="evt-d5", timestamp=int(datetime(2026, 3, 5, 10, 0, tzinfo=timezone.utc).timestamp()),
                     country="US", indicator="ADP", category="employment", importance="medium",
                     actual="150K", raw_json={},
                 )
             )
             store.upsert_calendar_event(
                 StoredEventRecord(
-                    source="investing", event_id="evt-d7", datetime_utc="2026-03-07T12:00:00+00:00",
+                    source="investing", event_id="evt-d7", timestamp=int(datetime(2026, 3, 7, 12, 0, tzinfo=timezone.utc).timestamp()),
                     country="US", indicator="NFP", category="employment", importance="high",
                     actual="200K", raw_json={},
                 )
             )
             store.upsert_calendar_event(
                 StoredEventRecord(
-                    source="investing", event_id="evt-d9", datetime_utc="2026-03-09T12:00:00+00:00",
+                    source="investing", event_id="evt-d9", timestamp=int(datetime(2026, 3, 9, 12, 0, tzinfo=timezone.utc).timestamp()),
                     country="US", indicator="CPI", category="inflation", importance="high",
                     actual="3.0%", raw_json={},
                 )
             )
             events = store.list_events_in_range(
-                date_from="2026-03-06T00:00:00+00:00",
-                date_to="2026-03-08T23:59:59+00:00",
+                date_from=int(datetime(2026, 3, 6, 0, 0, 0, tzinfo=timezone.utc).timestamp()),
+                date_to=int(datetime(2026, 3, 8, 23, 59, 59, tzinfo=timezone.utc).timestamp()),
             )
             self.assertEqual(len(events), 1)
             self.assertEqual(events[0].event_id, "evt-d7")
@@ -419,18 +419,18 @@ class CalendarEnhancementsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
             now = datetime.now(timezone.utc)
-            today_iso = now.replace(hour=12, minute=0, second=0, microsecond=0).isoformat()
-            yesterday_iso = (now - timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0).isoformat()
+            today_epoch = int(now.replace(hour=12, minute=0, second=0, microsecond=0).timestamp())
+            yesterday_epoch = int((now - timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0).timestamp())
             store.upsert_calendar_event(
                 StoredEventRecord(
-                    source="investing", event_id="evt-today", datetime_utc=today_iso,
+                    source="investing", event_id="evt-today", timestamp=today_epoch,
                     country="US", indicator="CPI", category="inflation", importance="high",
                     raw_json={},
                 )
             )
             store.upsert_calendar_event(
                 StoredEventRecord(
-                    source="investing", event_id="evt-yesterday", datetime_utc=yesterday_iso,
+                    source="investing", event_id="evt-yesterday", timestamp=yesterday_epoch,
                     country="US", indicator="GDP", category="growth", importance="medium",
                     raw_json={},
                 )
@@ -446,7 +446,7 @@ class CalendarEnhancementsTest(unittest.TestCase):
                 store.upsert_calendar_event(
                     StoredEventRecord(
                         source="investing", event_id=f"evt-cpi-{i}",
-                        datetime_utc=f"2026-0{i+1}-07T12:30:00+00:00",
+                        timestamp=int(datetime(2026, i + 1, 7, 12, 30, tzinfo=timezone.utc).timestamp()),
                         country="US", indicator="CPI YoY", category="inflation", importance="high",
                         actual=actual, forecast="3.0%", previous="2.9%",
                         surprise=round(float(actual.replace("%", "")) - 3.0, 4),
@@ -462,7 +462,7 @@ class CalendarEnhancementsTest(unittest.TestCase):
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
             store.upsert_calendar_event(
                 StoredEventRecord(
-                    source="investing", event_id="evt-cur", datetime_utc="2026-03-07T12:00:00+00:00",
+                    source="investing", event_id="evt-cur", timestamp=int(datetime(2026, 3, 7, 12, 0, tzinfo=timezone.utc).timestamp()),
                     country="US", indicator="CPI", category="inflation", importance="high",
                     actual="3.0%", currency="USD", raw_json={},
                 )
@@ -475,7 +475,7 @@ class CalendarEnhancementsTest(unittest.TestCase):
         with patch("analyst.ingestion.sources.InvestingCalendarClient.fetch") as mock_fetch:
             mock_fetch.return_value = [
                 StoredEventRecord(
-                    source="investing", event_id="evt-x", datetime_utc="2026-03-07T12:00:00+00:00",
+                    source="investing", event_id="evt-x", timestamp=int(datetime(2026, 3, 7, 12, 0, tzinfo=timezone.utc).timestamp()),
                     country="US", indicator="CPI", category="inflation", importance="high",
                     raw_json={},
                 )
@@ -505,7 +505,7 @@ class CalendarEnhancementsTest(unittest.TestCase):
                 store.upsert_calendar_event(
                     StoredEventRecord(
                         source="investing", event_id=f"evt-nfp-{i}",
-                        datetime_utc=f"2026-0{i+1}-07T12:30:00+00:00",
+                        timestamp=int(datetime(2026, i + 1, 7, 12, 30, tzinfo=timezone.utc).timestamp()),
                         country="US", indicator="Nonfarm Payrolls", category="employment", importance="high",
                         actual=f"{200+i*10}K", forecast="200K", previous="190K",
                         surprise=float(i * 10), raw_json={},
@@ -520,7 +520,7 @@ class CalendarEnhancementsTest(unittest.TestCase):
         fake_app = Mock()
         fake_app.live_calendar.return_value = [
             StoredEventRecord(
-                source="investing", event_id="evt-cli", datetime_utc="2026-03-07T12:30:00+00:00",
+                source="investing", event_id="evt-cli", timestamp=int(datetime(2026, 3, 7, 12, 30, tzinfo=timezone.utc).timestamp()),
                 country="US", indicator="CPI YoY", category="inflation", importance="high",
                 actual="3.4%", forecast="3.2%", previous="3.1%", raw_json={},
             )

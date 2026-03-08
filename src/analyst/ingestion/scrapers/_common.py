@@ -117,17 +117,17 @@ def categorize_event(indicator_name: str) -> str:
     return "other"
 
 
-def generate_event_id(country: str, indicator: str, dt: str) -> str:
+def generate_event_id(country: str, indicator: str, dt: int | str) -> str:
     raw = f"{country}-{indicator}-{dt}"
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
 
 
-def to_utc_iso(
+def to_epoch(
     *,
     date_value: str,
     time_value: str | None = None,
     source_timezone: timezone = OPEN_UTC_PLUS_8,
-) -> str:
+) -> int:
     time_part = (time_value or "00:00").strip().lower()
     if time_part in {"all day", "tentative", "day 1", "day 2"}:
         time_part = "00:00"
@@ -137,11 +137,11 @@ def to_utc_iso(
             parsed = datetime.strptime(candidate, pattern)
             if pattern.startswith("%b ") or pattern.startswith("%a%b"):
                 parsed = parsed.replace(year=datetime.now(source_timezone).year)
-            return parsed.replace(tzinfo=source_timezone).astimezone(UTC).isoformat()
+            return int(parsed.replace(tzinfo=source_timezone).astimezone(UTC).timestamp())
         except ValueError:
             continue
     try:
-        return datetime.fromisoformat(date_value).astimezone(UTC).isoformat()
+        return int(datetime.fromisoformat(date_value).astimezone(UTC).timestamp())
     except ValueError:
         fallback = datetime.now(source_timezone).replace(hour=0, minute=0, second=0, microsecond=0)
-        return fallback.astimezone(UTC).isoformat()
+        return int(fallback.astimezone(UTC).timestamp())

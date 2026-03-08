@@ -10,7 +10,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from analyst.contracts import Event, Importance, RegimeScore, RegimeState, ResearchNote, utc_now
+from analyst.contracts import Event, Importance, RegimeScore, RegimeState, ResearchNote, epoch_to_datetime, format_epoch_iso, utc_now
 from analyst.ingestion import IngestionOrchestrator
 from analyst.memory import build_research_context
 from analyst.storage import NewsArticleRecord, SQLiteEngineStore, StoredEventRecord
@@ -30,7 +30,7 @@ def clamp_unit_interval(value: float) -> float:
 def event_to_contract(event: StoredEventRecord) -> Event:
     return Event(
         event_id=event.event_id,
-        timestamp=datetime.fromisoformat(event.datetime_utc),
+        timestamp=epoch_to_datetime(event.timestamp),
         source=event.source,
         source_type="calendar_event",
         category=event.category,
@@ -384,7 +384,8 @@ class LiveAnalystEngine:
                     "asset_class": price.asset_class,
                     "price": price.price,
                     "change_pct": price.change_pct,
-                    "datetime_utc": price.datetime_utc,
+                    "timestamp": price.timestamp,
+                    "datetime_utc": format_epoch_iso(price.timestamp),
                 }
                 for price in prices
             ]
@@ -399,7 +400,8 @@ class LiveAnalystEngine:
             "communications": [
                 {
                     "title": communication.title,
-                    "published_at": communication.published_at,
+                    "timestamp": communication.timestamp,
+                    "published_at": format_epoch_iso(communication.timestamp),
                     "speaker": communication.speaker,
                     "content_type": communication.content_type,
                     "summary": communication.summary,
@@ -448,7 +450,8 @@ class LiveAnalystEngine:
             "indicator_keyword": keyword,
             "releases": [
                 {
-                    "datetime_utc": event.datetime_utc,
+                    "timestamp": event.timestamp,
+                    "datetime_utc": format_epoch_iso(event.timestamp),
                     "country": event.country,
                     "indicator": event.indicator,
                     "actual": event.actual,
@@ -511,7 +514,8 @@ class LiveAnalystEngine:
             "source_feed": article.source_feed,
             "title": article.title,
             "url": article.url,
-            "published_at": article.published_at,
+            "timestamp": article.timestamp,
+            "published_at": format_epoch_iso(article.timestamp),
             "description": desc,
             "impact_level": article.impact_level,
             "finance_category": article.finance_category,
@@ -525,7 +529,8 @@ class LiveAnalystEngine:
         return {
             "source": event.source,
             "event_id": event.event_id,
-            "datetime_utc": event.datetime_utc,
+            "timestamp": event.timestamp,
+            "datetime_utc": format_epoch_iso(event.timestamp),
             "country": event.country,
             "indicator": event.indicator,
             "category": event.category,
@@ -659,7 +664,7 @@ class LiveAnalystEngine:
         if not events:
             return "- 暂无事件。"
         return "\n".join(
-            f"- {event.datetime_utc} | {event.country} {event.indicator} | 实际 {event.actual or '待公布'} | "
+            f"- {format_epoch_iso(event.timestamp)} | {event.country} {event.indicator} | 实际 {event.actual or '待公布'} | "
             f"预期 {event.forecast or '未知'} | 前值 {event.previous or '未知'}"
             for event in events
         )

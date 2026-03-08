@@ -19,7 +19,7 @@ from ._common import (
     categorize_event,
     generate_event_id,
     parse_numeric_value,
-    to_utc_iso,
+    to_epoch,
 )
 
 INVESTING_NEWS_CATEGORIES = (
@@ -136,13 +136,13 @@ class InvestingCalendarClient:
                             revised_previous = rev_text
                         revised_span.decompose()
                 previous = self._clean_cell_text(prev_td)
-                timestamp = to_utc_iso(date_value=default_date, time_value=event_time)
+                timestamp = to_epoch(date_value=default_date, time_value=event_time)
                 event_id = row.get("event_attr_id") or row.get("id") or generate_event_id(country_code, indicator, timestamp)
                 events.append(
                     StoredEventRecord(
                         source="investing",
                         event_id=str(event_id),
-                        datetime_utc=timestamp,
+                        timestamp=timestamp,
                         country=country_code or "US",
                         indicator=indicator,
                         category=categorize_event(indicator),
