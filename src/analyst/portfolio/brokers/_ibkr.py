@@ -25,7 +25,7 @@ _ASSET_CLASS_MAP: dict[str, str] = {
 class IBKRConfig:
     gateway_url: str
     account_id: str = ""
-    verify_ssl: bool = False
+    verify_ssl: bool = False  # Client Portal Gateway uses a self-signed cert
     timeout: float = 15.0
 
     @classmethod

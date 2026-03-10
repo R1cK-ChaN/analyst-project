@@ -104,7 +104,7 @@ class LongbridgeAdapter:
 
     def _sign_headers(self, method: str, path: str, params: str = "", body: str = "") -> dict[str, str]:
         """Compute Longbridge HMAC-SHA256 request signature."""
-        timestamp = str(time.time())
+        timestamp = str(int(time.time()))
         payload_hash = hashlib.sha1(body.encode()).hexdigest()
 
         canonical = (
@@ -149,7 +149,7 @@ class LongbridgeAdapter:
 
         data = resp.json()
         code = data.get("code", -1)
-        if code == 401001 or code == 401002:
+        if code in (401001, 401002):
             raise BrokerAuthError(
                 "Longbridge access token is expired or invalid. "
                 "Refresh your token at https://open.longportapp.com"
@@ -188,14 +188,13 @@ class LongbridgeAdapter:
         for channel_group in data.get("data", {}).get("list", []):
             all_stocks.extend(channel_group.get("stock_info", []))
 
-        holdings: list[PortfolioHolding] = []
         skipped: list[str] = []
         warnings: list[str] = []
         currencies: set[str] = set()
         has_market_value = False
 
-        # First pass: compute total notional
-        notionals: list[float] = []
+        # Single pass: collect parsed positions, then compute weights
+        parsed: list[tuple[str, str, str, float]] = []  # (symbol, name, currency, notional)
         for stock in all_stocks:
             quantity = float(stock.get("quantity", 0))
             raw_symbol = stock.get("symbol", "UNKNOWN")
@@ -213,29 +212,22 @@ class LongbridgeAdapter:
                 cost_price = float(stock.get("cost_price", 0))
                 notional = abs(cost_price * quantity)
 
-            notionals.append(notional)
-
-        total_notional = sum(notionals)
-
-        # Second pass: build holdings
-        idx = 0
-        for stock in all_stocks:
-            quantity = float(stock.get("quantity", 0))
-            raw_symbol = stock.get("symbol", "UNKNOWN")
-
-            if quantity == 0:
-                continue
-
             currency = stock.get("currency", "")
             if currency:
                 currencies.add(currency)
 
-            symbol = _normalize_symbol(raw_symbol)
-            name = stock.get("symbol_name", raw_symbol)
-            notional = notionals[idx]
-            weight = notional / total_notional if total_notional > 0 else 0.0
-            idx += 1
+            parsed.append((
+                _normalize_symbol(raw_symbol),
+                stock.get("symbol_name", raw_symbol),
+                currency,
+                notional,
+            ))
 
+        total_notional = sum(n for _, _, _, n in parsed)
+
+        holdings: list[PortfolioHolding] = []
+        for symbol, name, _currency, notional in parsed:
+            weight = notional / total_notional if total_notional > 0 else 0.0
             holdings.append(PortfolioHolding(
                 symbol=symbol,
                 name=name,

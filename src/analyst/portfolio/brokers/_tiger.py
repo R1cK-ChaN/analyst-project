@@ -188,9 +188,6 @@ class TigerAdapter:
         data = self._call("positions", biz_content or None)
 
         positions = data.get("data", {}).get("items", [])
-        # Also handle flat list response
-        if isinstance(data.get("data"), list):
-            positions = data["data"]
 
         holdings: list[PortfolioHolding] = []
         skipped: list[str] = []

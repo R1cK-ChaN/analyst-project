@@ -415,7 +415,7 @@ class PortfolioSyncHandler:
         portfolio_id = str(arguments.get("portfolio_id", "default")).strip()
 
         try:
-            adapter = create_broker_adapter(broker, account_id=account_id)
+            adapter = create_broker_adapter(broker)
             result = adapter.fetch_positions(account_id=account_id)
         except BrokerAuthError as exc:
             logger.warning("Broker auth failed: %s", exc)
@@ -481,11 +481,10 @@ def build_portfolio_sync_tool(store: SQLiteEngineStore) -> AgentTool:
     return AgentTool(
         name="sync_portfolio_from_broker",
         description=(
-            "Sync portfolio positions from a broker account (currently supports IBKR). "
+            "Sync portfolio positions from a broker account (supports IBKR, Longbridge, Tiger). "
             "Fetches live positions from the broker gateway and imports them into the portfolio store. "
-            "Requires the IBKR Client Portal Gateway to be running and authenticated. "
             "Use when the client says 'sync my IB positions', 'refresh positions', "
-            "'import from broker', or similar."
+            "'import from broker', or similar. Set broker='longbridge' or broker='tiger' as needed."
         ),
         parameters={
             "type": "object",
