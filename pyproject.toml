@@ -12,6 +12,7 @@ dependencies = [
     "curl_cffi",
     "feedparser",
     "httpx",
+    "imageio-ffmpeg",
     "markdownify",
     "playwright",
     "playwright-stealth",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import platform
 import shutil
 import subprocess
 import tempfile
@@ -17,6 +18,7 @@ import requests
 from analyst.engine.live_types import AgentTool
 from analyst.env import get_env_value
 
+from ._ffmpeg import resolve_ffmpeg_binary
 from ._image_gen import ImageGenConfig, ImageGenHandler
 
 logger = logging.getLogger(__name__)
@@ -84,9 +86,8 @@ class SeedDanceConfig:
 
 @dataclass(frozen=True)
 class LivePhotoPackagingConfig:
-    ffmpeg_binary: str = "ffmpeg"
-    ffprobe_binary: str = "ffprobe"
-    exiftool_binary: str = "exiftool"
+    ffmpeg_binary: str = ""
+    makelive_binary: str = "makelive"
 
 
 @dataclass(frozen=True)
@@ -226,12 +227,13 @@ class SeedDanceVideoProvider:
     def _extract_video_url(self, body: dict[str, Any]) -> str:
         candidates = [
             body.get("video_url"),
+            _get_nested(body, "content", "video_url"),
             _get_nested(body, "data", "video_url"),
             _get_nested(body, "output", "video_url"),
             _get_nested(body, "output", "content", "video_url"),
             _get_nested(body, "data", "output", "video_url"),
         ]
-        output_items = _get_nested(body, "output", "content") or _get_nested(body, "data", "content")
+        output_items = body.get("content") or _get_nested(body, "output", "content") or _get_nested(body, "data", "content")
         if isinstance(output_items, list):
             for item in output_items:
                 if isinstance(item, dict):
@@ -254,7 +256,7 @@ class SeedDanceVideoProvider:
 
 
 class LivePhotoPackager:
-    """Package a short motion clip into a best-effort Live Photo bundle."""
+    """Package a short motion clip into a true Apple Live Photo bundle."""
 
     def __init__(
         self,
@@ -265,19 +267,19 @@ class LivePhotoPackager:
     ) -> None:
         self._config = config or LivePhotoPackagingConfig()
         self._runner = runner
-        self._which = which
+        self._ffmpeg_binary = self._config.ffmpeg_binary or resolve_ffmpeg_binary(which)
+        self._makelive_binary = _resolve_binary(
+            configured=get_env_value("ANALYST_MAKELIVE_BINARY", default="").strip(),
+            fallback=self._config.makelive_binary,
+            which=which,
+        )
 
     def is_available(self) -> bool:
-        required = (
-            self._config.ffmpeg_binary,
-            self._config.ffprobe_binary,
-            self._config.exiftool_binary,
-        )
-        return all(self._which(binary) for binary in required)
+        return platform.system() == "Darwin" and bool(self._ffmpeg_binary) and bool(self._makelive_binary)
 
     def package(self, generated_video: GeneratedVideo) -> LivePhotoArtifact:
         if not self.is_available():
-            raise LivePhotoPackagingError("ffmpeg, ffprobe, and exiftool are required for live photo packaging.")
+            raise LivePhotoPackagingError("True Live Photo packaging requires macOS, ffmpeg, and makelive.")
 
         asset_id = str(uuid.uuid4()).upper()
         live_photo_image_path = self._temp_path("analyst_live_photo_", ".jpg")
@@ -286,7 +288,7 @@ class LivePhotoPackager:
 
         self._run_command(
             [
-                self._config.ffmpeg_binary,
+                self._ffmpeg_binary,
                 "-y",
                 "-i",
                 generated_video.video_path,
@@ -297,7 +299,7 @@ class LivePhotoPackager:
         )
         self._run_command(
             [
-                self._config.ffmpeg_binary,
+                self._ffmpeg_binary,
                 "-y",
                 "-i",
                 generated_video.video_path,
@@ -309,31 +311,15 @@ class LivePhotoPackager:
             ]
         )
 
-        # Best-effort metadata pairing. Telegram will still use the motion clip even if
-        # the target consumer ignores these tags.
-        self._run_command(
-            [
-                self._config.exiftool_binary,
-                "-overwrite_original",
-                f"-XMP:ContentIdentifier={asset_id}",
-                live_photo_image_path,
-            ]
-        )
-        self._run_command(
-            [
-                self._config.exiftool_binary,
-                "-overwrite_original",
-                f"-Keys:ContentIdentifier={asset_id}",
-                "-Keys:StillImageTime=0",
-                live_photo_video_path,
-            ]
-        )
+        self._run_command([self._makelive_binary, live_photo_image_path, live_photo_video_path])
 
         manifest = {
             "asset_id": asset_id,
             "live_photo_image_path": live_photo_image_path,
             "live_photo_video_path": live_photo_video_path,
             "delivery_video_path": generated_video.video_path,
+            "metadata_tagged": True,
+            "packager": "makelive",
         }
         try:
             Path(manifest_path).write_text(json.dumps(manifest, ensure_ascii=True, sort_keys=True), encoding="utf-8")
@@ -367,12 +353,12 @@ class LivePhotoPackager:
 
 
 class LivePhotoHandler:
-    """Create a best-effort Live Photo and fall back to a static image if needed."""
+    """Create a motion asset, with optional true Live Photo packaging when available."""
 
     def __init__(
         self,
         video_provider: VideoGenProvider,
-        packager: LivePhotoPackager,
+        packager: LivePhotoPackager | None,
         image_handler: ImageGenHandler,
     ) -> None:
         self._video_provider = video_provider
@@ -390,19 +376,7 @@ class LivePhotoHandler:
                 prompt=prompt,
                 duration_seconds=duration_seconds,
             )
-            live_photo = self._packager.package(generated_video)
-            return {
-                "status": "ok",
-                "fallback_kind": "live_photo",
-                "asset_id": live_photo.asset_id,
-                "prompt_used": prompt,
-                "delivery_video_path": live_photo.delivery_video_path,
-                "live_photo_image_path": live_photo.live_photo_image_path,
-                "live_photo_video_path": live_photo.live_photo_video_path,
-                "live_photo_manifest_path": live_photo.manifest_path,
-                "cleanup_paths": list(live_photo.cleanup_paths),
-            }
-        except LivePhotoError as exc:
+        except VideoGenerationError as exc:
             logger.warning("Live photo generation failed: %s", exc)
             fallback = self._image_handler({"prompt": prompt})
             if fallback.get("status") == "ok":
@@ -411,6 +385,54 @@ class LivePhotoHandler:
                 fallback["warning"] = str(exc)
                 return fallback
             return {"status": "error", "error": str(exc)}
+
+        if self._packager and self._packager.is_available():
+            try:
+                live_photo = self._packager.package(generated_video)
+                return {
+                    "status": "ok",
+                    "fallback_kind": "live_photo",
+                    "asset_id": live_photo.asset_id,
+                    "prompt_used": prompt,
+                    "delivery_video_path": live_photo.delivery_video_path,
+                    "live_photo_image_path": live_photo.live_photo_image_path,
+                    "live_photo_video_path": live_photo.live_photo_video_path,
+                    "live_photo_manifest_path": live_photo.manifest_path,
+                    "cleanup_paths": list(live_photo.cleanup_paths),
+                }
+            except LivePhotoPackagingError as exc:
+                logger.warning("True Live Photo packaging failed; returning motion video only: %s", exc)
+                return self._build_video_result(
+                    prompt=prompt,
+                    generated_video=generated_video,
+                    warning=str(exc),
+                )
+
+        return self._build_video_result(
+            prompt=prompt,
+            generated_video=generated_video,
+            warning="True Live Photo packaging is unavailable on this runtime; returning motion video only.",
+        )
+
+    def _build_video_result(
+        self,
+        *,
+        prompt: str,
+        generated_video: GeneratedVideo,
+        warning: str = "",
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "status": "ok",
+            "fallback_kind": "video",
+            "prompt_used": prompt,
+            "delivery_video_path": generated_video.video_path,
+            "cleanup_paths": [generated_video.video_path],
+        }
+        if generated_video.video_url:
+            result["delivery_video_url"] = generated_video.video_url
+        if warning:
+            result["warning"] = warning
+        return result
 
 
 def build_live_photo_tool(
@@ -426,8 +448,6 @@ def build_live_photo_tool(
     resolved_config = config or SeedDanceConfig.from_env()
     provider = SeedDanceVideoProvider(resolved_config, session=session, sleep_fn=sleep_fn)
     packager = LivePhotoPackager(runner=runner, which=which)
-    if not packager.is_available():
-        raise RuntimeError("ffmpeg, ffprobe, and exiftool are required for live photo generation.")
     fallback_handler = ImageGenHandler(image_config or ImageGenConfig.from_env())
     handler = LivePhotoHandler(provider, packager, fallback_handler)
     return AgentTool(
@@ -435,6 +455,7 @@ def build_live_photo_tool(
         description=(
             "Generate a short motion selfie or Live Photo-style asset. "
             "Use for live photo, motion selfie, or dynamic selfie requests. "
+            "When Apple Live Photo packaging is unavailable, this returns a motion video instead. "
             "The prompt should be in English and visually specific."
         ),
         parameters={
@@ -467,14 +488,13 @@ def build_optional_live_photo_tool(
     which: Callable[[str], str | None] = shutil.which,
     image_config: ImageGenConfig | None = None,
 ) -> AgentTool | None:
-    """Return a live-photo tool only when the provider and runtime are available."""
+    """Return a live-photo tool when the provider is configured."""
     resolved_config = config or SeedDanceConfig.from_env_optional()
     if resolved_config is None:
         return None
     packager = LivePhotoPackager(runner=runner, which=which)
     if not packager.is_available():
-        logger.warning("Live photo tool disabled: ffmpeg, ffprobe, or exiftool is not installed.")
-        return None
+        logger.warning("Live photo tool running in motion-video mode; true Live Photo packaging requires macOS, ffmpeg, and makelive.")
     return build_live_photo_tool(
         config=resolved_config,
         session=session,
@@ -500,3 +520,16 @@ def _get_nested(data: dict[str, Any], *keys: str) -> Any:
             return None
         current = current.get(key)
     return current
+
+
+def _resolve_binary(
+    *,
+    configured: str,
+    fallback: str,
+    which: Callable[[str], str | None],
+) -> str:
+    if configured:
+        return configured
+    if not fallback:
+        return ""
+    return which(fallback) or ""
