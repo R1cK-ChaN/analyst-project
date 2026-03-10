@@ -150,8 +150,9 @@ Implemented in `src/analyst/tools/` — 13 tool builders across 12 files:
   - returns structured JSON: `status`, `image_path` or `image_url`, `prompt_used`
   - `build_image_gen_tool()` factory returning an `AgentTool`
 - **live photo generation tool** (`_live_photo.py`): `generate_live_photo` — generates a short motion clip via SeedDance, packages a best-effort Live Photo bundle, and falls back to a static image when motion generation fails
-  - `SeedDanceConfig` with optional env-gated registration (`ANALYST_VIDEO_GEN_PROVIDER=seeddance`, `SEEDDANCE_API_KEY`, `SEEDDANCE_BASE_URL`, `ANALYST_LIVE_PHOTO_MODEL`)
+  - `SeedDanceConfig` with optional env-gated registration (`ANALYST_VIDEO_GEN_PROVIDER=seeddance`, `VOLCENGINE_API_KEY` or `ARK_API_KEY`, `ARK_BASE_URL`, `ANALYST_LIVE_PHOTO_MODEL`)
   - provider abstraction + `SeedDanceVideoProvider` for async task polling and clip download
+  - current default Ark model: `doubao-seedance-1-0-pro-fast-251015`
   - `LivePhotoPackager` uses `ffmpeg` / `ffprobe` / `exiftool` to extract a cover frame, normalize a MOV, and stamp a shared asset identifier
   - returns structured JSON with `delivery_video_path`, paired Live Photo asset paths, `asset_id`, and cleanup paths for delivery adapters
   - `build_optional_live_photo_tool()` only registers the tool when provider config and packaging binaries are available

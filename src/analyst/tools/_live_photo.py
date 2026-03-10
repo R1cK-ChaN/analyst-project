@@ -69,7 +69,7 @@ class SeedDanceConfig:
                 "SEEDDANCE_BASE_URL",
                 default="https://ark.cn-beijing.volces.com/api/v3",
             ),
-            model=get_env_value("ANALYST_LIVE_PHOTO_MODEL", default="sed2-0-mini-250715"),
+            model=get_env_value("ANALYST_LIVE_PHOTO_MODEL", default="doubao-seedance-1-0-pro-fast-251015"),
         )
 
     @classmethod
