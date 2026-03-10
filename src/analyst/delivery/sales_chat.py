@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from analyst.engine import OpenRouterAnalystEngine
 from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
@@ -159,6 +161,8 @@ def system_prompt_with_memory(
     group_context: str = "",
 ) -> str:
     parts = [SOUL_SYSTEM_PROMPT]
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    parts.append(f"\n[CURRENT TIME] {now.strftime('%Y-%m-%d %H:%M %A')} (Asia/Shanghai)")
     if group_context:
         parts.append(
             "\n" + GROUP_CHAT_ADDENDUM

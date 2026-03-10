@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import sys
 from pathlib import Path
@@ -415,7 +416,11 @@ def _make_message_handler(
         )
         from analyst.delivery.sales_chat import split_into_bubbles
         bubbles = split_into_bubbles(reply.text)
-        for bubble in bubbles:
+        for i, bubble in enumerate(bubbles):
+            if i > 0:
+                await update.effective_chat.send_action(ChatAction.TYPING)
+                delay = min(0.5 + len(bubble) * 0.01, 2.5) + random.uniform(-0.3, 0.3)
+                await asyncio.sleep(max(delay, 0.3))
             await update.effective_message.reply_text(bubble)
 
         if in_group:

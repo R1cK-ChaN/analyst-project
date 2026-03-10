@@ -222,8 +222,11 @@ class ClientProfileRecord:
     expertise_level: str
     activity: str
     current_mood: str
+    emotional_trend: str
+    stress_level: str
     confidence: str
     notes: str
+    personal_facts: list[str]
     last_active_at: str
     total_interactions: int
     updated_at: str
@@ -609,8 +612,11 @@ class SQLiteEngineStore:
                     "expertise_level": "TEXT NOT NULL DEFAULT ''",
                     "activity": "TEXT NOT NULL DEFAULT ''",
                     "current_mood": "TEXT NOT NULL DEFAULT ''",
+                    "emotional_trend": "TEXT NOT NULL DEFAULT ''",
+                    "stress_level": "TEXT NOT NULL DEFAULT ''",
                     "confidence": "TEXT NOT NULL DEFAULT ''",
                     "notes": "TEXT NOT NULL DEFAULT ''",
+                    "personal_facts_json": "TEXT NOT NULL DEFAULT '[]'",
                 },
             )
             connection.execute(
@@ -2090,8 +2096,11 @@ class SQLiteEngineStore:
         expertise_level: str | None = None,
         activity: str | None = None,
         current_mood: str | None = None,
+        emotional_trend: str | None = None,
+        stress_level: str | None = None,
         confidence: str | None = None,
         notes: str | None = None,
+        personal_facts: list[str] | None = None,
         last_active_at: str | None = None,
         interaction_increment: int = 0,
     ) -> ClientProfileRecord:
@@ -2111,8 +2120,11 @@ class SQLiteEngineStore:
                 expertise_level=expertise_level,
                 activity=activity,
                 current_mood=current_mood,
+                emotional_trend=emotional_trend,
+                stress_level=stress_level,
                 confidence=confidence,
                 notes=notes,
+                personal_facts=personal_facts,
                 last_active_at=last_active_at,
                 interaction_increment=interaction_increment,
             )
@@ -2388,8 +2400,11 @@ class SQLiteEngineStore:
                 expertise_level=profile_updates.get("expertise_level"),
                 activity=profile_updates.get("activity"),
                 current_mood=profile_updates.get("current_mood"),
+                emotional_trend=profile_updates.get("emotional_trend"),
+                stress_level=profile_updates.get("stress_level"),
                 confidence=profile_updates.get("confidence"),
                 notes=profile_updates.get("notes"),
+                personal_facts=profile_updates.get("personal_facts"),
                 last_active_at=assistant_timestamp,
                 interaction_increment=1,
             )
@@ -2480,8 +2495,11 @@ class SQLiteEngineStore:
                 expertise_level="",
                 activity="",
                 current_mood="",
+                emotional_trend="",
+                stress_level="",
                 confidence="",
                 notes="",
+                personal_facts=[],
                 last_active_at="",
                 total_interactions=0,
                 updated_at="",
@@ -2500,8 +2518,11 @@ class SQLiteEngineStore:
             expertise_level=row["expertise_level"],
             activity=row["activity"],
             current_mood=row["current_mood"],
+            emotional_trend=row["emotional_trend"],
+            stress_level=row["stress_level"],
             confidence=row["confidence"],
             notes=row["notes"],
+            personal_facts=json.loads(row["personal_facts_json"]),
             last_active_at=row["last_active_at"],
             total_interactions=int(row["total_interactions"]),
             updated_at=row["updated_at"],
@@ -2540,8 +2561,11 @@ class SQLiteEngineStore:
         expertise_level: str | None = None,
         activity: str | None = None,
         current_mood: str | None = None,
+        emotional_trend: str | None = None,
+        stress_level: str | None = None,
         confidence: str | None = None,
         notes: str | None = None,
+        personal_facts: list[str] | None = None,
         last_active_at: str | None = None,
         interaction_increment: int = 0,
     ) -> ClientProfileRecord:
@@ -2555,6 +2579,18 @@ class SQLiteEngineStore:
         merged_market_focus = current.market_focus
         if market_focus:
             merged_market_focus = sorted(set(current.market_focus).union(market_focus))
+        merged_personal_facts = current.personal_facts
+        if personal_facts:
+            # Dedup by last occurrence so re-mentioned facts refresh recency.
+            combined = [*current.personal_facts, *personal_facts]
+            seen: set[str] = set()
+            deduped: list[str] = []
+            for item in reversed(combined):
+                if item not in seen:
+                    seen.add(item)
+                    deduped.append(item)
+            deduped.reverse()
+            merged_personal_facts = deduped[-20:]
         next_language = preferred_language if preferred_language is not None else current.preferred_language
         next_response_style = response_style if response_style is not None else current.response_style
         next_risk_appetite = risk_appetite if risk_appetite is not None else current.risk_appetite
@@ -2566,6 +2602,8 @@ class SQLiteEngineStore:
         next_expertise_level = expertise_level if expertise_level is not None else current.expertise_level
         next_activity = activity if activity is not None else current.activity
         next_current_mood = current_mood if current_mood is not None else current.current_mood
+        next_emotional_trend = emotional_trend if emotional_trend is not None else current.emotional_trend
+        next_stress_level = stress_level if stress_level is not None else current.stress_level
         next_confidence = confidence if confidence is not None else current.confidence
         next_notes = notes if notes is not None else current.notes
         next_last_active = last_active_at if last_active_at is not None else current.last_active_at
@@ -2587,12 +2625,15 @@ class SQLiteEngineStore:
                 expertise_level,
                 activity,
                 current_mood,
+                emotional_trend,
+                stress_level,
                 confidence,
                 notes,
+                personal_facts_json,
                 last_active_at,
                 total_interactions,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(client_id) DO UPDATE SET
                 preferred_language = excluded.preferred_language,
                 watchlist_topics_json = excluded.watchlist_topics_json,
@@ -2606,8 +2647,11 @@ class SQLiteEngineStore:
                 expertise_level = excluded.expertise_level,
                 activity = excluded.activity,
                 current_mood = excluded.current_mood,
+                emotional_trend = excluded.emotional_trend,
+                stress_level = excluded.stress_level,
                 confidence = excluded.confidence,
                 notes = excluded.notes,
+                personal_facts_json = excluded.personal_facts_json,
                 last_active_at = excluded.last_active_at,
                 total_interactions = excluded.total_interactions,
                 updated_at = excluded.updated_at
@@ -2626,8 +2670,11 @@ class SQLiteEngineStore:
                 next_expertise_level,
                 next_activity,
                 next_current_mood,
+                next_emotional_trend,
+                next_stress_level,
                 next_confidence,
                 next_notes,
+                json.dumps(merged_personal_facts, ensure_ascii=False, sort_keys=True),
                 next_last_active,
                 total_interactions,
                 updated_at,
@@ -2647,8 +2694,11 @@ class SQLiteEngineStore:
             expertise_level=next_expertise_level,
             activity=next_activity,
             current_mood=next_current_mood,
+            emotional_trend=next_emotional_trend,
+            stress_level=next_stress_level,
             confidence=next_confidence,
             notes=next_notes,
+            personal_facts=merged_personal_facts,
             last_active_at=next_last_active,
             total_interactions=total_interactions,
             updated_at=updated_at,

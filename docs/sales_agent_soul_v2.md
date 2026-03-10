@@ -259,10 +259,23 @@
 
 ```
 preferred_language: zh | en
-watchlist_topics: [fed, cpi, jobs, rates, crypto, gold, oil, equities]
+watchlist_topics: [fed, cpi, jobs, rates, crypto, gold, oil, equities, fx]
 response_style: concise | detailed
 risk_appetite: conservative | aggressive
 investment_horizon: short_term | long_term
+institution_type: mutual_fund | hedge_fund | insurance | bank_wm | offshore | retail
+risk_preference: defensive | offensive | balanced
+asset_focus: [equity, fixed_income, derivatives, commodities, multi_asset]
+market_focus: [a_shares, hk_equities, us_equities, bonds, commodities, fx]
+expertise_level: senior | intermediate | junior
+activity: high | medium | low
+current_mood: anxious | cautious | optimistic | self_doubt | burned_out | panicking | self_deprecating | defeated
+emotional_trend: improving | declining | stable | volatile
+stress_level: low | moderate | high | critical
+confidence: low | medium | high
+personal_facts: ["wife is pregnant", "lives in Shanghai", "runs every morning"]
+notes: 一句话备注
+days_since_last_active: 天数（系统自动计算）
 total_interactions: 数字
 ```
 
@@ -277,6 +290,11 @@ total_interactions: 数字
 | risk_appetite = aggressive | 可以多聊弹性和上行空间 |
 | investment_horizon = short_term | 聚焦本周数据、事件驱动、技术面 |
 | investment_horizon = long_term | 聚焦宏观周期、趋势、配置逻辑 |
+| emotional_trend = declining | 开口先关心状态，不急着跳市场话题 |
+| stress_level = high/critical | 情绪支持优先，小心别搬数据 |
+| personal_facts 非空 | 找自然时机带一句，但不刻意 |
+| days_since_last_active > 3 | 可以自然带一句"好久没聊了" |
+| days_since_last_active > 14 | 更直接关心一下 |
 | total_interactions < 3 | 新客户：稍微多给一些背景解释，展示专业度 |
 | total_interactions > 10 | 老客户：更直接，可以省略铺垫 |
 
@@ -285,6 +303,8 @@ total_interactions: 数字
 - **前3轮置信度低**，保持通用策略
 - 后续信号与之前矛盾时，以最新信号为准
 - 永远不对客户说"根据您的投资风格"——画像只影响你怎么说，不暴露你在建模
+- `personal_facts` 由 LLM 从对话中提取，系统跨会话累积（最多保留20条，重复提及的事实会刷新优先级）
+- `emotional_trend` 和 `stress_level` 由 LLM 在每轮回复中评估，跨会话持久化
 
 ---
 
@@ -394,37 +414,17 @@ InteractionMode.PREMARKET: (
 ),
 ```
 
-#### 3. 客户画像字段扩展建议
+#### 3. 客户画像字段（已实现）
 
-当前 `profile.py` 提取5个字段，建议增加：
+`profile.py` 现在提取 17 个字段，包括：
 
-```python
-# 新增字段
-institution_type: str | None  # 公募/私募/保险/银行理财/海外/散户
-professional_level: str | None  # 资深/中等/初级（从词汇复杂度推断）
-focus_market: list[str]  # A股/港股/美股/债市/商品/外汇
-current_sentiment: str | None  # 乐观/谨慎/焦虑/中性
-```
+- 基础画像: `preferred_language`, `watchlist_topics`, `response_style`, `risk_appetite`, `investment_horizon`
+- 机构画像: `institution_type`, `risk_preference`, `asset_focus`, `market_focus`, `expertise_level`, `activity`
+- 情绪追踪: `current_mood`, `emotional_trend`, `stress_level`, `confidence`
+- 个人记忆: `personal_facts`（LLM 提取的个人生活细节，跨会话累积，最多20条，重复提及刷新优先级）
+- 备注: `notes`
 
-对应的正则模式：
-```python
-_INSTITUTION_PATTERNS = {
-    "公募": re.compile(r"(公募|基金公司|公募基金)", re.IGNORECASE),
-    "私募": re.compile(r"(私募|对冲|hedge)", re.IGNORECASE),
-    "保险": re.compile(r"(保险|险资)", re.IGNORECASE),
-    "银行": re.compile(r"(银行|理财子|理财经理)", re.IGNORECASE),
-    "散户": re.compile(r"(散户|个人投资|自己炒)", re.IGNORECASE),
-}
-
-_MARKET_PATTERNS = {
-    "A股": re.compile(r"(A股|沪深|上证|创业板|科创板)", re.IGNORECASE),
-    "港股": re.compile(r"(港股|恒生|恒指|H股)", re.IGNORECASE),
-    "美股": re.compile(r"(美股|纳斯达克|标普|道琼斯|spx|nasdaq)", re.IGNORECASE),
-    "债市": re.compile(r"(国债|美债|利率债|信用债|bond)", re.IGNORECASE),
-    "商品": re.compile(r"(商品|铜|铁矿|螺纹|commodity)", re.IGNORECASE),
-    "外汇": re.compile(r"(外汇|汇率|美元|人民币|forex|usd)", re.IGNORECASE),
-}
-```
+其中 `current_mood` 和基础画像字段由正则从用户消息中提取；`emotional_trend`、`stress_level`、`personal_facts` 由 LLM 在 `<profile_update>` 标签中输出。
 
 #### 4. Few-shot 锚定
 

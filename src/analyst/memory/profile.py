@@ -20,8 +20,11 @@ class ClientProfileUpdate:
     expertise_level: str | None = None
     activity: str | None = None
     current_mood: str | None = None
+    emotional_trend: str | None = None
+    stress_level: str | None = None
     confidence: str | None = None
     notes: str | None = None
+    personal_facts: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ClientProfileUpdate":
@@ -40,8 +43,11 @@ class ClientProfileUpdate:
             expertise_level=_clean_scalar(payload.get("expertise_level")),
             activity=_clean_scalar(payload.get("activity")),
             current_mood=_clean_scalar(payload.get("current_mood")),
+            emotional_trend=_clean_scalar(payload.get("emotional_trend")),
+            stress_level=_clean_scalar(payload.get("stress_level")),
             confidence=_clean_scalar(payload.get("confidence")),
             notes=_clean_scalar(payload.get("notes")),
+            personal_facts=_clean_list(payload.get("personal_facts")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,8 +64,11 @@ class ClientProfileUpdate:
             "expertise_level": self.expertise_level,
             "activity": self.activity,
             "current_mood": self.current_mood,
+            "emotional_trend": self.emotional_trend,
+            "stress_level": self.stress_level,
             "confidence": self.confidence,
             "notes": self.notes,
+            "personal_facts": self.personal_facts,
         }
 
 
@@ -234,8 +243,11 @@ def merge_client_profile_updates(*updates: ClientProfileUpdate) -> ClientProfile
             expertise_level=update.expertise_level or merged.expertise_level,
             activity=update.activity or merged.activity,
             current_mood=update.current_mood or merged.current_mood,
+            emotional_trend=update.emotional_trend or merged.emotional_trend,
+            stress_level=update.stress_level or merged.stress_level,
             confidence=update.confidence or merged.confidence,
             notes=update.notes or merged.notes,
+            personal_facts=_merge_lists_capped(merged.personal_facts, update.personal_facts, cap=20),
         )
     return merged
 
@@ -312,3 +324,19 @@ def _merge_lists(left: list[str], right: list[str]) -> list[str]:
     if not left and not right:
         return []
     return list(dict.fromkeys([*left, *right]))
+
+
+def _merge_lists_capped(left: list[str], right: list[str], *, cap: int = 20) -> list[str]:
+    """Merge two lists, deduplicating by last occurrence so re-mentioned items refresh recency."""
+    if not left and not right:
+        return []
+    # Reverse, dedup (keeps first=latest), reverse back to preserve chronological order.
+    combined = [*left, *right]
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in reversed(combined):
+        if item not in seen:
+            seen.add(item)
+            deduped.append(item)
+    deduped.reverse()
+    return deduped[-cap:]

@@ -305,6 +305,140 @@ class MemoryPipelineTest(unittest.TestCase):
             self.assertIn("短久期建议", trading_context)
             self.assertIn("US10Y", trading_context)
 
+    def test_days_since_last_active_handles_naive_timestamp(self) -> None:
+        """Naive ISO timestamps (no tzinfo) must not crash the context builder."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            # Upsert with a naive timestamp (no +00:00 suffix).
+            store.upsert_client_profile(
+                "client-naive",
+                preferred_language="en",
+                last_active_at="2026-01-15T10:00:00",
+                interaction_increment=1,
+            )
+
+            # This must not raise TypeError / ValueError.
+            context = build_sales_context(
+                store=store,
+                client_id="client-naive",
+                channel_id="telegram:99",
+                thread_id="main",
+                query="hello",
+            )
+            self.assertIn("days_since_last_active", context)
+
+    def test_days_since_last_active_handles_aware_timestamp(self) -> None:
+        """Aware ISO timestamps (with +00:00) should also work correctly."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            store.upsert_client_profile(
+                "client-aware",
+                preferred_language="en",
+                last_active_at="2026-01-15T10:00:00+00:00",
+                interaction_increment=1,
+            )
+
+            context = build_sales_context(
+                store=store,
+                client_id="client-aware",
+                channel_id="telegram:99",
+                thread_id="main",
+                query="hello",
+            )
+            self.assertIn("days_since_last_active", context)
+
+    def test_personal_facts_persisted_via_assistant_profile_update(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            record_sales_interaction(
+                store=store,
+                client_id="client-pf",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="我老婆下个月预产期。",
+                assistant_text="恭喜！",
+                assistant_profile_update=ClientProfileUpdate(
+                    personal_facts=["wife expecting next month"],
+                ),
+            )
+
+            profile = store.get_client_profile("client-pf")
+            self.assertIn("wife expecting next month", profile.personal_facts)
+
+            context = build_sales_context(
+                store=store,
+                client_id="client-pf",
+                channel_id="telegram:1",
+                thread_id="main",
+                query="hello",
+            )
+            self.assertIn("wife expecting next month", context)
+
+    def test_personal_facts_rementioned_refreshes_recency(self) -> None:
+        """Re-mentioning a fact should move it to the end so it survives the 20-item cap."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            # Seed 20 facts.
+            initial_facts = [f"fact-{i}" for i in range(20)]
+            store.upsert_client_profile(
+                "client-cap",
+                personal_facts=initial_facts,
+            )
+            profile = store.get_client_profile("client-cap")
+            self.assertEqual(len(profile.personal_facts), 20)
+
+            # Re-mention fact-0 and add a brand-new fact.
+            store.upsert_client_profile(
+                "client-cap",
+                personal_facts=["fact-0", "brand-new"],
+            )
+            profile = store.get_client_profile("client-cap")
+            self.assertEqual(len(profile.personal_facts), 20)
+            self.assertIn("fact-0", profile.personal_facts)
+            self.assertIn("brand-new", profile.personal_facts)
+            # fact-1 should be evicted (oldest unrementioned).
+            self.assertNotIn("fact-1", profile.personal_facts)
+            # fact-0 should be near the end (refreshed recency).
+            self.assertGreater(
+                profile.personal_facts.index("fact-0"),
+                profile.personal_facts.index("fact-2"),
+            )
+
+    def test_emotional_trend_and_stress_level_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            record_sales_interaction(
+                store=store,
+                client_id="client-emo",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="最近太难做了。",
+                assistant_text="确实难。",
+                assistant_profile_update=ClientProfileUpdate(
+                    emotional_trend="declining",
+                    stress_level="high",
+                ),
+            )
+
+            profile = store.get_client_profile("client-emo")
+            self.assertEqual(profile.emotional_trend, "declining")
+            self.assertEqual(profile.stress_level, "high")
+
+            context = build_sales_context(
+                store=store,
+                client_id="client-emo",
+                channel_id="telegram:1",
+                thread_id="main",
+                query="hello",
+            )
+            self.assertIn("emotional_trend: declining", context)
+            self.assertIn("stress_level: high", context)
+
     def test_trading_artifact_requires_research_lineage(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")

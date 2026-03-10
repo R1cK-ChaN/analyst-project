@@ -8,10 +8,10 @@ Current status on March 10, 2026:
 - local live commands now cover refresh, flash commentary, briefing, wrap, regime refresh, calendar inspection, and news inspection
 - the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, TradingEconomics, yfinance, and macro-finance RSS news ingestion
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
-- the memory layer records all chat messages and extracts 14 client profile dimensions that accumulate across conversations
+- the memory layer records all chat messages and extracts 17 client profile dimensions that accumulate across conversations, including emotional trend tracking, stress level monitoring, and personal facts memory (up to 20 facts with recency-refresh dedup)
 - a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 11 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync); both LiveAnalystEngine and sales agent use it
 - the portfolio package supports CSV import and live broker sync via an extensible adapter layer (IBKR, Longbridge 长桥, Tiger 老虎), with EWMA risk pipeline, VIX regime signals, and agent-actionable tools
-- the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention) and full tool access
+- the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention), full tool access, time-of-day awareness, absence awareness, and typing simulation between multi-bubble messages
 - China-specific ingestion, live end-to-end provider verification, and WeCom delivery are still pending
 
 ## What's Inside
@@ -77,9 +77,9 @@ analyst-project/
 │   ├── tools/                      11 agent tools — ToolKit builder + live data scrapers + web search/fetch + calendar + portfolio sync
 │   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
 │   ├── storage/                    SQLite store (market state, research artifacts, trader state, sales memory)
-│   ├── memory/                     Client profile extraction (14 dimensions), conversation recording, context builders
+│   ├── memory/                     Client profile extraction (17 dimensions), emotional memory, personal facts, context builders
 │   ├── ingestion/                  Source adapters (Investing.com, ForexFactory, TradingEconomics, FRED, Fed RSS, yfinance, RSS news)
-│   ├── delivery/                   Telegram bot (陈襄) with group chat support + sales chat agent + formatters
+│   ├── delivery/                   Telegram bot (陈襄) with group chat, time awareness, typing simulation + sales chat agent + formatters
 │   └── integration/                Message routing
 │
 ├── data/demo/                      ← LOCAL DEMO DATA

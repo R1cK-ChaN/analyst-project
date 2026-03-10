@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timezone
 
 from analyst.storage import (
     ClientProfileRecord,
@@ -175,8 +176,11 @@ def record_sales_interaction(
             "expertise_level": update.expertise_level,
             "activity": update.activity,
             "current_mood": update.current_mood,
+            "emotional_trend": update.emotional_trend,
+            "stress_level": update.stress_level,
             "confidence": update.confidence,
             "notes": update.notes,
+            "personal_facts": update.personal_facts,
         },
     )
 
@@ -207,13 +211,29 @@ def _render_client_profile(profile: ClientProfileRecord) -> list[str]:
         lines.append(f"- activity: {profile.activity}")
     if profile.current_mood:
         lines.append(f"- current_mood: {profile.current_mood}")
+    if profile.emotional_trend:
+        lines.append(f"- emotional_trend: {profile.emotional_trend}")
+    if profile.stress_level:
+        lines.append(f"- stress_level: {profile.stress_level}")
     effective_confidence = profile.confidence or ("low" if profile.total_interactions < 3 else "")
     if effective_confidence:
         lines.append(f"- confidence: {effective_confidence}")
     if profile.notes:
         lines.append(f"- notes: {trim_text(profile.notes, max_chars=160)}")
+    if profile.personal_facts:
+        lines.append(f"- personal_facts: {'; '.join(profile.personal_facts)}")
     if profile.total_interactions:
         lines.append(f"- total_interactions: {profile.total_interactions}")
+    if profile.last_active_at:
+        try:
+            last = datetime.fromisoformat(profile.last_active_at)
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            days_away = (datetime.now(timezone.utc) - last).days
+            if days_away >= 1:
+                lines.append(f"- days_since_last_active: {days_away}")
+        except (ValueError, TypeError):
+            pass
     return lines
 
 
