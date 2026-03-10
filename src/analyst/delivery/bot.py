@@ -23,6 +23,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -68,6 +69,10 @@ MAX_TELEGRAM_LENGTH = 4096
 MAX_HISTORY_TURNS = 20
 MAX_GROUP_CONTEXT_MESSAGES = 50
 MAX_GROUP_CONTEXT_CHARS = 1500
+MANAGED_MEDIA_PREFIXES = (
+    "analyst_gen_",
+    "analyst_live_",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +119,19 @@ def _should_reply_in_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return _is_bot_mentioned(update, context) or _is_reply_to_bot(update, context)
 
 
+def _extract_reply_context(update: Update) -> str | None:
+    """Extract text from a replied-to message, if any."""
+    message = update.effective_message
+    if message is None or message.reply_to_message is None:
+        return None
+    reply_msg = message.reply_to_message
+    # Prefer quote text if available (partial quote), fall back to full message
+    quote = getattr(reply_msg, "quote", None)
+    if quote and getattr(quote, "text", None):
+        return quote.text
+    return reply_msg.text  # may be None for non-text messages
+
+
 def _strip_bot_mention(text: str, bot_username: str) -> str:
     """Remove @botusername from text and clean up whitespace."""
     pattern = re.compile(rf"@{re.escape(bot_username)}\b", re.IGNORECASE)
@@ -126,7 +144,7 @@ def _is_managed_generated_media(path: str) -> bool:
     abs_path = os.path.abspath(path)
     return (
         os.path.dirname(abs_path) == temp_dir
-        and os.path.basename(abs_path).startswith("analyst_gen_")
+        and os.path.basename(abs_path).startswith(MANAGED_MEDIA_PREFIXES)
     )
 
 
@@ -134,6 +152,9 @@ def _cleanup_generated_media(path: str) -> None:
     if not _is_managed_generated_media(path):
         return
     try:
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+            return
         os.remove(path)
     except FileNotFoundError:
         return
@@ -395,6 +416,8 @@ def _make_message_handler(
 
         in_group = _is_group_chat(update)
 
+        reply_context = _extract_reply_context(update)
+
         if in_group:
             sender_name = _get_user_display_name(update)
             _append_group_buffer(context, thread_id, sender_name, text)
@@ -411,17 +434,23 @@ def _make_message_handler(
         else:
             group_context_str = ""
 
+        # Build enriched text for LLM (includes reply context)
+        if reply_context:
+            llm_text = f'回复消息：\n"{reply_context}"\n\n用户说：\n{text}'
+        else:
+            llm_text = text
+
         await update.effective_chat.send_action(ChatAction.TYPING)
         memory_context = build_sales_context(
             store=store,
             client_id=user_id,
             channel_id=channel_id,
             thread_id=thread_id,
-            query=text,
+            query=llm_text,
         )
         profile = store.get_client_profile(user_id)
         reply = await _chat_reply(
-            text,
+            llm_text,
             context,
             agent_loop,
             tools,
@@ -450,8 +479,8 @@ def _make_message_handler(
             await update.effective_message.reply_text(bubble)
 
         for media_item in reply.media:
-            if media_item.kind == "photo":
-                try:
+            try:
+                if media_item.kind == "photo":
                     await update.effective_chat.send_action(ChatAction.UPLOAD_PHOTO)
                     if media_item.url.startswith(("http://", "https://")):
                         await update.effective_message.reply_photo(
@@ -462,10 +491,25 @@ def _make_message_handler(
                             await update.effective_message.reply_photo(
                                 photo=f, caption=media_item.caption or None,
                             )
-                except Exception:
-                    logger.exception("Failed to send media item")
-                finally:
-                    _cleanup_generated_media(media_item.url)
+                elif media_item.kind == "video":
+                    await update.effective_chat.send_action(ChatAction.UPLOAD_VIDEO)
+                    if media_item.url.startswith(("http://", "https://")):
+                        await update.effective_message.reply_video(
+                            video=media_item.url,
+                            caption=media_item.caption or None,
+                        )
+                    elif os.path.isfile(media_item.url):
+                        with open(media_item.url, "rb") as f:
+                            await update.effective_message.reply_video(
+                                video=f,
+                                caption=media_item.caption or None,
+                                supports_streaming=True,
+                            )
+            except Exception:
+                logger.exception("Failed to send media item")
+            finally:
+                for cleanup_path in (media_item.url, *media_item.cleanup_paths):
+                    _cleanup_generated_media(cleanup_path)
 
         if in_group:
             _append_group_buffer(context, thread_id, "陈襄", reply.text, role="assistant")

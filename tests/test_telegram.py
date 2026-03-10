@@ -575,6 +575,46 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         update.effective_message.reply_photo.assert_called_once()
         self.assertFalse(Path(temp_path).exists())
 
+    async def test_private_chat_sends_and_cleans_up_generated_video(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+        from analyst.delivery.sales_chat import MediaItem, SalesChatReply
+        from analyst.memory import ClientProfileUpdate
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(text="hello", chat_type="private")
+        update.effective_message.reply_video = AsyncMock()
+
+        with tempfile.NamedTemporaryFile(prefix="analyst_live_video_", suffix=".mp4", delete=False) as video_tmp:
+            video_tmp.write(b"fake video bytes")
+            video_path = video_tmp.name
+        with tempfile.NamedTemporaryFile(prefix="analyst_live_photo_", suffix=".jpg", delete=False) as cover_tmp:
+            cover_tmp.write(b"fake cover bytes")
+            cover_path = cover_tmp.name
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
+             patch("analyst.delivery.bot.record_sales_interaction"), \
+             patch(
+                 "analyst.delivery.bot._chat_reply",
+                 new=AsyncMock(
+                     return_value=SalesChatReply(
+                         text="动态自拍来了",
+                         profile_update=ClientProfileUpdate(),
+                         media=[
+                             MediaItem(
+                                 kind="video",
+                                 url=video_path,
+                                 cleanup_paths=(cover_path,),
+                             )
+                         ],
+                     )
+                 ),
+             ):
+            await handler(update, context)
+
+        update.effective_message.reply_video.assert_called_once()
+        self.assertFalse(Path(video_path).exists())
+        self.assertFalse(Path(cover_path).exists())
+
     async def test_start_command_skipped_in_group(self) -> None:
         from analyst.delivery.bot import _make_start_handler
 
@@ -586,6 +626,79 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         # Should not reply in group
         update.effective_message.reply_text.assert_not_called()
         update.effective_chat.send_action.assert_not_called()
+
+    def test_extract_reply_context_no_reply(self) -> None:
+        from analyst.delivery.bot import _extract_reply_context
+
+        update, _ = self._make_update(text="hello")
+        # reply_to_message is None
+        self.assertIsNone(_extract_reply_context(update))
+
+    def test_extract_reply_context_with_text(self) -> None:
+        from analyst.delivery.bot import _extract_reply_context
+
+        update, _ = self._make_update(text="what do you mean?", reply_to_bot=True)
+        update.effective_message.reply_to_message.text = "the market is up 3%"
+        # No quote attribute
+        update.effective_message.reply_to_message.quote = None
+        result = _extract_reply_context(update)
+        self.assertEqual(result, "the market is up 3%")
+
+    def test_extract_reply_context_non_text_message(self) -> None:
+        from analyst.delivery.bot import _extract_reply_context
+
+        update, _ = self._make_update(text="nice pic", reply_to_bot=True)
+        update.effective_message.reply_to_message.text = None
+        update.effective_message.reply_to_message.quote = None
+        self.assertIsNone(_extract_reply_context(update))
+
+    def test_extract_reply_context_prefers_quote(self) -> None:
+        from analyst.delivery.bot import _extract_reply_context
+
+        update, _ = self._make_update(text="explain this part", reply_to_bot=True)
+        update.effective_message.reply_to_message.text = "full long message here"
+        quote = MagicMock()
+        quote.text = "partial quote"
+        update.effective_message.reply_to_message.quote = quote
+        self.assertEqual(_extract_reply_context(update), "partial quote")
+
+    async def test_reply_context_enriches_llm_text(self) -> None:
+        """When replying to a message, the LLM should receive enriched text."""
+        from analyst.delivery.bot import _make_message_handler
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(
+            text="can you elaborate?", chat_type="private", reply_to_bot=True,
+        )
+        update.effective_message.reply_to_message.text = "the market is up 3%"
+        update.effective_message.reply_to_message.quote = None
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value="") as mock_ctx, \
+             patch("analyst.delivery.bot.record_sales_interaction") as mock_record:
+            await handler(update, context)
+
+        # LLM should receive enriched text with reply context
+        call_kwargs = self.mock_loop.run.call_args.kwargs
+        self.assertIn("the market is up 3%", call_kwargs["user_prompt"])
+        self.assertIn("can you elaborate?", call_kwargs["user_prompt"])
+
+        # record_sales_interaction should use original text
+        mock_record.assert_called_once()
+        self.assertEqual(mock_record.call_args.kwargs["user_text"], "can you elaborate?")
+
+    async def test_no_reply_context_passes_original_text(self) -> None:
+        """Without a reply, the LLM text should be the original message."""
+        from analyst.delivery.bot import _make_message_handler
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(text="hello", chat_type="private")
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
+             patch("analyst.delivery.bot.record_sales_interaction"):
+            await handler(update, context)
+
+        call_kwargs = self.mock_loop.run.call_args.kwargs
+        self.assertEqual(call_kwargs["user_prompt"], "hello")
 
     async def test_group_agent_history_shared(self) -> None:
         """Group history uses chat_data (shared) not user_data (per-user)."""

@@ -15,6 +15,7 @@ from analyst.tools import (
     build_article_tool,
     build_country_indicators_tool,
     build_image_gen_tool,
+    build_optional_live_photo_tool,
     build_live_markets_tool,
     build_live_news_tool,
     build_portfolio_holdings_tool,
@@ -36,9 +37,11 @@ from .soul import GROUP_CHAT_ADDENDUM, SOUL_SYSTEM_PROMPT
 
 @dataclass(frozen=True)
 class MediaItem:
-    kind: str       # "photo"
+    kind: str       # "photo" or "video"
     url: str        # URL or local file path
     caption: str = ""
+    cleanup_paths: tuple[str, ...] = ()
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,9 @@ def build_sales_tools(
     kit.add(build_web_search_tool())
     kit.add(build_web_fetch_tool())
     kit.add(build_image_gen_tool())
+    live_photo_tool = build_optional_live_photo_tool()
+    if live_photo_tool is not None:
+        kit.add(live_photo_tool)
     kit.add(AgentTool(
         name="get_regime_summary",
         description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
@@ -207,10 +213,10 @@ def system_prompt_with_memory(
 
 
 def _extract_media(messages: list[ConversationMessage]) -> list[MediaItem]:
-    """Scan agent loop messages for image tool results and return MediaItems."""
+    """Scan agent loop messages for media tool results and return MediaItems."""
     media: list[MediaItem] = []
     for msg in messages:
-        if msg.role != "tool" or msg.tool_name != "generate_image":
+        if msg.role != "tool" or msg.tool_name not in {"generate_image", "generate_live_photo"}:
             continue
         try:
             data = json.loads(msg.content or "{}")
@@ -218,9 +224,36 @@ def _extract_media(messages: list[ConversationMessage]) -> list[MediaItem]:
             continue
         if data.get("status") != "ok":
             continue
+        cleanup_paths = tuple(
+            str(path)
+            for path in data.get("cleanup_paths", [])
+            if isinstance(path, str) and path
+        )
+        if msg.tool_name == "generate_live_photo" and data.get("fallback_kind") != "image":
+            ref = (
+                data.get("delivery_video_path")
+                or data.get("delivery_video_url")
+                or data.get("live_photo_video_path")
+                or data.get("live_photo_video_url", "")
+            )
+            if ref:
+                metadata = {
+                    key: str(data[key])
+                    for key in ("asset_id", "live_photo_image_path", "live_photo_video_path", "live_photo_manifest_path")
+                    if key in data and data[key]
+                }
+                media.append(
+                    MediaItem(
+                        kind="video",
+                        url=ref,
+                        cleanup_paths=cleanup_paths,
+                        metadata=metadata,
+                    )
+                )
+            continue
         ref = data.get("image_path") or data.get("image_url", "")
         if ref:
-            media.append(MediaItem(kind="photo", url=ref))
+            media.append(MediaItem(kind="photo", url=ref, cleanup_paths=cleanup_paths))
     return media
 
 

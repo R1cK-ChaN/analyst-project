@@ -3,10 +3,13 @@
 Status note on March 10, 2026:
 This document describes the target WS2 scope. For the current implemented WS2 slice, see `00-overview/Implementation_Status.md`.
 Current code includes a persona-driven Telegram agent bot (陈襄) deployed to a Contabo VPS with:
-- 10 live tools (6 data scrapers + web search + web fetch + live calendar + article fetch)
+- 12-13 live tools (6 data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation)
 - group chat support (observes silently, replies on @mention)
-- sales chat agent (`sales_chat.py`) with client profile management
-- conversation recording: all messages persisted to SQLite, 14 client profile dimensions extracted and accumulated
+- reply-to-message context: referenced message text extracted and included in LLM prompt, with partial quote support
+- sales chat agent (`sales_chat.py`) with client profile management and media extraction from tool results
+- image generation via OpenRouter (`generate_image` tool) with photo delivery alongside text bubbles
+- live-photo generation via SeedDance (`generate_live_photo` tool) with video delivery and managed temp-file cleanup
+- conversation recording: all messages persisted to SQLite, 17 client profile dimensions extracted and accumulated
 - emotional support and tool usage instructions in the persona prompt
 WeCom transport, push delivery, and account setup remain target-state work.
 

@@ -527,7 +527,7 @@ class TestNewsIngestionClient:
             title="Fed Raises Rates by 25bps in Surprise Move",
             link="https://example.com/fed-rates",
             summary="<p>The Federal Reserve raised interest rates.</p>",
-            published_parsed=(2026, 3, 7, 12, 0, 0, 5, 66, 0),
+            published_parsed=datetime.now(timezone.utc).timetuple(),
         )
 
         mock_parsed = SimpleNamespace(entries=[mock_entry])

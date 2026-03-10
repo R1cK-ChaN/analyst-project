@@ -9,10 +9,10 @@ Current status on March 10, 2026:
 - the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, TradingEconomics, yfinance, and macro-finance RSS news ingestion
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
 - the memory layer records all chat messages and extracts 17 client profile dimensions that accumulate across conversations, including emotional trend tracking, stress level monitoring, and personal facts memory (up to 20 facts with recency-refresh dedup)
-- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 12 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation); both LiveAnalystEngine and sales agent use it
+- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 13 tool builders (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation); both LiveAnalystEngine and the sales agent assemble from it
 - a round sub-agent layer is implemented for research, sales, and runtime-assisted content generation, with scoped memory, recursion prevention, and SQLite audit logging of each run
 - the portfolio package supports CSV import and live broker sync via an extensible adapter layer (IBKR, Longbridge 长桥, Tiger 老虎), with EWMA risk pipeline, VIX regime signals, and agent-actionable tools
-- the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention), full tool access, time-of-day awareness, absence awareness, typing simulation between multi-bubble messages, and image generation with photo delivery
+- the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention), full tool access, time-of-day awareness, absence awareness, typing simulation between multi-bubble messages, image generation with photo delivery, and optional motion-selfie/live-photo generation with Telegram video fallback
 - China-specific ingestion, live end-to-end provider verification, and WeCom delivery are still pending
 
 ## What's Inside
@@ -75,12 +75,12 @@ analyst-project/
 │   ├── env.py                      Multi-file .env resolver
 │   ├── information/                Local information layer using bundled demo data
 │   ├── runtime/                    Runtime and prompt profiles
-│   ├── tools/                      12 agent tools — ToolKit builder + live data scrapers + web search/fetch + calendar + portfolio sync + image gen
+│   ├── tools/                      13 agent tools — ToolKit builder + live data scrapers + web search/fetch + calendar + portfolio sync + image gen + live photo
 │   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
 │   ├── storage/                    SQLite store (market state, research artifacts, trader state, sales memory)
 │   ├── memory/                     Client profile extraction (17 dimensions), emotional memory, personal facts, context builders
 │   ├── ingestion/                  Source adapters (Investing.com, ForexFactory, TradingEconomics, FRED, Fed RSS, yfinance, RSS news)
-│   ├── delivery/                   Telegram bot (陈襄) with group chat, time awareness, typing simulation, image gen + photo delivery + sales chat agent + formatters
+│   ├── delivery/                   Telegram bot (陈襄) with group chat, time awareness, typing simulation, image gen + photo/video delivery + sales chat agent + formatters
 │   └── integration/                Message routing
 │
 ├── data/demo/                      ← LOCAL DEMO DATA
@@ -193,10 +193,10 @@ This validates the current standalone implementation:
 - bundled demo data + demo engine path
 - WS1 live engine: SQLite store, ingestion adapters, calendar/news query surface, agent loop, OpenRouter provider
 - sub-agent execution: scoped tag extraction uses word-boundary matching, memory retrieval respects punctuation boundaries, and both success and error runs are audited with preserved scope tags
-- unified tools layer: ToolKit composable builder + 12 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation)
+- unified tools layer: ToolKit composable builder + 13 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + live-photo generation)
 - portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime signals, agent-actionable tools
 - WeCom and Telegram formatters
-- Telegram agent bot with persona (陈襄), group chat support, 12 autonomous tools, and image generation with photo delivery
+- Telegram agent bot with persona (陈襄), group chat support, 13 autonomous tools, image generation with photo delivery, and motion-selfie/video delivery
 - sales chat agent with client profile tracking and conversation recording
 - integration router
 
