@@ -15,7 +15,18 @@ from analyst.ingestion import IngestionOrchestrator
 from analyst.memory import build_research_context
 from analyst.storage import NewsArticleRecord, SQLiteEngineStore, StoredEventRecord
 
-from analyst.tools import ToolKit, build_live_calendar_tool, build_web_fetch_tool, build_web_search_tool
+from analyst.tools import (
+    ToolKit,
+    build_article_tool,
+    build_country_indicators_tool,
+    build_live_calendar_tool,
+    build_live_markets_tool,
+    build_live_news_tool,
+    build_rate_expectations_tool,
+    build_reference_rates_tool,
+    build_web_fetch_tool,
+    build_web_search_tool,
+)
 
 from .agent_loop import AgentLoopConfig, PythonAgentLoop
 from .live_prompts import SYSTEM_PROMPT, briefing_prompt, flash_prompt, regime_prompt, wrap_prompt
@@ -344,6 +355,12 @@ class LiveAnalystEngine:
             handler=self._tool_search_news,
         ))
         kit.add(build_live_calendar_tool(self.store))
+        kit.add(build_live_news_tool())
+        kit.add(build_article_tool())
+        kit.add(build_live_markets_tool())
+        kit.add(build_country_indicators_tool())
+        kit.add(build_reference_rates_tool())
+        kit.add(build_rate_expectations_tool())
         return kit.to_list()
 
     def _loop(self) -> PythonAgentLoop:
