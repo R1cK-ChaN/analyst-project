@@ -2524,6 +2524,7 @@ class SQLiteEngineStore:
         thread_id: str,
         user_text: str,
         assistant_text: str,
+        tool_audit: list[dict[str, Any]],
         profile_updates: dict[str, Any],
     ) -> None:
         user_timestamp = utc_now().isoformat()
@@ -2587,7 +2588,11 @@ class SQLiteEngineStore:
                         thread_id,
                         "assistant",
                         assistant_text,
-                        json.dumps({"channel": channel}, ensure_ascii=False, sort_keys=True),
+                        json.dumps(
+                            {"channel": channel, "tool_audit": tool_audit},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
                         assistant_timestamp,
                     ),
                 ],
@@ -2618,7 +2623,11 @@ class SQLiteEngineStore:
                     "delivered",
                     assistant_timestamp,
                     "",
-                    json.dumps({"user_text": user_text}, ensure_ascii=False, sort_keys=True),
+                    json.dumps(
+                        {"user_text": user_text, "tool_audit": tool_audit},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
                     assistant_timestamp,
                 ),
             )

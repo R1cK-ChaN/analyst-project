@@ -12,8 +12,8 @@ from unittest.mock import Mock, patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.delivery.sales_chat import _extract_media
-from analyst.engine.live_types import ConversationMessage
+from analyst.delivery.sales_chat import _extract_media, _extract_tool_audit
+from analyst.engine.live_types import ConversationMessage, ToolCall
 from analyst.tools._image_gen import ImageGenConfig
 from analyst.tools._live_photo import (
     GeneratedVideo,
@@ -380,6 +380,41 @@ class TestSalesChatMediaExtraction(unittest.TestCase):
         self.assertEqual(media[0].kind, "video")
         self.assertEqual(media[0].url, "/tmp/analyst_live_video.mp4")
         self.assertEqual(media[0].cleanup_paths, ("/tmp/analyst_live_video.mp4",))
+
+    def test_extract_tool_audit_includes_arguments_and_result_metadata(self) -> None:
+        messages = [
+            ConversationMessage(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        call_id="call-1",
+                        name="generate_image",
+                        arguments={"prompt": "coffee on a cafe table"},
+                    )
+                ],
+            ),
+            ConversationMessage(
+                role="tool",
+                tool_call_id="call-1",
+                tool_name="generate_image",
+                content=json.dumps(
+                    {
+                        "status": "ok",
+                        "image_url": "https://example.com/coffee.jpg",
+                        "fallback_kind": "generic_image",
+                    }
+                ),
+            ),
+        ]
+
+        audit = _extract_tool_audit(messages)
+
+        self.assertEqual(len(audit), 1)
+        self.assertEqual(audit[0]["tool_name"], "generate_image")
+        self.assertEqual(audit[0]["arguments"]["prompt"], "coffee on a cafe table")
+        self.assertEqual(audit[0]["status"], "ok")
+        self.assertEqual(audit[0]["image_url"], "https://example.com/coffee.jpg")
 
 
 def _json_response(payload: dict[str, object]) -> Mock:

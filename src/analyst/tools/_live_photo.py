@@ -535,6 +535,7 @@ def build_live_photo_tool(
         description=(
             "Generate a short motion selfie or Live Photo-style asset. "
             "Use for live photo, motion selfie, or dynamic selfie requests. "
+            "Only use this when the user explicitly wants motion/live behavior; do not use it for normal still photos. "
             "When Apple Live Photo packaging is unavailable, this returns a motion video instead. "
             "The prompt should be in English and visually specific."
         ),

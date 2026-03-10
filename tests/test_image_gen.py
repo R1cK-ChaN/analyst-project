@@ -7,10 +7,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
+import requests
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.tools._image_gen import ImageGenConfig, ImageGenHandler
+from analyst.tools._image_gen import (
+    GeneratedImage,
+    ImageGenConfig,
+    ImageGenHandler,
+    ImageGenerationError,
+    SeedreamImageClient,
+)
 from analyst.tools._request_context import RequestImageInput, bind_request_image
 
 
@@ -114,6 +122,35 @@ class TestImageGenHandler(unittest.TestCase):
         self.assertEqual(result["scene_key"], "trading_desk")
         selfie_service.generate_selfie.assert_called_once()
 
+    def test_selfie_timeout_falls_back_to_generic_image(self) -> None:
+        image_client = Mock()
+        image_client.generate_image.return_value = GeneratedImage(image_url="https://example.com/fallback.jpg")
+        selfie_service = Mock()
+        selfie_service.is_selfie_request.return_value = True
+        selfie_service.generate_selfie.side_effect = ImageGenerationError("timed out", retryable=True)
+        selfie_service.build_prompt_draft.return_value = Mock(
+            fallback_prompt="realistic smartphone photo of coffee on a cafe table",
+            negative_prompt="different person",
+            scene_key="coffee_shop",
+            scene_prompt="holding a coffee cup near the camera",
+        )
+
+        handler = ImageGenHandler(
+            self.config,
+            image_client=image_client,
+            selfie_service=selfie_service,
+        )
+        result = handler({"mode": "selfie", "scene_key": "coffee_shop"})
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["fallback_kind"], "generic_image")
+        self.assertEqual(result["mode"], "selfie")
+        self.assertEqual(result["scene_key"], "coffee_shop")
+        image_client.generate_image.assert_called_once_with(
+            prompt="realistic smartphone photo of coffee on a cafe table",
+            negative_prompt="different person",
+        )
+
     def test_generic_mode_can_use_attached_image_context(self) -> None:
         image_client = Mock()
         image_client.generate_image.return_value = Mock(
@@ -143,6 +180,32 @@ class TestImageGenHandler(unittest.TestCase):
             prompt="make it cinematic",
             image_input="data:image/jpeg;base64,abc",
         )
+
+
+class TestSeedreamImageClient(unittest.TestCase):
+    def test_retries_transient_timeout_before_success(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {"data": [{"url": "https://example.com/generated.jpeg"}]}
+        session = Mock()
+        session.post.side_effect = [
+            requests.ReadTimeout("timed out"),
+            response,
+        ]
+        client = SeedreamImageClient(
+            ImageGenConfig(
+                api_key="test-key",
+                base_url="https://ark.example/api/v3",
+                model="doubao-seedream-5-0-260128",
+                max_retries=1,
+            ),
+            session=session,
+            sleep_fn=lambda _: None,
+        )
+
+        result = client.generate_image(prompt="generate a chart")
+
+        self.assertEqual(result.image_url, "https://example.com/generated.jpeg")
+        self.assertEqual(session.post.call_count, 2)
 
 
 if __name__ == "__main__":

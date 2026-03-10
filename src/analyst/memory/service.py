@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
+from typing import Any
 
 from analyst.storage import (
     ClientProfileRecord,
@@ -152,6 +153,7 @@ def record_sales_interaction(
     user_text: str,
     assistant_text: str,
     assistant_profile_update: ClientProfileUpdate | None = None,
+    tool_audit: list[dict[str, Any]] | None = None,
 ) -> None:
     update = merge_client_profile_updates(
         extract_client_profile_update(user_text),
@@ -163,6 +165,7 @@ def record_sales_interaction(
         thread_id=thread_id,
         user_text=user_text,
         assistant_text=assistant_text,
+        tool_audit=tool_audit or [],
         profile_updates={
             "preferred_language": update.preferred_language,
             "watchlist_topics": update.watchlist_topics,

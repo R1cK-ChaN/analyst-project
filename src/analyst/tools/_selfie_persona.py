@@ -194,6 +194,16 @@ class GeneratedSelfie:
     motion_prompt: str
 
 
+@dataclass(frozen=True)
+class SelfiePromptDraft:
+    prompt_used: str
+    fallback_prompt: str
+    negative_prompt: str
+    scene_key: str
+    scene_prompt: str
+    motion_prompt: str
+
+
 class SelfiePromptService:
     def __init__(self, config: SelfiePromptConfig | None = None) -> None:
         self._config = config or SelfiePromptConfig.from_env()
@@ -208,11 +218,10 @@ class SelfiePromptService:
 
     def generate_selfie(self, arguments: dict[str, Any], image_client: Any) -> GeneratedSelfie:
         state = self._ensure_state(image_client)
-        scene_key, scene_prompt, motion_prompt = self._resolve_scene(arguments)
-        prompt = self._assemble_prompt(scene_prompt)
+        draft = self.build_prompt_draft(arguments)
         generated = image_client.generate_image(
-            prompt=prompt,
-            negative_prompt=self.negative_prompt_text,
+            prompt=draft.prompt_used,
+            negative_prompt=draft.negative_prompt,
             image_input=self._build_reference_image_data_uri(state),
         )
         image_path = image_client.materialize_image(generated, self._next_selfie_path())
@@ -227,31 +236,45 @@ class SelfiePromptService:
             negative_prompt=list(state.negative_prompt),
             created_at=state.created_at,
             updated_at=_now_iso(),
-            last_prompt_used=prompt,
-            last_scene_key=scene_key,
-            last_scene_prompt=scene_prompt,
+            last_prompt_used=draft.prompt_used,
+            last_scene_key=draft.scene_key,
+            last_scene_prompt=draft.scene_prompt,
         )
         self._save_state(updated_state)
         return GeneratedSelfie(
             image_path=image_path,
             image_data_uri=self._path_to_data_uri(Path(image_path)),
-            prompt_used=prompt,
-            negative_prompt=self.negative_prompt_text,
-            scene_key=scene_key,
-            scene_prompt=scene_prompt,
-            motion_prompt=motion_prompt,
+            prompt_used=draft.prompt_used,
+            negative_prompt=draft.negative_prompt,
+            scene_key=draft.scene_key,
+            scene_prompt=draft.scene_prompt,
+            motion_prompt=draft.motion_prompt,
         )
 
     @property
     def negative_prompt_text(self) -> str:
         return "\n".join(self._config.negative_prompt)
 
+    def build_prompt_draft(self, arguments: dict[str, Any]) -> SelfiePromptDraft:
+        scene_key, scene_prompt, motion_prompt = self._resolve_scene(arguments)
+        return SelfiePromptDraft(
+            prompt_used=self._assemble_prompt(scene_prompt, include_character_dna=True),
+            fallback_prompt=self._assemble_prompt(scene_prompt, include_character_dna=False),
+            negative_prompt=self.negative_prompt_text,
+            scene_key=scene_key,
+            scene_prompt=scene_prompt,
+            motion_prompt=motion_prompt,
+        )
+
     def _ensure_state(self, image_client: Any) -> PersonaSelfieState:
         state = self._load_state()
         if state is not None:
             return state
 
-        bootstrap_prompt = self._assemble_prompt(self._config.neutral_scene.scene_prompt)
+        bootstrap_prompt = self._assemble_prompt(
+            self._config.neutral_scene.scene_prompt,
+            include_character_dna=True,
+        )
         bootstrap_paths: list[str] = []
         max_attempts = self._config.bootstrap_count * 2
         attempts = 0
@@ -318,12 +341,16 @@ class SelfiePromptService:
             motion_prompt = f"{motion_prompt}\n{free_text}"
         return scene_key, scene_prompt, motion_prompt
 
-    def _assemble_prompt(self, scene_prompt: str) -> str:
-        blocks = (
-            "\n".join(self._config.character_dna),
-            "\n".join(self._config.camera_style),
-            scene_prompt,
-            "\n".join(self._config.quality_modifiers),
+    def _assemble_prompt(self, scene_prompt: str, *, include_character_dna: bool) -> str:
+        blocks = []
+        if include_character_dna:
+            blocks.append("\n".join(self._config.character_dna))
+        blocks.extend(
+            (
+                "\n".join(self._config.camera_style),
+                scene_prompt,
+                "\n".join(self._config.quality_modifiers),
+            )
         )
         return "\n\n".join(block.strip() for block in blocks if block.strip())
 

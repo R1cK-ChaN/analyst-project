@@ -50,6 +50,7 @@ class SalesChatReply:
     text: str
     profile_update: ClientProfileUpdate
     media: list[MediaItem] = field(default_factory=list)
+    tool_audit: list[dict[str, Any]] = field(default_factory=list)
 
 
 def build_sales_tools(
@@ -258,6 +259,53 @@ def _extract_media(messages: list[ConversationMessage]) -> list[MediaItem]:
     return media
 
 
+def _extract_tool_audit(messages: list[ConversationMessage]) -> list[dict[str, Any]]:
+    tool_calls: dict[str, dict[str, Any]] = {}
+    audit: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.role == "assistant" and msg.tool_calls:
+            for tool_call in msg.tool_calls:
+                tool_calls[tool_call.call_id] = {
+                    "tool_name": tool_call.name,
+                    "arguments": tool_call.arguments,
+                }
+            continue
+        if msg.role != "tool":
+            continue
+        call_meta = tool_calls.get(msg.tool_call_id or "", {})
+        tool_name = msg.tool_name or str(call_meta.get("tool_name", ""))
+        payload: dict[str, Any] = {}
+        try:
+            raw_payload = json.loads(msg.content or "{}")
+            if isinstance(raw_payload, dict):
+                payload = raw_payload
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+        entry: dict[str, Any] = {
+            "tool_name": tool_name,
+            "tool_call_id": msg.tool_call_id or "",
+            "arguments": call_meta.get("arguments", {}),
+            "status": payload.get("status", ""),
+        }
+        for key in (
+            "fallback_kind",
+            "warning",
+            "error",
+            "image_path",
+            "image_url",
+            "delivery_video_path",
+            "delivery_video_url",
+            "mode",
+            "scene_key",
+            "scene_prompt",
+        ):
+            value = payload.get(key)
+            if value:
+                entry[key] = value
+        audit.append(entry)
+    return audit
+
+
 SPLIT_MARKER = "[SPLIT]"
 
 
@@ -319,4 +367,10 @@ def generate_sales_reply(
     if not response_text:
         response_text = "嗯"
     media = _extract_media(result.messages)
-    return SalesChatReply(text=response_text, profile_update=profile_update, media=media)
+    tool_audit = _extract_tool_audit(result.messages)
+    return SalesChatReply(
+        text=response_text,
+        profile_update=profile_update,
+        media=media,
+        tool_audit=tool_audit,
+    )

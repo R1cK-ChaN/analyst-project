@@ -6,6 +6,7 @@ import json
 import logging
 import shutil
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,12 @@ from ._selfie_persona import SelfiePromptService
 logger = logging.getLogger(__name__)
 
 
+class ImageGenerationError(RuntimeError):
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
 @dataclass(frozen=True)
 class ImageGenConfig:
     api_key: str
@@ -30,12 +37,18 @@ class ImageGenConfig:
     timeout_seconds: int = 120
     image_size: str = "2048x2048"
     response_format: str = "url"
+    max_retries: int = 2
+    retry_backoff_seconds: float = 1.5
 
     @classmethod
     def from_env(cls) -> ImageGenConfig:
         api_key = get_env_value("VOLCENGINE_API_KEY", "ARK_API_KEY", default="")
         if not api_key:
             raise RuntimeError("VOLCENGINE_API_KEY or ARK_API_KEY is required for image generation.")
+        try:
+            max_retries = max(0, int(get_env_value("ANALYST_IMAGE_GEN_MAX_RETRIES", default="2")))
+        except ValueError:
+            max_retries = 2
         return cls(
             api_key=api_key,
             base_url=get_env_value(
@@ -46,6 +59,7 @@ class ImageGenConfig:
             model=get_env_value("ANALYST_IMAGE_GEN_MODEL", default="doubao-seedream-5-0-260128"),
             image_size=get_env_value("ANALYST_IMAGE_GEN_SIZE", default="2048x2048"),
             response_format=get_env_value("ANALYST_IMAGE_GEN_RESPONSE_FORMAT", default="url"),
+            max_retries=max_retries,
         )
 
 
@@ -58,9 +72,16 @@ class GeneratedImage:
 class SeedreamImageClient:
     """Low-level Volcengine Ark image-generation client."""
 
-    def __init__(self, config: ImageGenConfig, session: requests.Session | None = None) -> None:
+    def __init__(
+        self,
+        config: ImageGenConfig,
+        session: requests.Session | None = None,
+        *,
+        sleep_fn: Any = time.sleep,
+    ) -> None:
         self._config = config
         self._session = session or requests.Session()
+        self._sleep = sleep_fn
 
     def generate_image(
         self,
@@ -84,25 +105,14 @@ class SeedreamImageClient:
         if image_input:
             payload["image"] = image_input
 
-        try:
-            response = self._session.post(
-                f"{self._config.base_url}/images/generations",
-                headers=headers,
-                data=json.dumps(payload),
-                timeout=self._config.timeout_seconds,
-            )
-        except requests.RequestException as exc:
-            raise RuntimeError(str(exc)) from exc
-
-        if response.status_code >= 400:
-            raise RuntimeError(f"API error {response.status_code}")
+        response = self._post_with_retries(headers=headers, payload=payload)
 
         try:
             body = response.json()
         except ValueError as exc:
-            raise RuntimeError("Invalid API response") from exc
+            raise ImageGenerationError("Invalid API response") from exc
         if not isinstance(body, dict):
-            raise RuntimeError("Invalid API response")
+            raise ImageGenerationError("Invalid API response")
 
         for item in self._iter_image_items(body):
             if not isinstance(item, dict):
@@ -117,7 +127,7 @@ class SeedreamImageClient:
                     if image_path:
                         return GeneratedImage(image_path=image_path)
 
-        raise RuntimeError("No image found in model response")
+        raise ImageGenerationError("No image found in model response")
 
     def materialize_image(self, generated: GeneratedImage, target_path: Path) -> str:
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,16 +139,42 @@ class SeedreamImageClient:
         if generated.image_url:
             self._download_image(generated.image_url, target_path)
             return str(target_path)
-        raise RuntimeError("No image source is available to materialize.")
+        raise ImageGenerationError("No image source is available to materialize.")
 
     def _download_image(self, image_url: str, target_path: Path) -> None:
-        try:
-            response = self._session.get(image_url, timeout=self._config.timeout_seconds)
-        except requests.RequestException as exc:
-            raise RuntimeError(str(exc)) from exc
-        if response.status_code >= 400:
-            raise RuntimeError(f"Image download failed with status {response.status_code}.")
-        target_path.write_bytes(response.content)
+        max_attempts = self._config.max_retries + 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = self._session.get(image_url, timeout=self._config.timeout_seconds)
+            except requests.RequestException as exc:
+                retryable = self._is_retryable_exception(exc)
+                if retryable and attempt < max_attempts:
+                    logger.warning(
+                        "Image download attempt %s/%s failed transiently: %s",
+                        attempt,
+                        max_attempts,
+                        exc,
+                    )
+                    self._sleep(self._config.retry_backoff_seconds * attempt)
+                    continue
+                raise ImageGenerationError(str(exc), retryable=retryable) from exc
+            if response.status_code < 400:
+                target_path.write_bytes(response.content)
+                return
+            retryable = self._is_retryable_status(response.status_code)
+            if retryable and attempt < max_attempts:
+                logger.warning(
+                    "Image download attempt %s/%s returned %s; retrying.",
+                    attempt,
+                    max_attempts,
+                    response.status_code,
+                )
+                self._sleep(self._config.retry_backoff_seconds * attempt)
+                continue
+            raise ImageGenerationError(
+                f"Image download failed with status {response.status_code}.",
+                retryable=retryable,
+            )
 
     def _iter_image_items(self, body: dict[str, Any]) -> list[Any]:
         candidates = body.get("data")
@@ -183,6 +219,56 @@ class SeedreamImageClient:
         except (binascii.Error, OSError, ValueError):
             logger.warning("Failed to decode or save base64 image payload")
             return None
+
+    def _post_with_retries(self, *, headers: dict[str, str], payload: dict[str, Any]) -> requests.Response:
+        max_attempts = self._config.max_retries + 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = self._session.post(
+                    f"{self._config.base_url}/images/generations",
+                    headers=headers,
+                    data=json.dumps(payload),
+                    timeout=self._config.timeout_seconds,
+                )
+            except requests.RequestException as exc:
+                retryable = self._is_retryable_exception(exc)
+                if retryable and attempt < max_attempts:
+                    logger.warning(
+                        "Image generation attempt %s/%s failed transiently: %s",
+                        attempt,
+                        max_attempts,
+                        exc,
+                    )
+                    self._sleep(self._config.retry_backoff_seconds * attempt)
+                    continue
+                raise ImageGenerationError(str(exc), retryable=retryable) from exc
+            if response.status_code < 400:
+                return response
+            retryable = self._is_retryable_status(response.status_code)
+            if retryable and attempt < max_attempts:
+                logger.warning(
+                    "Image generation attempt %s/%s returned %s; retrying.",
+                    attempt,
+                    max_attempts,
+                    response.status_code,
+                )
+                self._sleep(self._config.retry_backoff_seconds * attempt)
+                continue
+            raise ImageGenerationError(
+                f"API error {response.status_code}",
+                retryable=retryable,
+            )
+        raise ImageGenerationError("Image generation failed without a response.")
+
+    def _is_retryable_exception(self, exc: requests.RequestException) -> bool:
+        message = str(exc).lower()
+        return any(
+            token in message
+            for token in ("timed out", "timeout", "connection aborted", "temporarily unavailable")
+        )
+
+    def _is_retryable_status(self, status_code: int) -> bool:
+        return status_code == 429 or status_code >= 500
 
 
 class ImageGenHandler:
@@ -232,6 +318,9 @@ class ImageGenHandler:
             generated = self._selfie_service.generate_selfie(arguments, self._image_client)
         except RuntimeError as exc:
             logger.warning("Selfie image generation failed: %s", exc)
+            fallback = self._fallback_selfie_generation(arguments, exc)
+            if fallback is not None:
+                return fallback
             return {"status": "error", "error": str(exc)}
 
         result = {
@@ -245,6 +334,41 @@ class ImageGenHandler:
         result["scene_prompt"] = generated.scene_prompt
         result["negative_prompt_used"] = generated.negative_prompt
         return result
+
+    def _fallback_selfie_generation(
+        self,
+        arguments: dict[str, Any],
+        exc: RuntimeError,
+    ) -> dict[str, Any] | None:
+        if not self._is_retryable_error(exc):
+            return None
+        draft = self._selfie_service.build_prompt_draft(arguments)
+        try:
+            generated = self._image_client.generate_image(
+                prompt=draft.fallback_prompt,
+                negative_prompt=draft.negative_prompt,
+            )
+        except RuntimeError as fallback_exc:
+            logger.warning("Selfie fallback image generation failed: %s", fallback_exc)
+            return None
+
+        result = self._result_from_generated_image(generated, prompt=draft.fallback_prompt)
+        if result.get("status") != "ok":
+            return None
+        result["fallback_kind"] = "generic_image"
+        result["warning"] = str(exc)
+        result["mode"] = "selfie"
+        if draft.scene_key:
+            result["scene_key"] = draft.scene_key
+        result["scene_prompt"] = draft.scene_prompt
+        result["negative_prompt_used"] = draft.negative_prompt
+        return result
+
+    def _is_retryable_error(self, exc: RuntimeError) -> bool:
+        if isinstance(exc, ImageGenerationError):
+            return exc.retryable
+        message = str(exc).lower()
+        return any(token in message for token in ("timed out", "timeout", "connection aborted"))
 
     def _result_from_generated_image(self, generated: GeneratedImage, *, prompt: str) -> dict[str, Any]:
         if generated.image_path:
@@ -266,7 +390,8 @@ def build_image_gen_tool(
         description=(
             "Generate an image from a text description. Use mode='selfie' for persona selfies so the backend "
             "can enforce consistent Seedream character prompts with scene_key / scene_prompt. "
-            "Use generic prompt-only mode for non-selfie images."
+            "Only use mode='selfie' when the user explicitly wants to see the persona/agent in frame. "
+            "For objects, food, drinks, desks, rooms, scenery, or environment shots, use generic prompt-only mode."
         ),
         parameters={
             "type": "object",
@@ -280,11 +405,11 @@ def build_image_gen_tool(
                 },
                 "mode": {
                     "type": "string",
-                    "description": "Set to 'selfie' for persona-consistent selfies.",
+                    "description": "Set to 'selfie' only when the user explicitly wants the persona/agent in frame.",
                 },
                 "scene_key": {
                     "type": "string",
-                    "description": "Optional shared selfie-scene key, e.g. trading_desk or coffee_shop.",
+                    "description": "Optional shared selfie-scene key, only for mode='selfie', e.g. trading_desk or coffee_shop.",
                 },
                 "scene_prompt": {
                     "type": "string",

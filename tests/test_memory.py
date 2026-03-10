@@ -114,6 +114,42 @@ class MemoryPipelineTest(unittest.TestCase):
             self.assertIn("CPI 高于预期", context_a)
             self.assertNotIn("CPI 高于预期", context_b)
 
+    def test_tool_audit_is_persisted_on_assistant_message_and_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            record_sales_interaction(
+                store=store,
+                client_id="client-a",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="看看咖啡",
+                assistant_text="图来了",
+                tool_audit=[
+                    {
+                        "tool_name": "generate_image",
+                        "arguments": {"prompt": "coffee on a cafe table"},
+                        "status": "ok",
+                        "image_url": "https://example.com/coffee.jpg",
+                    }
+                ],
+            )
+
+            messages = store.list_conversation_messages(
+                client_id="client-a",
+                channel="telegram:1",
+                thread_id="main",
+            )
+            deliveries = store.list_recent_deliveries(
+                client_id="client-a",
+                channel="telegram:1",
+                thread_id="main",
+            )
+
+            self.assertEqual(messages[-1].role, "assistant")
+            self.assertEqual(messages[-1].metadata["tool_audit"][0]["tool_name"], "generate_image")
+            self.assertEqual(deliveries[0].metadata["tool_audit"][0]["status"], "ok")
+
     def test_record_sales_interaction_updates_structured_client_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")

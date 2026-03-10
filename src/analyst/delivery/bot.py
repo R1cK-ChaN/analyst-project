@@ -400,6 +400,9 @@ async def _chat_reply(
         response_text = "抱歉，我这边出了点小状况，稍后再试试？"
         profile_update = ClientProfileUpdate()
         media = []
+        tool_audit = []
+    else:
+        tool_audit = result.tool_audit
 
     if len(response_text) > MAX_TELEGRAM_LENGTH:
         response_text = response_text[: MAX_TELEGRAM_LENGTH - 3] + "..."
@@ -413,7 +416,12 @@ async def _chat_reply(
     )
     _append_history(context, "assistant", response_text, is_group=is_group, thread_id=thread_id)
 
-    return SalesChatReply(text=response_text, profile_update=profile_update, media=media)
+    return SalesChatReply(
+        text=response_text,
+        profile_update=profile_update,
+        media=media,
+        tool_audit=tool_audit,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -598,6 +606,7 @@ def _make_message_handler(
             user_text=history_user_text,
             assistant_text=reply.text,
             assistant_profile_update=reply.profile_update,
+            tool_audit=reply.tool_audit,
         )
         from analyst.delivery.sales_chat import split_into_bubbles
         bubbles = split_into_bubbles(reply.text)

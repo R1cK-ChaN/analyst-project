@@ -290,6 +290,7 @@ def _run_sales_chat(args: argparse.Namespace) -> int:
             user_text=user_text,
             assistant_text=reply.text,
             assistant_profile_update=reply.profile_update,
+            tool_audit=reply.tool_audit,
         )
         bubbles = split_into_bubbles(reply.text)
         for bubble in bubbles:
