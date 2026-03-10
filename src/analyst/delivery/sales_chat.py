@@ -13,8 +13,11 @@ from analyst.tools import (
     build_country_indicators_tool,
     build_live_markets_tool,
     build_live_news_tool,
+    build_portfolio_holdings_tool,
+    build_portfolio_risk_tool,
     build_rate_expectations_tool,
     build_reference_rates_tool,
+    build_vix_regime_tool,
     build_web_fetch_tool,
     build_web_search_tool,
 )
@@ -32,7 +35,7 @@ class SalesChatReply:
     profile_update: ClientProfileUpdate
 
 
-def build_sales_tools(engine: OpenRouterAnalystEngine) -> list[AgentTool]:
+def build_sales_tools(engine: OpenRouterAnalystEngine, store: SQLiteEngineStore | None = None) -> list[AgentTool]:
     def get_regime(arguments: dict[str, object]) -> str:
         note = engine.get_regime_summary()
         return note.body_markdown
@@ -78,6 +81,10 @@ def build_sales_tools(engine: OpenRouterAnalystEngine) -> list[AgentTool]:
     kit.add(build_country_indicators_tool())
     kit.add(build_reference_rates_tool())
     kit.add(build_rate_expectations_tool())
+    if store is not None:
+        kit.add(build_portfolio_risk_tool(store))
+        kit.add(build_portfolio_holdings_tool(store))
+    kit.add(build_vix_regime_tool())
     return kit.to_list()
 
 
@@ -112,8 +119,8 @@ def build_sales_services(
         provider=provider,
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
     )
-    tools = build_sales_tools(engine)
     store = SQLiteEngineStore(db_path=db_path)
+    tools = build_sales_tools(engine, store)
     return agent_loop, tools, store
 
 

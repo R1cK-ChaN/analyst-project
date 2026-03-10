@@ -22,8 +22,11 @@ from analyst.tools import (
     build_live_calendar_tool,
     build_live_markets_tool,
     build_live_news_tool,
+    build_portfolio_holdings_tool,
+    build_portfolio_risk_tool,
     build_rate_expectations_tool,
     build_reference_rates_tool,
+    build_vix_regime_tool,
     build_web_fetch_tool,
     build_web_search_tool,
 )
@@ -361,6 +364,9 @@ class LiveAnalystEngine:
         kit.add(build_country_indicators_tool())
         kit.add(build_reference_rates_tool())
         kit.add(build_rate_expectations_tool())
+        kit.add(build_portfolio_risk_tool(self.store))
+        kit.add(build_portfolio_holdings_tool(self.store))
+        kit.add(build_vix_regime_tool())
         return kit.to_list()
 
     def _loop(self) -> PythonAgentLoop:

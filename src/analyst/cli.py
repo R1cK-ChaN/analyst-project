@@ -72,6 +72,16 @@ def build_parser() -> argparse.ArgumentParser:
     news_feeds_parser = subparsers.add_parser("news-feeds")
     news_feeds_parser.add_argument("--category", default=None)
 
+    portfolio_import = subparsers.add_parser("portfolio-import")
+    portfolio_import.add_argument("csv_path", help="Path to CSV file with holdings")
+    portfolio_import.add_argument("--portfolio-id", default="default")
+    portfolio_import.add_argument("--db-path", default=None)
+
+    portfolio_risk = subparsers.add_parser("portfolio-risk")
+    portfolio_risk.add_argument("--portfolio-id", default="default")
+    portfolio_risk.add_argument("--json", action="store_true", dest="as_json")
+    portfolio_risk.add_argument("--db-path", default=None)
+
     sales_chat = subparsers.add_parser("sales-chat")
     sales_chat.add_argument("--client-id", default="cli-demo")
     sales_chat.add_argument("--channel-id", default="cli:local")
@@ -110,6 +120,64 @@ def format_news_headline(article: NewsArticleRecord) -> str:
         f"{dt}  {country:>2} [{impact:<8}]  [{article.source_feed:<20}]  "
         f"{article.title}{subject}"
     )
+
+
+def _run_portfolio_import(args: argparse.Namespace) -> int:
+    from analyst.portfolio import load_holdings_from_csv, validate_holdings
+    from analyst.storage import SQLiteEngineStore
+
+    db_path = Path(args.db_path) if args.db_path else None
+    store = SQLiteEngineStore(db_path=db_path)
+    holdings = load_holdings_from_csv(args.csv_path)
+    warnings = validate_holdings(holdings)
+    for w in warnings:
+        print(f"WARNING: {w}")
+    store.replace_portfolio_holdings(
+        [
+            {
+                "symbol": h.symbol,
+                "name": h.name,
+                "asset_class": h.asset_class,
+                "weight": h.weight,
+                "notional": h.notional,
+            }
+            for h in holdings
+        ],
+        portfolio_id=args.portfolio_id,
+    )
+    print(f"Imported {len(holdings)} holdings into portfolio '{args.portfolio_id}'.")
+    for h in holdings:
+        print(f"  {h.symbol:>8}  {h.weight:>6.1%}  ${h.notional:>10,.0f}  {h.name}")
+    return 0
+
+
+def _run_portfolio_risk(args: argparse.Namespace) -> int:
+    from analyst.portfolio import compute_portfolio_snapshot, load_portfolio_config
+    from analyst.storage import SQLiteEngineStore
+
+    db_path = Path(args.db_path) if args.db_path else None
+    store = SQLiteEngineStore(db_path=db_path)
+    config = load_portfolio_config()
+    snapshot = compute_portfolio_snapshot(store, args.portfolio_id, config)
+    if args.as_json:
+        print(json.dumps(snapshot.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"Portfolio Risk Snapshot  ({snapshot.as_of.strftime('%Y-%m-%d %H:%M UTC')})")
+        print(f"  Annualized Vol : {snapshot.portfolio_vol_annualized:.1%}")
+        print(f"  Daily Vol      : {snapshot.portfolio_vol_daily:.4f}")
+        print(f"  Target Vol     : {snapshot.target_vol:.1%}")
+        print(f"  Scale Factor   : {snapshot.scale_factor:.2f}")
+        print(f"  VIX            : {snapshot.vix_level:.1f}  (P{snapshot.vix_percentile:.0f}, {snapshot.vix_regime})")
+        print()
+        print("  Risk Contributions:")
+        for rc in snapshot.risk_contributions:
+            print(f"    {rc.symbol:>8}  weight {rc.weight:>5.0%}  risk {rc.marginal_contribution:>5.0%}  standalone {rc.standalone_vol:>5.1%}")
+        if snapshot.alerts:
+            print()
+            print("  Alerts:")
+            for a in snapshot.alerts:
+                print(f"    [{a.severity.upper():>7}] {a.message}")
+    return 0
 
 
 def _print_sales_profile(store, client_id: str) -> None:
@@ -308,6 +376,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{feed.category:<16}] {feed.name}")
         print(f"\nTotal: {len(feeds)} feeds")
         return 0
+    if args.command == "portfolio-import":
+        return _run_portfolio_import(args)
+    if args.command == "portfolio-risk":
+        return _run_portfolio_risk(args)
     if args.command == "sales-chat":
         return _run_sales_chat(args)
 
