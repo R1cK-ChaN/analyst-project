@@ -8,6 +8,7 @@ import numpy as np
 from analyst.storage.sqlite import SQLiteEngineStore
 
 from .config import load_portfolio_config
+from .brokers import BrokerSyncResult, create_broker_adapter
 from .holdings import load_holdings_from_csv, validate_holdings
 from .market_data import fetch_current_vix, fetch_price_history, fetch_vix_history
 from .signals import generate_alerts, scaling_signal, target_volatility, vix_percentile, vix_regime
@@ -18,11 +19,13 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "Alert",
+    "BrokerSyncResult",
     "PortfolioConfig",
     "PortfolioHolding",
     "RiskContribution",
     "VolatilitySnapshot",
     "compute_portfolio_snapshot",
+    "create_broker_adapter",
     "load_holdings_from_csv",
     "load_portfolio_config",
     "validate_holdings",

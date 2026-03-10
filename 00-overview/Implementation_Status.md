@@ -1,6 +1,6 @@
 # Analyst — Implementation Status
 
-**Status date:** March 10, 2026 (updated after sales agent tools, group chat support, and server deployment)
+**Status date:** March 10, 2026 (updated after broker adapter layer, portfolio sync tool, and multi-broker support)
 
 This document is the current implementation snapshot for `analyst-project/`.
 
@@ -95,9 +95,28 @@ Implemented in `src/analyst/engine/`:
 - local agent tools for today's calendar, indicator release trends, surprise summaries, recent news, and news search
 - tool assembly via `ToolKit` from `analyst.tools` — domain tools + universal tools (web search) composed per-agent
 
+### Portfolio layer
+
+Implemented in `src/analyst/portfolio/`:
+
+- `types.py`: frozen dataclasses — `PortfolioHolding`, `PortfolioConfig`, `RiskContribution`, `Alert`, `VolatilitySnapshot` (all `Serializable`)
+- `holdings.py`: CSV import (`load_holdings_from_csv`) and validation (`validate_holdings` — weight sum, duplicates, negatives)
+- `config.py`: portfolio config loading from env vars with sensible defaults
+- `market_data.py`: yfinance-backed price history and VIX fetching
+- `volatility.py`: EWMA covariance, portfolio volatility, risk contributions
+- `signals.py`: VIX percentile/regime classification, target vol, scaling signal, alert generation
+- `__init__.py`: `compute_portfolio_snapshot()` orchestrator — loads holdings, fetches prices, computes risk, persists to store
+- **broker adapter layer** (`brokers/`):
+  - `_base.py`: `BrokerAdapter` protocol, `BrokerSyncResult` dataclass, error hierarchy (`BrokerError` → `BrokerAuthError` / `BrokerConnectionError`)
+  - `_ibkr.py`: IBKR Client Portal REST adapter — session validation (`POST /sso/validate`), account discovery (`GET /portfolio/accounts`), position fetch (`GET /portfolio/{acct}/positions/0`) with asset class mapping, zero-position skipping, short position abs(), mixed currency warnings, symbol fallback from `contractDesc`
+  - `_longbridge.py`: Longbridge (长桥) OpenAPI adapter — HMAC-SHA256 request signing (stdlib only, no new deps), `GET /v1/asset/stock` position fetch, symbol normalization (`AAPL.US`→`AAPL`, `700.HK`→`0700.HK`, `600519.SH`→`600519.SS`), cost-basis fallback with warning when market value unavailable
+  - `_tiger.py`: Tiger Brokers (老虎) Open Platform adapter — RSA-SHA256 request signing (lazy `cryptography` import with clear error if not installed), JSON-RPC gateway calls, private key from PEM file or inline content, `_SEC_TYPE_MAP` for security type mapping
+  - `__init__.py`: `create_broker_adapter(broker, **kwargs)` factory with generic `(AdapterClass, ConfigClass)` registry — adding a new broker is one file + one registry entry
+  - env vars: `ANALYST_IBKR_GATEWAY_URL`, `ANALYST_IBKR_ACCOUNT_ID`, `ANALYST_LONGBRIDGE_APP_KEY/APP_SECRET/ACCESS_TOKEN`, `ANALYST_TIGER_ID/PRIVATE_KEY/ACCOUNT`
+
 ### Tools layer
 
-Implemented in `src/analyst/tools/` — 10 tool builders across 9 files:
+Implemented in `src/analyst/tools/` — 11 tool builders across 10 files:
 
 - `ToolKit` composable builder (`_registry.py`): per-agent tool assembly with `add()`, `merge()`, and `to_list()` — not a global registry, each agent builds its own kit
 - web search tool (`_web_search.py`): live web search via OpenRouter's `plugins` API using a separate LLM call (default model: `anthropic/claude-sonnet-4:online`)
@@ -119,8 +138,12 @@ Implemented in `src/analyst/tools/` — 10 tool builders across 9 files:
 - live indicators tool (`_live_indicators.py`): query country-level economic indicators
 - live rates tool (`_live_rates.py`): get central bank policy rates
 - live rate expectations tool (`_live_rate_expectations.py`): market-implied rate expectations
+- **portfolio sync tool** (`_live_portfolio.py`): `sync_portfolio_from_broker` — calls `create_broker_adapter(broker).fetch_positions()`, validates, persists to store, returns structured summary with holdings/skipped/warnings; catches `BrokerAuthError`/`BrokerConnectionError` with clear LLM-readable error messages
+- portfolio risk tool (`_live_portfolio.py`): `get_portfolio_risk` — full risk snapshot with actionable suggestions, VIX regime guidance, per-asset risk contributions
+- portfolio holdings tool (`_live_portfolio.py`): `get_portfolio_holdings` — current composition with concentration analysis
+- VIX regime tool (`_live_portfolio.py`): `get_vix_regime` — lightweight VIX query (no holdings required)
 - both `LiveAnalystEngine._build_tools()` and `build_sales_tools()` now use `ToolKit` to assemble their tool lists, with universal tools (web search, live calendar, web fetch) composed per-agent
-- the sales agent's `ToolKit` includes all 10 tools (6 live data + 3 universal + live calendar) for full data access during conversations
+- the sales agent's `ToolKit` includes all 11 tools (6 live data + 3 universal + live calendar + portfolio sync) for full data access during conversations
 - adding future universal tools follows the same pattern: create `_new_tool.py` with handler + `build_*_tool()` factory, export from `__init__.py`, agents opt in via `kit.add()`
 
 ### Storage layer
@@ -197,10 +220,10 @@ Implemented in `src/analyst/delivery/`:
 - WeCom-style message formatting
 - Telegram-specific message formatting
 - Telegram polling bot with persona-driven agent loop (陈襄)
-  - persona system prompt (`soul.py`): identity, personality, language mirroring, behavioral boundaries, tool usage instructions, emotional support guidance
+  - persona system prompt (`soul.py`): identity, personality, language mirroring, behavioral boundaries, tool usage instructions (including broker sync for IBKR/Longbridge/Tiger), emotional support guidance
   - `GROUP_CHAT_ADDENDUM` in `soul.py`: group chat behavioral rules (observe silently, reply only on @mention, adapt to group context)
   - all responses generated by LLM — no hardcoded text
-  - agent loop with 10 tools: 6 live data scrapers + web search + web fetch + live calendar + article fetch
+  - agent loop with 11 tools: 6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync
   - per-user conversation history (12 recent messages retrieved for continuity)
   - commands: `/start`, `/help`, `/regime`, `/calendar`, `/premarket`
   - free-text messages routed through agent with autonomous tool access
@@ -228,6 +251,7 @@ Implemented in `src/analyst/integration/`:
 
 Implemented in `tests/`:
 
+- `test_broker_ibkr.py` (54 tests) for broker adapter layer: IBKR asset class mapping + position mapping (single/empty/mixed currencies/zero skipped/short abs/weight sum/symbol fallback) + session validation (valid/expired/401/unreachable); Longbridge symbol normalization (US/HK pad/Shanghai/Shenzhen/passthrough) + position mapping (single/empty/zero skipped/mixed currencies/cost basis warning/market value preferred/weight sum) + session validation (valid/expired/missing creds/unreachable); Tiger sec_type mapping + position mapping (single/empty/zero skipped/mixed currencies/weight sum) + session validation (missing creds/auth failure/unreachable/cryptography not installed); factory tests (create all 3 brokers, unknown raises, available listed in error)
 - `test_news_ingestion.py` for RSS feed registry, classifier utility, article fetcher, SQLite news storage, extraction fallback behavior, and news ingestion/retrieval regressions
 - `test_memory.py` for research/trader/sales pipeline memory behavior, client isolation, delivery gating, profile accumulation, and trader lineage constraints
 - `test_product_layer.py` for product-layer smoke tests
@@ -320,9 +344,10 @@ Done:
 - Chinese-language institutional macro prompts (数据快评, 早盘速递, 收盘点评, regime refresh)
 - regime state scoring with clamped numeric axes and cross-asset implications
 - environment resolver with multi-file `.env` fallback
-- CLI commands: refresh, schedule, flash, briefing, wrap, regime-refresh, live-calendar, news-refresh, news-latest, news-search, news-feeds
-- agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, surprise summaries, recent news, news search, web search, and live calendar fetch
+- CLI commands: refresh, schedule, flash, briefing, wrap, regime-refresh, live-calendar, news-refresh, news-latest, news-search, news-feeds, portfolio-import, portfolio-risk, portfolio-sync
+- agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, surprise summaries, recent news, news search, web search, live calendar fetch, portfolio risk, portfolio holdings, VIX regime, and portfolio sync from broker
 - unified tools layer (`src/analyst/tools/`): `ToolKit` composable builder + `web_search` via OpenRouter plugins API + `fetch_live_calendar` via curl_cffi (agent-initiated)
+- portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime, agent-actionable tools
 - auto-refresh staleness check on `get_today_calendar` and `get_upcoming_calendar` tools (refreshes calendar if data is >1 hour stale)
 - error isolation in `refresh_calendar`: Investing.com and ForexFactory failures are independent — one source failing does not block the other
 - research publication into `research_artifacts` plus `analytical_observations`
@@ -349,7 +374,7 @@ Done:
 - persona system prompt: high-EQ institutional sales professional, auto-detects and mirrors user language (Chinese/English), warm conversational style, emotional support guidance, tool usage instructions
 - `GROUP_CHAT_ADDENDUM` in `soul.py`: group chat behavioral rules — observe silently, reply only on @mention, adapt tone to group context
 - all responses generated by LLM through the agent loop — no hardcoded welcome/help text
-- 10 agent tools for live data access: `fetch_live_calendar`, `get_live_article`, `get_live_markets`, `get_live_news`, `get_live_indicators`, `get_live_rates`, `get_live_rate_expectations`, `web_search`, `web_fetch`, plus regime/calendar/briefing tools
+- 11 agent tools for live data access: `fetch_live_calendar`, `get_live_article`, `get_live_markets`, `get_live_news`, `get_live_indicators`, `get_live_rates`, `get_live_rate_expectations`, `web_search`, `web_fetch`, `sync_portfolio_from_broker`, plus regime/calendar/briefing tools
 - sales chat agent (`sales_chat.py`): standalone agent loop with `build_sales_tools()` factory, client profile management, and conversation history
 - per-user conversation history (12 recent messages retrieved for continuity)
 - command handlers: `/start`, `/help`, `/regime`, `/calendar`, `/premarket`
@@ -444,6 +469,13 @@ PYTHONPATH=src python3 -m analyst briefing
 PYTHONPATH=src python3 -m analyst wrap
 PYTHONPATH=src python3 -m analyst regime-refresh
 PYTHONPATH=src python3 -m analyst schedule
+
+# Portfolio commands
+PYTHONPATH=src python3 -m analyst portfolio-import data/demo/holdings.csv
+PYTHONPATH=src python3 -m analyst portfolio-risk --json
+PYTHONPATH=src python3 -m analyst portfolio-sync --broker ibkr --dry-run
+PYTHONPATH=src python3 -m analyst portfolio-sync --broker longbridge --dry-run
+PYTHONPATH=src python3 -m analyst portfolio-sync --broker tiger --dry-run
 
 # Telegram bot
 ANALYST_TELEGRAM_TOKEN=your-token PYTHONPATH=src python3 -m analyst.delivery.bot

@@ -77,6 +77,14 @@ def build_parser() -> argparse.ArgumentParser:
     portfolio_import.add_argument("--portfolio-id", default="default")
     portfolio_import.add_argument("--db-path", default=None)
 
+    portfolio_sync = subparsers.add_parser("portfolio-sync")
+    portfolio_sync.add_argument("--broker", default="ibkr", help="Broker adapter (default: ibkr)")
+    portfolio_sync.add_argument("--account", default="", help="Broker account ID (auto-detect if omitted)")
+    portfolio_sync.add_argument("--gateway-url", default="", help="Override gateway URL")
+    portfolio_sync.add_argument("--portfolio-id", default="default")
+    portfolio_sync.add_argument("--db-path", default=None)
+    portfolio_sync.add_argument("--dry-run", action="store_true", help="Show positions without persisting")
+
     portfolio_risk = subparsers.add_parser("portfolio-risk")
     portfolio_risk.add_argument("--portfolio-id", default="default")
     portfolio_risk.add_argument("--json", action="store_true", dest="as_json")
@@ -120,6 +128,70 @@ def format_news_headline(article: NewsArticleRecord) -> str:
         f"{dt}  {country:>2} [{impact:<8}]  [{article.source_feed:<20}]  "
         f"{article.title}{subject}"
     )
+
+
+def _run_portfolio_sync(args: argparse.Namespace) -> int:
+    from analyst.portfolio import create_broker_adapter, validate_holdings
+    from analyst.portfolio.brokers import BrokerAuthError, BrokerConnectionError
+    from analyst.storage import SQLiteEngineStore
+
+    try:
+        adapter = create_broker_adapter(
+            args.broker,
+            gateway_url=args.gateway_url,
+            account_id=args.account,
+        )
+        result = adapter.fetch_positions(account_id=args.account)
+    except BrokerAuthError as exc:
+        print(f"AUTH ERROR: {exc}")
+        return 1
+    except BrokerConnectionError as exc:
+        print(f"CONNECTION ERROR: {exc}")
+        return 1
+    except ValueError as exc:
+        print(f"CONFIG ERROR: {exc}")
+        return 1
+
+    if not result.holdings:
+        print(f"No positions found in {args.broker} account {result.account_id}.")
+        for s in result.skipped:
+            print(f"  SKIPPED: {s}")
+        return 0
+
+    warnings = validate_holdings(result.holdings)
+    warnings.extend(result.warnings)
+    for w in warnings:
+        print(f"WARNING: {w}")
+
+    print(f"\n{len(result.holdings)} positions from {result.broker} account {result.account_id}:")
+    for h in result.holdings:
+        print(f"  {h.symbol:>8}  {h.weight:>6.1%}  ${h.notional:>12,.0f}  {h.asset_class:<14} {h.name}")
+    if result.skipped:
+        print(f"\nSkipped {len(result.skipped)} positions:")
+        for s in result.skipped:
+            print(f"  {s}")
+
+    if args.dry_run:
+        print("\n[dry-run] No changes written.")
+        return 0
+
+    db_path = Path(args.db_path) if args.db_path else None
+    store = SQLiteEngineStore(db_path=db_path)
+    store.replace_portfolio_holdings(
+        [
+            {
+                "symbol": h.symbol,
+                "name": h.name,
+                "asset_class": h.asset_class,
+                "weight": h.weight,
+                "notional": h.notional,
+            }
+            for h in result.holdings
+        ],
+        portfolio_id=args.portfolio_id,
+    )
+    print(f"\nImported {len(result.holdings)} holdings into portfolio '{args.portfolio_id}'.")
+    return 0
 
 
 def _run_portfolio_import(args: argparse.Namespace) -> int:
@@ -376,6 +448,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{feed.category:<16}] {feed.name}")
         print(f"\nTotal: {len(feeds)} feeds")
         return 0
+    if args.command == "portfolio-sync":
+        return _run_portfolio_sync(args)
     if args.command == "portfolio-import":
         return _run_portfolio_import(args)
     if args.command == "portfolio-risk":

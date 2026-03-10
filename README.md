@@ -9,7 +9,8 @@ Current status on March 10, 2026:
 - the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, TradingEconomics, yfinance, and macro-finance RSS news ingestion
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
 - the memory layer records all chat messages and extracts 14 client profile dimensions that accumulate across conversations
-- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 10 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch); both LiveAnalystEngine and sales agent use it
+- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 11 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync); both LiveAnalystEngine and sales agent use it
+- the portfolio package supports CSV import and live broker sync via an extensible adapter layer (IBKR, Longbridge 长桥, Tiger 老虎), with EWMA risk pipeline, VIX regime signals, and agent-actionable tools
 - the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention) and full tool access
 - China-specific ingestion, live end-to-end provider verification, and WeCom delivery are still pending
 
@@ -59,6 +60,7 @@ analyst-project/
 │   └── README.md                   Historical split-package note; live code moved into `src/analyst/integration/`
 │
 ├── tests/                          ← LOCAL VALIDATION
+│   ├── test_broker_ibkr.py         Broker adapter layer: IBKR, Longbridge, Tiger position mapping + session + factory
 │   ├── test_news_ingestion.py      WS1 news ingestion, extraction, search, and retrieval ranking tests
 │   ├── test_product_layer.py       End-to-end contract and routing smoke tests
 │   ├── test_scrapers.py            Scraper parsers, pagination, dataclasses, and live integration tests
@@ -72,7 +74,7 @@ analyst-project/
 │   ├── env.py                      Multi-file .env resolver
 │   ├── information/                Local information layer using bundled demo data
 │   ├── runtime/                    Runtime and prompt profiles
-│   ├── tools/                      10 agent tools — ToolKit builder + live data scrapers + web search/fetch + calendar
+│   ├── tools/                      11 agent tools — ToolKit builder + live data scrapers + web search/fetch + calendar + portfolio sync
 │   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
 │   ├── storage/                    SQLite store (market state, research artifacts, trader state, sales memory)
 │   ├── memory/                     Client profile extraction (14 dimensions), conversation recording, context builders
@@ -157,6 +159,13 @@ Quick local usage:
 PYTHONPATH=src python3 -m analyst regime
 PYTHONPATH=src python3 -m analyst route "帮我写一段关于今晚非农数据的客户消息"
 
+# Portfolio management
+PYTHONPATH=src python3 -m analyst portfolio-import data/demo/holdings.csv
+PYTHONPATH=src python3 -m analyst portfolio-risk --json
+PYTHONPATH=src python3 -m analyst portfolio-sync --broker ibkr --dry-run
+PYTHONPATH=src python3 -m analyst portfolio-sync --broker longbridge --dry-run
+PYTHONPATH=src python3 -m analyst portfolio-sync --broker tiger --dry-run
+
 # Local sales-agent prompt testing (requires OpenRouter model env)
 PYTHONPATH=src python3 -m analyst sales-chat --once "最近太难做了"
 PYTHONPATH=src python3 -m analyst sales-chat --client-id demo-user --db-path /tmp/analyst-sales.db
@@ -182,9 +191,10 @@ This validates the current standalone implementation:
 
 - bundled demo data + demo engine path
 - WS1 live engine: SQLite store, ingestion adapters, calendar/news query surface, agent loop, OpenRouter provider
-- unified tools layer: ToolKit composable builder + 10 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch)
+- unified tools layer: ToolKit composable builder + 11 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync)
+- portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime signals, agent-actionable tools
 - WeCom and Telegram formatters
-- Telegram agent bot with persona (陈襄), group chat support, and 10 autonomous tools
+- Telegram agent bot with persona (陈襄), group chat support, and 11 autonomous tools
 - sales chat agent with client profile tracking and conversation recording
 - integration router
 

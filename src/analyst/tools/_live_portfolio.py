@@ -5,7 +5,8 @@ from collections import Counter
 from typing import Any
 
 from analyst.engine.live_types import AgentTool
-from analyst.portfolio import compute_portfolio_snapshot, load_portfolio_config
+from analyst.portfolio import compute_portfolio_snapshot, create_broker_adapter, load_portfolio_config, validate_holdings
+from analyst.portfolio.brokers import BrokerAuthError, BrokerConnectionError
 from analyst.portfolio.market_data import fetch_current_vix, fetch_vix_history
 from analyst.portfolio.signals import scaling_signal, target_volatility, vix_percentile, vix_regime
 from analyst.storage.sqlite import SQLiteEngineStore
@@ -394,5 +395,114 @@ def build_vix_regime_tool() -> AgentTool:
             "whether it's safe to add risk, or general market conditions."
         ),
         parameters={"type": "object", "properties": {}},
+        handler=handler,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tool 4: sync_portfolio_from_broker
+# ---------------------------------------------------------------------------
+
+class PortfolioSyncHandler:
+    """Stateful callable that syncs positions from a broker into the store."""
+
+    def __init__(self, store: SQLiteEngineStore) -> None:
+        self.store = store
+
+    def __call__(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        broker = str(arguments.get("broker", "ibkr")).strip().lower()
+        account_id = str(arguments.get("account_id", "")).strip()
+        portfolio_id = str(arguments.get("portfolio_id", "default")).strip()
+
+        try:
+            adapter = create_broker_adapter(broker, account_id=account_id)
+            result = adapter.fetch_positions(account_id=account_id)
+        except BrokerAuthError as exc:
+            logger.warning("Broker auth failed: %s", exc)
+            return {"error": str(exc), "error_type": "auth"}
+        except BrokerConnectionError as exc:
+            logger.warning("Broker connection failed: %s", exc)
+            return {"error": str(exc), "error_type": "connection"}
+        except ValueError as exc:
+            return {"error": str(exc), "error_type": "config"}
+
+        if not result.holdings:
+            return {
+                "status": "empty",
+                "message": f"No positions found in {broker} account {result.account_id}.",
+                "skipped": result.skipped,
+                "warnings": result.warnings,
+            }
+
+        warnings = validate_holdings(result.holdings)
+        warnings.extend(result.warnings)
+
+        self.store.replace_portfolio_holdings(
+            [
+                {
+                    "symbol": h.symbol,
+                    "name": h.name,
+                    "asset_class": h.asset_class,
+                    "weight": h.weight,
+                    "notional": h.notional,
+                }
+                for h in result.holdings
+            ],
+            portfolio_id=portfolio_id,
+        )
+
+        holdings_summary = [
+            {
+                "symbol": h.symbol,
+                "name": h.name,
+                "asset_class": h.asset_class,
+                "weight": f"{h.weight:.1%}",
+                "notional": h.notional,
+            }
+            for h in result.holdings
+        ]
+
+        return {
+            "status": "synced",
+            "broker": result.broker,
+            "account_id": result.account_id,
+            "portfolio_id": portfolio_id,
+            "holdings_count": len(result.holdings),
+            "raw_position_count": result.raw_position_count,
+            "holdings": holdings_summary,
+            "skipped": result.skipped,
+            "warnings": warnings,
+        }
+
+
+def build_portfolio_sync_tool(store: SQLiteEngineStore) -> AgentTool:
+    """Factory: create a sync_portfolio_from_broker AgentTool."""
+    handler = PortfolioSyncHandler(store)
+    return AgentTool(
+        name="sync_portfolio_from_broker",
+        description=(
+            "Sync portfolio positions from a broker account (currently supports IBKR). "
+            "Fetches live positions from the broker gateway and imports them into the portfolio store. "
+            "Requires the IBKR Client Portal Gateway to be running and authenticated. "
+            "Use when the client says 'sync my IB positions', 'refresh positions', "
+            "'import from broker', or similar."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "broker": {
+                    "type": "string",
+                    "description": "Broker identifier (default: 'ibkr')",
+                },
+                "account_id": {
+                    "type": "string",
+                    "description": "Broker account ID (auto-detected if omitted)",
+                },
+                "portfolio_id": {
+                    "type": "string",
+                    "description": "Portfolio identifier to save into (default: 'default')",
+                },
+            },
+        },
         handler=handler,
     )

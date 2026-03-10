@@ -15,6 +15,7 @@ from analyst.tools import (
     build_live_news_tool,
     build_portfolio_holdings_tool,
     build_portfolio_risk_tool,
+    build_portfolio_sync_tool,
     build_rate_expectations_tool,
     build_reference_rates_tool,
     build_vix_regime_tool,
@@ -84,6 +85,7 @@ def build_sales_tools(engine: OpenRouterAnalystEngine, store: SQLiteEngineStore 
     if store is not None:
         kit.add(build_portfolio_risk_tool(store))
         kit.add(build_portfolio_holdings_tool(store))
+        kit.add(build_portfolio_sync_tool(store))
     kit.add(build_vix_regime_tool())
     return kit.to_list()
 
