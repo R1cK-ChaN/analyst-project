@@ -7,7 +7,17 @@ from analyst.engine import OpenRouterAnalystEngine
 from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
 from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider
 from analyst.engine.live_types import AgentTool, ConversationMessage
-from analyst.tools import ToolKit, build_web_fetch_tool, build_web_search_tool
+from analyst.tools import (
+    ToolKit,
+    build_article_tool,
+    build_country_indicators_tool,
+    build_live_markets_tool,
+    build_live_news_tool,
+    build_rate_expectations_tool,
+    build_reference_rates_tool,
+    build_web_fetch_tool,
+    build_web_search_tool,
+)
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.memory import ClientProfileUpdate, split_reply_and_profile_update
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
@@ -62,6 +72,12 @@ def build_sales_tools(engine: OpenRouterAnalystEngine) -> list[AgentTool]:
         parameters={"type": "object", "properties": {}, "required": []},
         handler=get_premarket,
     ))
+    kit.add(build_live_news_tool())
+    kit.add(build_article_tool())
+    kit.add(build_live_markets_tool())
+    kit.add(build_country_indicators_tool())
+    kit.add(build_reference_rates_tool())
+    kit.add(build_rate_expectations_tool())
     return kit.to_list()
 
 
