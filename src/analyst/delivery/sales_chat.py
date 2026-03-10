@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from analyst.engine import OpenRouterAnalystEngine
 from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
 from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider
-from analyst.engine.live_types import AgentTool, ConversationMessage
+from analyst.engine.live_types import AgentTool, ConversationMessage, LLMProvider
 from analyst.tools import (
     ToolKit,
     build_article_tool,
@@ -38,7 +38,11 @@ class SalesChatReply:
     profile_update: ClientProfileUpdate
 
 
-def build_sales_tools(engine: OpenRouterAnalystEngine, store: SQLiteEngineStore | None = None) -> list[AgentTool]:
+def build_sales_tools(
+    engine: OpenRouterAnalystEngine,
+    store: SQLiteEngineStore | None = None,
+    provider: LLMProvider | None = None,
+) -> list[AgentTool]:
     def get_regime(arguments: dict[str, object]) -> str:
         note = engine.get_regime_summary()
         return note.body_markdown
@@ -89,6 +93,10 @@ def build_sales_tools(engine: OpenRouterAnalystEngine, store: SQLiteEngineStore 
         kit.add(build_portfolio_holdings_tool(store))
         kit.add(build_portfolio_sync_tool(store))
     kit.add(build_vix_regime_tool())
+    if provider is not None:
+        from analyst.engine.sub_agent_specs import build_sales_sub_agents
+        for sa_tool in build_sales_sub_agents(kit.to_list(), provider, store):
+            kit.add(sa_tool)
     return kit.to_list()
 
 
@@ -106,6 +114,10 @@ def build_sales_services(
         ),
         default_model="google/gemini-3.1-flash-lite-preview",
     )
+    store = SQLiteEngineStore(db_path=db_path)
+    provider = OpenRouterProvider(or_config)
+    from analyst.engine.sub_agent_specs import build_content_sub_agents
+    content_tools = build_content_sub_agents(provider, store)
     runtime = OpenRouterAgentRuntime(
         provider_config=or_config,
         config=OpenRouterRuntimeConfig(
@@ -116,15 +128,14 @@ def build_sales_services(
             ),
             default_model="google/gemini-3.1-flash-lite-preview",
         ),
+        tools=content_tools,
     )
     engine = OpenRouterAnalystEngine(info_service=info_service, runtime=runtime)
-    provider = OpenRouterProvider(or_config)
     agent_loop = PythonAgentLoop(
         provider=provider,
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
     )
-    store = SQLiteEngineStore(db_path=db_path)
-    tools = build_sales_tools(engine, store)
+    tools = build_sales_tools(engine, store, provider=provider)
     return agent_loop, tools, store
 
 

@@ -369,6 +369,10 @@ class LiveAnalystEngine:
         kit.add(build_portfolio_holdings_tool(self.store))
         kit.add(build_portfolio_sync_tool(self.store))
         kit.add(build_vix_regime_tool())
+        from .sub_agent_specs import build_research_sub_agents
+        provider = self.provider or OpenRouterProvider(OpenRouterConfig.from_env())
+        for sa_tool in build_research_sub_agents(kit.to_list(), provider, self.store):
+            kit.add(sa_tool)
         return kit.to_list()
 
     def _loop(self) -> PythonAgentLoop:

@@ -6,19 +6,21 @@ from .profile import (
     split_reply_and_profile_update,
     strip_embedded_profile_update,
 )
-from .render import RenderBudget
+from .render import RenderBudget, sub_agent_budget
 from .service import (
     build_research_context,
     build_sales_context,
     build_trading_context,
     record_sales_interaction,
 )
+from .subagent import build_subagent_memory
 
 __all__ = [
     "ClientProfileUpdate",
     "RenderBudget",
     "build_research_context",
     "build_sales_context",
+    "build_subagent_memory",
     "build_trading_context",
     "extract_client_profile_update",
     "extract_embedded_profile_update",
@@ -26,4 +28,5 @@ __all__ = [
     "record_sales_interaction",
     "split_reply_and_profile_update",
     "strip_embedded_profile_update",
+    "sub_agent_budget",
 ]

@@ -13,6 +13,17 @@ class RenderBudget:
     max_delivery_items: int = 4
 
 
+def sub_agent_budget() -> RenderBudget:
+    return RenderBudget(
+        total_chars=2500,
+        max_item_chars=200,
+        max_recent_messages=0,
+        max_research_items=2,
+        max_trading_items=2,
+        max_delivery_items=0,
+    )
+
+
 def trim_text(text: str, *, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text

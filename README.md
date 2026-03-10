@@ -10,6 +10,7 @@ Current status on March 10, 2026:
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
 - the memory layer records all chat messages and extracts 17 client profile dimensions that accumulate across conversations, including emotional trend tracking, stress level monitoring, and personal facts memory (up to 20 facts with recency-refresh dedup)
 - a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 11 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync); both LiveAnalystEngine and sales agent use it
+- a round sub-agent layer is implemented for research, sales, and runtime-assisted content generation, with scoped memory, recursion prevention, and SQLite audit logging of each run
 - the portfolio package supports CSV import and live broker sync via an extensible adapter layer (IBKR, Longbridge 长桥, Tiger 老虎), with EWMA risk pipeline, VIX regime signals, and agent-actionable tools
 - the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention), full tool access, time-of-day awareness, absence awareness, and typing simulation between multi-bubble messages
 - China-specific ingestion, live end-to-end provider verification, and WeCom delivery are still pending
@@ -191,6 +192,7 @@ This validates the current standalone implementation:
 
 - bundled demo data + demo engine path
 - WS1 live engine: SQLite store, ingestion adapters, calendar/news query surface, agent loop, OpenRouter provider
+- sub-agent execution: scoped tag extraction uses word-boundary matching, memory retrieval respects punctuation boundaries, and both success and error runs are audited with preserved scope tags
 - unified tools layer: ToolKit composable builder + 11 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync)
 - portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime signals, agent-actionable tools
 - WeCom and Telegram formatters

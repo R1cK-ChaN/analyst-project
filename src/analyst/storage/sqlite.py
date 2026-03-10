@@ -18,6 +18,11 @@ def default_engine_db_path(root: Path | None = None) -> Path:
     return base / ".analyst" / "engine.db"
 
 
+def _matches_scope_tags(text: str, tags: list[str]) -> bool:
+    lowered = text.lower()
+    return any(re.search(rf"\b{re.escape(tag.lower())}\b", lowered) for tag in tags)
+
+
 @dataclass(frozen=True)
 class StoredEventRecord:
     source: str
@@ -730,6 +735,22 @@ class SQLiteEngineStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS subagent_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    parent_agent TEXT NOT NULL,
+                    task_type TEXT NOT NULL,
+                    objective TEXT NOT NULL,
+                    scope_tags_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    elapsed_seconds REAL NOT NULL DEFAULT 0.0,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
 
     def _ensure_table_columns(
         self,
@@ -1064,6 +1085,129 @@ class SQLiteEngineStore:
                 created_at=row["created_at"],
                 metadata=json.loads(row["metadata_json"]),
             )
+            for row in rows
+        ]
+
+    def list_tagged_observations(self, *, tags: list[str], limit: int = 4) -> list[AnalyticalObservationRecord]:
+        if not tags:
+            return self.list_recent_analytical_observations(limit=limit)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM analytical_observations
+                ORDER BY id DESC
+                """,
+            ).fetchall()
+        matched: list[AnalyticalObservationRecord] = []
+        for row in rows:
+            if not _matches_scope_tags(row["summary"], tags):
+                continue
+            matched.append(
+                AnalyticalObservationRecord(
+                    observation_id=int(row["id"]),
+                    observation_type=row["observation_type"],
+                    summary=row["summary"],
+                    detail=row["detail"],
+                    source_kind=row["source_kind"],
+                    source_id=int(row["source_id"]),
+                    created_at=row["created_at"],
+                    metadata=json.loads(row["metadata_json"]),
+                )
+            )
+            if len(matched) >= limit:
+                break
+        return matched
+
+    def list_tagged_regime_snapshots(self, *, tags: list[str], limit: int = 2) -> list[RegimeSnapshotRecord]:
+        if not tags:
+            return self.list_recent_regime_snapshots(limit=limit)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM regime_snapshots
+                ORDER BY id DESC
+                """,
+            ).fetchall()
+        matched: list[RegimeSnapshotRecord] = []
+        for row in rows:
+            if not _matches_scope_tags(row["summary"], tags):
+                continue
+            matched.append(
+                RegimeSnapshotRecord(
+                    snapshot_id=int(row["id"]),
+                    timestamp=row["timestamp"],
+                    regime_json=json.loads(row["regime_json"]),
+                    trigger_event=row["trigger_event"],
+                    summary=row["summary"],
+                )
+            )
+            if len(matched) >= limit:
+                break
+        return matched
+
+    def save_subagent_run(
+        self,
+        *,
+        task_id: str,
+        parent_agent: str,
+        task_type: str,
+        objective: str,
+        scope_tags: list[str],
+        status: str,
+        summary: str,
+        elapsed_seconds: float,
+    ) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO subagent_runs (
+                    task_id, parent_agent, task_type, objective,
+                    scope_tags_json, status, summary, elapsed_seconds, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    parent_agent,
+                    task_type,
+                    objective,
+                    json.dumps(scope_tags, ensure_ascii=False),
+                    status,
+                    summary,
+                    elapsed_seconds,
+                    utc_now().isoformat(),
+                ),
+            )
+
+    def list_recent_subagent_runs(
+        self,
+        *,
+        parent_agent: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        with self._connection(commit=False) as connection:
+            if parent_agent:
+                rows = connection.execute(
+                    "SELECT * FROM subagent_runs WHERE parent_agent = ? ORDER BY id DESC LIMIT ?",
+                    (parent_agent, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT * FROM subagent_runs ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "task_id": row["task_id"],
+                "parent_agent": row["parent_agent"],
+                "task_type": row["task_type"],
+                "objective": row["objective"],
+                "scope_tags": json.loads(row["scope_tags_json"]),
+                "status": row["status"],
+                "summary": row["summary"],
+                "elapsed_seconds": row["elapsed_seconds"],
+                "created_at": row["created_at"],
+            }
             for row in rows
         ]
 

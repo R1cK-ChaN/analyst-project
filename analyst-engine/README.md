@@ -13,6 +13,9 @@ Current live status:
 - meeting-prep path implemented
 - regime-summary note generation implemented
 - pre-market briefing generation implemented
+- round sub-agent orchestration implemented in `src/analyst/engine/` for research and sales flows
+- sub-agent memory scoping uses word-boundary tags and punctuation-aware retrieval from SQLite
+- sub-agent audits persist `parent_agent`, `task_type`, `scope_tags`, status, summary, and elapsed time for both success and failure paths
 
 Not yet implemented:
 
