@@ -1,8 +1,14 @@
 # Analyst — Workstream 2: Delivery Shell (Detailed Specification)
 
-Status note on March 7, 2026:
+Status note on March 10, 2026:
 This document describes the target WS2 scope. For the current implemented WS2 slice, see `00-overview/Implementation_Status.md`.
-Current code includes a persona-driven Telegram agent bot (陈襄) that routes all messages through the WS1 agent loop with autonomous tool access (regime, calendar, briefing). The bot uses a high-EQ persona system prompt, per-user conversation history, and auto-detects user language. WeCom transport, push delivery, and account setup remain target-state work.
+Current code includes a persona-driven Telegram agent bot (陈襄) deployed to a Contabo VPS with:
+- 10 live tools (6 data scrapers + web search + web fetch + live calendar + article fetch)
+- group chat support (observes silently, replies on @mention)
+- sales chat agent (`sales_chat.py`) with client profile management
+- conversation recording: all messages persisted to SQLite, 14 client profile dimensions extracted and accumulated
+- emotional support and tool usage instructions in the persona prompt
+WeCom transport, push delivery, and account setup remain target-state work.
 
 ## Strategic Context (from Marketing Research)
 

@@ -2,15 +2,16 @@
 
 Standalone Analyst product scaffold. This folder now contains its own installable Python package under `src/analyst/` and can run without importing from the sibling `information/` repo.
 
-Current WS1 status on March 8, 2026:
+Current status on March 10, 2026:
 
 - the live WS1 engine is implemented under `src/analyst/engine/`, `src/analyst/storage/`, and `src/analyst/ingestion/`
 - local live commands now cover refresh, flash commentary, briefing, wrap, regime refresh, calendar inspection, and news inspection
 - the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, TradingEconomics, yfinance, and macro-finance RSS news ingestion
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
-- the current memory implementation is pipeline-shaped: research publishes into `research_artifacts`, trader state/artifacts have FK lineage, and sales uses `client_profiles`, `conversation_messages`, and `delivery_queue`
-- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and cross-agent tools (web search via OpenRouter plugins API, live calendar fetch via curl_cffi); both LiveAnalystEngine and sales agent use it
-- China-specific ingestion, live end-to-end provider verification, and delivery integration are still pending
+- the memory layer records all chat messages and extracts 14 client profile dimensions that accumulate across conversations
+- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 10 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch); both LiveAnalystEngine and sales agent use it
+- the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention) and full tool access
+- China-specific ingestion, live end-to-end provider verification, and WeCom delivery are still pending
 
 ## What's Inside
 
@@ -71,12 +72,12 @@ analyst-project/
 │   ├── env.py                      Multi-file .env resolver
 │   ├── information/                Local information layer using bundled demo data
 │   ├── runtime/                    Runtime and prompt profiles
-│   ├── tools/                      Unified tools layer — ToolKit builder + cross-agent tools (web search, live calendar)
+│   ├── tools/                      10 agent tools — ToolKit builder + live data scrapers + web search/fetch + calendar
 │   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
 │   ├── storage/                    SQLite store (market state, research artifacts, trader state, sales memory)
-│   ├── memory/                     Context builders and sales profile extraction
+│   ├── memory/                     Client profile extraction (14 dimensions), conversation recording, context builders
 │   ├── ingestion/                  Source adapters (Investing.com, ForexFactory, TradingEconomics, FRED, Fed RSS, yfinance, RSS news)
-│   ├── delivery/                   Persona-driven Telegram agent bot (陈襄) + WeCom/Telegram formatting
+│   ├── delivery/                   Telegram bot (陈襄) with group chat support + sales chat agent + formatters
 │   └── integration/                Message routing
 │
 ├── data/demo/                      ← LOCAL DEMO DATA
@@ -181,9 +182,10 @@ This validates the current standalone implementation:
 
 - bundled demo data + demo engine path
 - WS1 live engine: SQLite store, ingestion adapters, calendar/news query surface, agent loop, OpenRouter provider
-- unified tools layer: ToolKit composable builder + web search via OpenRouter plugins API + live calendar fetch via curl_cffi
+- unified tools layer: ToolKit composable builder + 10 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch)
 - WeCom and Telegram formatters
-- Telegram agent bot with persona (陈襄) and autonomous tool access
+- Telegram agent bot with persona (陈襄), group chat support, and 10 autonomous tools
+- sales chat agent with client profile tracking and conversation recording
 - integration router
 
 ## Source Of Truth
