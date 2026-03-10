@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 from telegram import MessageEntity, Update
@@ -54,6 +56,7 @@ from analyst.memory import (  # noqa: E402
 from analyst.storage import SQLiteEngineStore  # noqa: E402
 
 from .sales_chat import (  # noqa: E402
+    MediaItem,
     SalesChatReply,
     build_sales_services,
     generate_sales_reply,
@@ -115,6 +118,27 @@ def _strip_bot_mention(text: str, bot_username: str) -> str:
     """Remove @botusername from text and clean up whitespace."""
     pattern = re.compile(rf"@{re.escape(bot_username)}\b", re.IGNORECASE)
     return pattern.sub("", text).strip()
+
+
+def _is_managed_generated_media(path: str) -> bool:
+    """Only delete temp files created by the image generation tool."""
+    temp_dir = os.path.abspath(tempfile.gettempdir())
+    abs_path = os.path.abspath(path)
+    return (
+        os.path.dirname(abs_path) == temp_dir
+        and os.path.basename(abs_path).startswith("analyst_gen_")
+    )
+
+
+def _cleanup_generated_media(path: str) -> None:
+    if not _is_managed_generated_media(path):
+        return
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        return
+    except OSError:
+        logger.warning("Failed to remove generated media file: %s", path)
 
 
 def _get_user_display_name(update: Update) -> str:
@@ -243,10 +267,12 @@ async def _chat_reply(
         )
         response_text = result.text
         profile_update = result.profile_update
+        media = result.media
     except Exception:
         logger.exception("Agent loop error")
         response_text = "抱歉，我这边出了点小状况，稍后再试试？"
         profile_update = ClientProfileUpdate()
+        media = []
 
     if len(response_text) > MAX_TELEGRAM_LENGTH:
         response_text = response_text[: MAX_TELEGRAM_LENGTH - 3] + "..."
@@ -254,7 +280,7 @@ async def _chat_reply(
     _append_history(context, "user", user_text, is_group=is_group, thread_id=thread_id)
     _append_history(context, "assistant", response_text, is_group=is_group, thread_id=thread_id)
 
-    return SalesChatReply(text=response_text, profile_update=profile_update)
+    return SalesChatReply(text=response_text, profile_update=profile_update, media=media)
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +448,24 @@ def _make_message_handler(
                 delay = min(0.5 + len(bubble) * 0.01, 2.5) + random.uniform(-0.3, 0.3)
                 await asyncio.sleep(max(delay, 0.3))
             await update.effective_message.reply_text(bubble)
+
+        for media_item in reply.media:
+            if media_item.kind == "photo":
+                try:
+                    await update.effective_chat.send_action(ChatAction.UPLOAD_PHOTO)
+                    if media_item.url.startswith(("http://", "https://")):
+                        await update.effective_message.reply_photo(
+                            photo=media_item.url, caption=media_item.caption or None,
+                        )
+                    elif os.path.isfile(media_item.url):
+                        with open(media_item.url, "rb") as f:
+                            await update.effective_message.reply_photo(
+                                photo=f, caption=media_item.caption or None,
+                            )
+                except Exception:
+                    logger.exception("Failed to send media item")
+                finally:
+                    _cleanup_generated_media(media_item.url)
 
         if in_group:
             _append_group_buffer(context, thread_id, "陈襄", reply.text, role="assistant")

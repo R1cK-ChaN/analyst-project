@@ -1,3 +1,4 @@
+from ._image_gen import ImageGenConfig, build_image_gen_tool
 from ._live_article import build_article_tool
 from ._live_calendar import build_live_calendar_tool
 from ._live_indicators import build_country_indicators_tool
@@ -12,9 +13,11 @@ from ._web_search import WebSearchConfig, build_web_search_tool
 
 __all__ = [
     "FetchPageConfig",
+    "ImageGenConfig",
     "ToolKit",
     "WebSearchConfig",
     "build_article_tool",
+    "build_image_gen_tool",
     "build_country_indicators_tool",
     "build_live_calendar_tool",
     "build_live_markets_tool",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -13,6 +14,7 @@ from analyst.tools import (
     ToolKit,
     build_article_tool,
     build_country_indicators_tool,
+    build_image_gen_tool,
     build_live_markets_tool,
     build_live_news_tool,
     build_portfolio_holdings_tool,
@@ -33,9 +35,17 @@ from .soul import GROUP_CHAT_ADDENDUM, SOUL_SYSTEM_PROMPT
 
 
 @dataclass(frozen=True)
+class MediaItem:
+    kind: str       # "photo"
+    url: str        # URL or local file path
+    caption: str = ""
+
+
+@dataclass(frozen=True)
 class SalesChatReply:
     text: str
     profile_update: ClientProfileUpdate
+    media: list[MediaItem] = field(default_factory=list)
 
 
 def build_sales_tools(
@@ -64,6 +74,7 @@ def build_sales_tools(
     kit = ToolKit()
     kit.add(build_web_search_tool())
     kit.add(build_web_fetch_tool())
+    kit.add(build_image_gen_tool())
     kit.add(AgentTool(
         name="get_regime_summary",
         description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
@@ -195,6 +206,24 @@ def system_prompt_with_memory(
     return "\n".join(parts)
 
 
+def _extract_media(messages: list[ConversationMessage]) -> list[MediaItem]:
+    """Scan agent loop messages for image tool results and return MediaItems."""
+    media: list[MediaItem] = []
+    for msg in messages:
+        if msg.role != "tool" or msg.tool_name != "generate_image":
+            continue
+        try:
+            data = json.loads(msg.content or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if data.get("status") != "ok":
+            continue
+        ref = data.get("image_path") or data.get("image_url", "")
+        if ref:
+            media.append(MediaItem(kind="photo", url=ref))
+    return media
+
+
 SPLIT_MARKER = "[SPLIT]"
 
 
@@ -254,4 +283,5 @@ def generate_sales_reply(
     response_text = normalize_sales_reply(response_text)
     if not response_text:
         response_text = "嗯"
-    return SalesChatReply(text=response_text, profile_update=profile_update)
+    media = _extract_media(result.messages)
+    return SalesChatReply(text=response_text, profile_update=profile_update, media=media)

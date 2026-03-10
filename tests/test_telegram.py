@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -543,6 +544,36 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
 
         # Private chat always triggers a reply
         update.effective_message.reply_text.assert_called()
+
+    async def test_private_chat_sends_and_cleans_up_generated_photo(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+        from analyst.delivery.sales_chat import MediaItem, SalesChatReply
+        from analyst.memory import ClientProfileUpdate
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(text="hello", chat_type="private")
+        update.effective_message.reply_photo = AsyncMock()
+
+        with tempfile.NamedTemporaryFile(prefix="analyst_gen_", suffix=".png", delete=False) as tmp:
+            tmp.write(b"fake image bytes")
+            temp_path = tmp.name
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
+             patch("analyst.delivery.bot.record_sales_interaction"), \
+             patch(
+                 "analyst.delivery.bot._chat_reply",
+                 new=AsyncMock(
+                     return_value=SalesChatReply(
+                         text="图片来了",
+                         profile_update=ClientProfileUpdate(),
+                         media=[MediaItem(kind="photo", url=temp_path)],
+                     )
+                 ),
+             ):
+            await handler(update, context)
+
+        update.effective_message.reply_photo.assert_called_once()
+        self.assertFalse(Path(temp_path).exists())
 
     async def test_start_command_skipped_in_group(self) -> None:
         from analyst.delivery.bot import _make_start_handler
