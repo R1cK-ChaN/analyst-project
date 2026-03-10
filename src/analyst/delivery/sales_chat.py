@@ -23,7 +23,7 @@ from analyst.memory import ClientProfileUpdate, split_reply_and_profile_update
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
 from analyst.storage import SQLiteEngineStore
 
-from .soul import SOUL_SYSTEM_PROMPT
+from .soul import GROUP_CHAT_ADDENDUM, SOUL_SYSTEM_PROMPT
 
 
 @dataclass(frozen=True)
@@ -143,8 +143,20 @@ def _detect_language(text: str, *, fallback: str = "") -> str:
     return "en"
 
 
-def system_prompt_with_memory(memory_context: str = "", *, user_lang: str = "") -> str:
+def system_prompt_with_memory(
+    memory_context: str = "",
+    *,
+    user_lang: str = "",
+    group_context: str = "",
+) -> str:
     parts = [SOUL_SYSTEM_PROMPT]
+    if group_context:
+        parts.append(
+            "\n" + GROUP_CHAT_ADDENDUM
+            + "\n[GROUP CHAT MODE — you are responding in a group chat. Be concise. Reference the discussion naturally.]\n"
+            + group_context
+            + "\n[END GROUP CONTEXT]"
+        )
     if user_lang:
         lang_label = "Chinese" if user_lang == "zh" else "English"
         parts.append(
@@ -199,6 +211,7 @@ def generate_sales_reply(
     tools: list[AgentTool],
     memory_context: str = "",
     preferred_language: str = "",
+    group_context: str = "",
 ) -> SalesChatReply:
     history_messages = [
         ConversationMessage(role=message["role"], content=message["content"])
@@ -206,7 +219,9 @@ def generate_sales_reply(
     ]
     user_lang = _detect_language(user_text, fallback=preferred_language)
     result = agent_loop.run(
-        system_prompt=system_prompt_with_memory(memory_context, user_lang=user_lang),
+        system_prompt=system_prompt_with_memory(
+            memory_context, user_lang=user_lang, group_context=group_context,
+        ),
         user_prompt=user_text,
         tools=tools,
         history=history_messages,

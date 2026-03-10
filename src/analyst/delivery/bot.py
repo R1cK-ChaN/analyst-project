@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import sys
 from pathlib import Path
 
-from telegram import Update
+from telegram import MessageEntity, Update
 from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
@@ -61,20 +62,144 @@ logger = logging.getLogger(__name__)
 
 MAX_TELEGRAM_LENGTH = 4096
 MAX_HISTORY_TURNS = 20
+MAX_GROUP_CONTEXT_MESSAGES = 50
+MAX_GROUP_CONTEXT_CHARS = 1500
+
+
+# ---------------------------------------------------------------------------
+# Group chat detection helpers
+# ---------------------------------------------------------------------------
+
+def _is_group_chat(update: Update) -> bool:
+    """Check if the message is from a group or supergroup chat."""
+    if update.effective_chat is None:
+        return False
+    return update.effective_chat.type in ("group", "supergroup")
+
+
+def _is_bot_mentioned(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Check if the bot is @mentioned in the message entities."""
+    message = update.effective_message
+    if message is None:
+        return False
+    bot_username = (context.bot.username or "").lower()
+    bot_id = context.bot.id
+    for entity, text in message.parse_entities(
+        types=[MessageEntity.MENTION, MessageEntity.TEXT_MENTION]
+    ).items():
+        if entity.type == MessageEntity.MENTION:
+            if text.lstrip("@").lower() == bot_username:
+                return True
+        elif entity.type == MessageEntity.TEXT_MENTION:
+            if entity.user and entity.user.id == bot_id:
+                return True
+    return False
+
+
+def _is_reply_to_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Check if the message is a reply to one of the bot's own messages."""
+    message = update.effective_message
+    if message is None or message.reply_to_message is None:
+        return False
+    reply_from = message.reply_to_message.from_user
+    return reply_from is not None and reply_from.id == context.bot.id
+
+
+def _should_reply_in_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Return True if the bot should reply in a group chat (mentioned or replied-to)."""
+    return _is_bot_mentioned(update, context) or _is_reply_to_bot(update, context)
+
+
+def _strip_bot_mention(text: str, bot_username: str) -> str:
+    """Remove @botusername from text and clean up whitespace."""
+    pattern = re.compile(rf"@{re.escape(bot_username)}\b", re.IGNORECASE)
+    return pattern.sub("", text).strip()
+
+
+def _get_user_display_name(update: Update) -> str:
+    """Return the sender's first name, or a fallback."""
+    user = update.effective_user
+    if user and user.first_name:
+        return user.first_name
+    return "User"
+
+
+# ---------------------------------------------------------------------------
+# Group context buffer helpers
+# ---------------------------------------------------------------------------
+
+def _get_group_buffer(
+    context: ContextTypes.DEFAULT_TYPE, thread_id: str,
+) -> list[dict[str, str]]:
+    """Return the group message buffer for a given thread."""
+    if "group_buffers" not in context.chat_data:
+        context.chat_data["group_buffers"] = {}
+    buffers = context.chat_data["group_buffers"]
+    if thread_id not in buffers:
+        buffers[thread_id] = []
+    return buffers[thread_id]
+
+
+def _append_group_buffer(
+    context: ContextTypes.DEFAULT_TYPE,
+    thread_id: str,
+    name: str,
+    text: str,
+    role: str = "user",
+) -> None:
+    """Append a message to the group buffer and trim to max size."""
+    buf = _get_group_buffer(context, thread_id)
+    buf.append({"name": name, "text": text, "role": role})
+    if len(buf) > MAX_GROUP_CONTEXT_MESSAGES:
+        del buf[: len(buf) - MAX_GROUP_CONTEXT_MESSAGES]
+
+
+def _render_group_context(context: ContextTypes.DEFAULT_TYPE, thread_id: str) -> str:
+    """Render recent group messages as 'name: text' lines within char budget."""
+    buf = _get_group_buffer(context, thread_id)
+    lines: list[str] = []
+    total = 0
+    for msg in reversed(buf):
+        line = f"{msg['name']}: {msg['text']}"
+        if total + len(line) + 1 > MAX_GROUP_CONTEXT_CHARS:
+            break
+        lines.append(line)
+        total += len(line) + 1
+    lines.reverse()
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
 # Conversation history helpers
 # ---------------------------------------------------------------------------
 
-def _get_history(context: ContextTypes.DEFAULT_TYPE) -> list[dict[str, str]]:
+def _get_history(
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    is_group: bool = False,
+    thread_id: str = "main",
+) -> list[dict[str, str]]:
+    if is_group:
+        if "agent_history" not in context.chat_data:
+            context.chat_data["agent_history"] = {}
+        histories = context.chat_data["agent_history"]
+        if thread_id not in histories:
+            histories[thread_id] = []
+        return histories[thread_id]
     if "history" not in context.user_data:
         context.user_data["history"] = []
     return context.user_data["history"]
 
 
-def _append_history(context: ContextTypes.DEFAULT_TYPE, role: str, content: str) -> None:
-    history = _get_history(context)
+def _append_history(
+    context: ContextTypes.DEFAULT_TYPE,
+    role: str,
+    content: str,
+    *,
+    is_group: bool = False,
+    thread_id: str = "main",
+) -> None:
+    history = _get_history(context, is_group=is_group, thread_id=thread_id)
     history.append({"role": role, "content": content})
     max_messages = MAX_HISTORY_TURNS * 2
     if len(history) > max_messages:
@@ -97,9 +222,12 @@ async def _chat_reply(
     tools: list[AgentTool],
     memory_context: str = "",
     preferred_language: str = "",
+    group_context: str = "",
+    is_group: bool = False,
+    thread_id: str = "main",
 ) -> SalesChatReply:
     """Send user_text through the agent loop with persona, history, tools, and sales context."""
-    history = _get_history(context)
+    history = _get_history(context, is_group=is_group, thread_id=thread_id)
 
     try:
         result = await asyncio.to_thread(
@@ -110,6 +238,7 @@ async def _chat_reply(
             tools=tools,
             memory_context=memory_context,
             preferred_language=preferred_language,
+            group_context=group_context,
         )
         response_text = result.text
         profile_update = result.profile_update
@@ -121,8 +250,8 @@ async def _chat_reply(
     if len(response_text) > MAX_TELEGRAM_LENGTH:
         response_text = response_text[: MAX_TELEGRAM_LENGTH - 3] + "..."
 
-    _append_history(context, "user", user_text)
-    _append_history(context, "assistant", response_text)
+    _append_history(context, "user", user_text, is_group=is_group, thread_id=thread_id)
+    _append_history(context, "assistant", response_text, is_group=is_group, thread_id=thread_id)
 
     return SalesChatReply(text=response_text, profile_update=profile_update)
 
@@ -143,6 +272,8 @@ def _build_services() -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineSto
 def _make_start_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
+            return
+        if _is_group_chat(update):
             return
         context.user_data["history"] = []
         await update.effective_chat.send_action(ChatAction.TYPING)
@@ -235,6 +366,24 @@ def _make_message_handler(
         topic_id = getattr(update.effective_message, "message_thread_id", None)
         thread_id = str(topic_id) if topic_id is not None else "main"
 
+        in_group = _is_group_chat(update)
+
+        if in_group:
+            sender_name = _get_user_display_name(update)
+            _append_group_buffer(context, thread_id, sender_name, text)
+
+            if not _should_reply_in_group(update, context):
+                return
+
+            bot_username = context.bot.username or ""
+            text = _strip_bot_mention(text, bot_username)
+            if not text:
+                return
+
+            group_context_str = _render_group_context(context, thread_id)
+        else:
+            group_context_str = ""
+
         await update.effective_chat.send_action(ChatAction.TYPING)
         memory_context = build_sales_context(
             store=store,
@@ -251,6 +400,9 @@ def _make_message_handler(
             tools,
             memory_context=memory_context,
             preferred_language=profile.preferred_language,
+            group_context=group_context_str,
+            is_group=in_group,
+            thread_id=thread_id,
         )
         record_sales_interaction(
             store=store,
@@ -265,6 +417,9 @@ def _make_message_handler(
         bubbles = split_into_bubbles(reply.text)
         for bubble in bubbles:
             await update.effective_message.reply_text(bubble)
+
+        if in_group:
+            _append_group_buffer(context, thread_id, "陈襄", reply.text, role="assistant")
 
     return handle_message
 

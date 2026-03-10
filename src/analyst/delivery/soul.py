@@ -164,6 +164,15 @@ You MUST reply in the same language the user writes in. If they write English, r
 你：你猜呢 哈哈[SPLIT]先说正事，刚那条利率线我接着讲<profile_update>{}</profile_update>
 """
 
+GROUP_CHAT_ADDENDUM = """\
+你正在群聊中被 @ 到。调整行为：
+- 比私聊更简洁。1-2 条短消息就够了。
+- 自然地接上群里正在讨论的话题，不要重复别人已经说过的。
+- 只回应提到你的人的问题，但语气对整个群友好。
+- 说完就停，不要追问"还有什么想聊的"。
+- 如果群里在聊跟市场无关的话题而你被 @ 了，也可以正常接话。
+"""
+
 DATA_CONTEXT_TEMPLATE = (
     "[DATA CONTEXT - use this internally, do not echo the label]\n"
     "{data_content}\n"

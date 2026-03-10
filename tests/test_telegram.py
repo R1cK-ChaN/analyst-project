@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -348,6 +348,235 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "直接回答\n我偏谨慎。")
         self.assertEqual(result.profile_update.current_mood, "cautious")
         self.assertEqual(result.profile_update.confidence, "medium")
+
+
+class TestGroupChat(unittest.IsolatedAsyncioTestCase):
+    """Tests for group chat support — silent observation, mention-triggered replies."""
+
+    def setUp(self) -> None:
+        self.mock_loop = MagicMock()
+        self.mock_tools = []
+        self.mock_store = MagicMock()
+        self.mock_store.get_client_profile.return_value = MagicMock(preferred_language="zh")
+        self.mock_store.build_sales_context = MagicMock(return_value="")
+
+        self.mock_loop.run.return_value = AgentLoopResult(
+            messages=[
+                ConversationMessage(role="user", content="test"),
+                ConversationMessage(role="assistant", content="reply text"),
+            ],
+            final_text="reply text",
+            events=[],
+        )
+
+    def _make_update(
+        self,
+        text: str = "hello",
+        chat_type: str = "supergroup",
+        chat_id: int = -100123,
+        user_id: int = 42,
+        first_name: str = "Alice",
+        entities: dict | None = None,
+        reply_to_bot: bool = False,
+        bot_id: int = 999,
+    ) -> tuple:
+        """Build mock Update + Context for group/private scenarios."""
+        update = MagicMock()
+        update.effective_chat.type = chat_type
+        update.effective_chat.id = chat_id
+        update.effective_chat.send_action = AsyncMock()
+        update.effective_message.text = text
+        update.effective_message.message_thread_id = None
+        update.effective_message.reply_text = AsyncMock()
+        update.effective_user.id = user_id
+        update.effective_user.first_name = first_name
+
+        if entities is None:
+            update.effective_message.parse_entities.return_value = {}
+        else:
+            update.effective_message.parse_entities.return_value = entities
+
+        if reply_to_bot:
+            reply_user = MagicMock()
+            reply_user.id = bot_id
+            update.effective_message.reply_to_message.from_user = reply_user
+        else:
+            update.effective_message.reply_to_message = None
+
+        context = MagicMock()
+        context.bot.username = "testbot"
+        context.bot.id = bot_id
+        context.user_data = {}
+        context.chat_data = {}
+
+        return update, context
+
+    def test_is_group_chat_detection(self) -> None:
+        from analyst.delivery.bot import _is_group_chat
+
+        for chat_type in ("group", "supergroup"):
+            update, _ = self._make_update(chat_type=chat_type)
+            self.assertTrue(_is_group_chat(update), f"Should detect {chat_type}")
+
+        update, _ = self._make_update(chat_type="private")
+        self.assertFalse(_is_group_chat(update))
+
+    def test_mention_stripping(self) -> None:
+        from analyst.delivery.bot import _strip_bot_mention
+
+        self.assertEqual(_strip_bot_mention("@testbot what?", "testbot"), "what?")
+
+    def test_mention_mid_sentence(self) -> None:
+        from analyst.delivery.bot import _strip_bot_mention
+
+        self.assertEqual(_strip_bot_mention("hey @testbot check", "testbot"), "hey  check")
+
+    async def test_group_message_without_mention_no_reply(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(text="some random chat", chat_type="supergroup")
+        await handler(update, context)
+
+        # Bot should NOT have replied
+        update.effective_message.reply_text.assert_not_called()
+        # But the message should be in the group buffer
+        self.assertIn("group_buffers", context.chat_data)
+        buf = context.chat_data["group_buffers"]["main"]
+        self.assertEqual(len(buf), 1)
+        self.assertEqual(buf[0]["text"], "some random chat")
+
+    async def test_group_message_with_mention_triggers_reply(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+
+        # Build a mention entity
+        mention_entity = MagicMock()
+        mention_entity.type = "mention"
+        entities = {mention_entity: "@testbot"}
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(
+            text="@testbot what's the regime?", chat_type="supergroup", entities=entities,
+        )
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
+             patch("analyst.delivery.bot.record_sales_interaction"):
+            await handler(update, context)
+
+        update.effective_message.reply_text.assert_called()
+
+    async def test_reply_to_bot_triggers_reply(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(
+            text="can you elaborate?", chat_type="supergroup", reply_to_bot=True,
+        )
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
+             patch("analyst.delivery.bot.record_sales_interaction"):
+            await handler(update, context)
+
+        update.effective_message.reply_text.assert_called()
+
+    async def test_group_context_accumulates(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        # Send 3 messages without mention — all should buffer, none should reply
+        for i in range(3):
+            update, context = self._make_update(
+                text=f"message {i}", chat_type="supergroup", user_id=42 + i,
+            )
+            if i == 0:
+                saved_context = context
+            else:
+                # Reuse same chat_data to simulate same chat
+                context.chat_data = saved_context.chat_data
+            await handler(update, context)
+
+        buf = saved_context.chat_data["group_buffers"]["main"]
+        self.assertEqual(len(buf), 3)
+
+    async def test_group_context_rendered_in_prompt(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+
+        # Pre-populate buffer with some context
+        update, context = self._make_update(
+            text="the market is wild today", chat_type="supergroup",
+        )
+        await handler(update, context)  # buffered, no reply
+
+        # Now send a mention
+        mention_entity = MagicMock()
+        mention_entity.type = "mention"
+        entities = {mention_entity: "@testbot"}
+        update2, _ = self._make_update(
+            text="@testbot what do you think?", chat_type="supergroup", entities=entities,
+        )
+        # Reuse chat_data
+        context2 = MagicMock()
+        context2.bot.username = "testbot"
+        context2.bot.id = 999
+        context2.user_data = {}
+        context2.chat_data = context.chat_data
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
+             patch("analyst.delivery.bot.record_sales_interaction"):
+            await handler(update2, context2)
+
+        # Verify the agent loop was called with group context in system prompt
+        call_kwargs = self.mock_loop.run.call_args.kwargs
+        self.assertIn("GROUP CHAT MODE", call_kwargs["system_prompt"])
+
+    async def test_private_chat_unchanged(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(text="hello", chat_type="private")
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
+             patch("analyst.delivery.bot.record_sales_interaction"):
+            await handler(update, context)
+
+        # Private chat always triggers a reply
+        update.effective_message.reply_text.assert_called()
+
+    async def test_start_command_skipped_in_group(self) -> None:
+        from analyst.delivery.bot import _make_start_handler
+
+        handler = _make_start_handler(self.mock_loop, self.mock_tools)
+        update, context = self._make_update(chat_type="supergroup")
+
+        await handler(update, context)
+
+        # Should not reply in group
+        update.effective_message.reply_text.assert_not_called()
+        update.effective_chat.send_action.assert_not_called()
+
+    async def test_group_agent_history_shared(self) -> None:
+        """Group history uses chat_data (shared) not user_data (per-user)."""
+        from analyst.delivery.bot import _make_message_handler
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+
+        mention_entity = MagicMock()
+        mention_entity.type = "mention"
+        entities = {mention_entity: "@testbot"}
+
+        update, context = self._make_update(
+            text="@testbot hi", chat_type="supergroup", entities=entities,
+        )
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
+             patch("analyst.delivery.bot.record_sales_interaction"):
+            await handler(update, context)
+
+        # History should be in chat_data, not user_data
+        self.assertIn("agent_history", context.chat_data)
+        self.assertNotIn("history", context.user_data)
 
 
 if __name__ == "__main__":
