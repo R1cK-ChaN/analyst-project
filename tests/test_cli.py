@@ -117,5 +117,145 @@ class SalesChatCLITest(unittest.TestCase):
             self.assertIn("delivery_video_path", manifest)
 
 
+    def test_media_gen_image_selfie_mode_copies_persona_image_into_output_dir(self) -> None:
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = Path(tmpdir) / "persona_selfie.jpg"
+            source_path.write_bytes(b"selfie-bytes")
+            output_dir = Path(tmpdir) / "artifacts"
+
+            image_tool = AgentTool(
+                name="generate_image",
+                description="",
+                parameters={},
+                handler=lambda arguments: {
+                    "status": "ok",
+                    "image_path": str(source_path),
+                    "prompt_used": "young Chinese male, iphone front camera selfie, holding a coffee cup",
+                    "mode": "selfie",
+                    "scene_key": "coffee_shop",
+                    "scene_prompt": "holding a coffee cup near the camera",
+                },
+            )
+
+            with patch("analyst.cli.build_image_gen_tool", return_value=image_tool):
+                with redirect_stdout(output):
+                    rc = main(
+                        [
+                            "media-gen",
+                            "image",
+                            "--mode",
+                            "selfie",
+                            "--scene-key",
+                            "coffee_shop",
+                            "--output-dir",
+                            str(output_dir),
+                        ]
+                    )
+
+            self.assertEqual(rc, 0)
+            self.assertTrue((output_dir / "image.jpg").is_file())
+            self.assertTrue((output_dir / "result.json").is_file())
+            import json
+
+            manifest = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["result"]["mode"], "selfie")
+            self.assertEqual(manifest["result"]["scene_key"], "coffee_shop")
+            self.assertIn("image_path", manifest["saved_artifacts"])
+
+    def test_media_gen_image_json_flag_prints_manifest_to_stdout(self) -> None:
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = Path(tmpdir) / "source.png"
+            source_path.write_bytes(b"image-bytes")
+            output_dir = Path(tmpdir) / "artifacts"
+
+            image_tool = AgentTool(
+                name="generate_image",
+                description="",
+                parameters={},
+                handler=lambda arguments: {
+                    "status": "ok",
+                    "image_path": str(source_path),
+                    "prompt_used": "a market chart",
+                },
+            )
+
+            with patch("analyst.cli.build_image_gen_tool", return_value=image_tool):
+                with redirect_stdout(output):
+                    rc = main(
+                        [
+                            "media-gen",
+                            "image",
+                            "--prompt",
+                            "a market chart",
+                            "--output-dir",
+                            str(output_dir),
+                            "--json",
+                        ]
+                    )
+
+            self.assertEqual(rc, 0)
+            import json
+
+            printed = json.loads(output.getvalue())
+            self.assertIn("output_dir", printed)
+            self.assertIn("saved_artifacts", printed)
+            self.assertIn("result", printed)
+            self.assertEqual(printed["result"]["status"], "ok")
+
+    def test_media_gen_image_selfie_with_scene_prompt_override(self) -> None:
+        captured_args: list[dict] = []
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = Path(tmpdir) / "selfie.jpg"
+            source_path.write_bytes(b"selfie-bytes")
+            output_dir = Path(tmpdir) / "artifacts"
+
+            def fake_handler(arguments: dict) -> dict:
+                captured_args.append(dict(arguments))
+                return {
+                    "status": "ok",
+                    "image_path": str(source_path),
+                    "prompt_used": "assembled prompt",
+                    "mode": "selfie",
+                    "scene_key": "night_walk",
+                    "scene_prompt": "wearing a leather jacket under neon lights",
+                }
+
+            image_tool = AgentTool(
+                name="generate_image",
+                description="",
+                parameters={},
+                handler=fake_handler,
+            )
+
+            with patch("analyst.cli.build_image_gen_tool", return_value=image_tool):
+                with redirect_stdout(output):
+                    rc = main(
+                        [
+                            "media-gen",
+                            "image",
+                            "--mode",
+                            "selfie",
+                            "--scene-key",
+                            "night_walk",
+                            "--scene-prompt",
+                            "wearing a leather jacket under neon lights",
+                            "--output-dir",
+                            str(output_dir),
+                        ]
+                    )
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(len(captured_args), 1)
+            self.assertEqual(captured_args[0]["mode"], "selfie")
+            self.assertEqual(captured_args[0]["scene_key"], "night_walk")
+            self.assertEqual(
+                captured_args[0]["scene_prompt"],
+                "wearing a leather jacket under neon lights",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
