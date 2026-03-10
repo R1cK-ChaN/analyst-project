@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import sys
 import tempfile
 import unittest
@@ -183,6 +184,26 @@ class TestImageGenHandler(unittest.TestCase):
 
 
 class TestSeedreamImageClient(unittest.TestCase):
+    def test_includes_watermark_flag_in_request_payload(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {"data": [{"url": "https://example.com/generated.jpeg"}]}
+        session = Mock()
+        session.post.return_value = response
+        client = SeedreamImageClient(
+            ImageGenConfig(
+                api_key="test-key",
+                base_url="https://ark.example/api/v3",
+                model="doubao-seedream-5-0-260128",
+                watermark=False,
+            ),
+            session=session,
+        )
+
+        client.generate_image(prompt="generate a chart")
+
+        payload = json.loads(session.post.call_args.kwargs["data"])
+        self.assertIs(payload["watermark"], False)
+
     def test_retries_transient_timeout_before_success(self) -> None:
         response = Mock(status_code=200)
         response.json.return_value = {"data": [{"url": "https://example.com/generated.jpeg"}]}

@@ -12,7 +12,7 @@ Current status on March 10, 2026:
 - a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 13 tool builders (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation); both LiveAnalystEngine and the sales agent assemble from it
 - a round sub-agent layer is implemented for research, sales, and runtime-assisted content generation, with scoped memory, recursion prevention, and SQLite audit logging of each run
 - the portfolio package supports CSV import and live broker sync via an extensible adapter layer (IBKR, Longbridge 长桥, Tiger 老虎), with EWMA risk pipeline, VIX regime signals, and agent-actionable tools
-- the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention), full tool access, time-of-day awareness, absence awareness, typing simulation between multi-bubble messages, inbound user-image understanding, static image generation via Volcengine Seedream with photo delivery, and optional motion-selfie/live-photo generation via Seedance with Telegram video delivery
+- the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention), full tool access, time-of-day awareness, absence awareness, typing simulation between multi-bubble messages, inbound user-image understanding, static image generation via Volcengine Seedream with photo delivery and AI watermark disabled by default, and optional motion-selfie/live-photo generation via Seedance with Telegram video delivery
 - China-specific ingestion, live end-to-end provider verification, and WeCom delivery are still pending
 
 ## What's Inside
@@ -196,7 +196,7 @@ This validates the current standalone implementation:
 - unified tools layer: ToolKit composable builder + 13 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + Volcengine image generation + Seedance motion/live-photo generation)
 - portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime signals, agent-actionable tools
 - WeCom and Telegram formatters
-- Telegram agent bot with persona (陈襄), group chat support, 13 autonomous tools, inbound image reading from user photos/image documents, Seedream image generation with photo delivery, and Seedance motion-selfie delivery as Telegram video
+- Telegram agent bot with persona (陈襄), group chat support, 13 autonomous tools, inbound image reading from user photos/image documents, Seedream image generation with AI watermark disabled by default and photo delivery, and Seedance motion-selfie delivery as Telegram video
 - sales chat agent with client profile tracking and conversation recording
 - integration router
 

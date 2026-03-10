@@ -39,6 +39,7 @@ class ImageGenConfig:
     response_format: str = "url"
     max_retries: int = 2
     retry_backoff_seconds: float = 1.5
+    watermark: bool = False
 
     @classmethod
     def from_env(cls) -> ImageGenConfig:
@@ -60,6 +61,7 @@ class ImageGenConfig:
             image_size=get_env_value("ANALYST_IMAGE_GEN_SIZE", default="2048x2048"),
             response_format=get_env_value("ANALYST_IMAGE_GEN_RESPONSE_FORMAT", default="url"),
             max_retries=max_retries,
+            watermark=get_env_value("ANALYST_IMAGE_GEN_WATERMARK", default="false").strip().lower() in {"1", "true", "yes", "on"},
         )
 
 
@@ -99,6 +101,7 @@ class SeedreamImageClient:
             "prompt": prompt,
             "size": self._config.image_size,
             "response_format": self._config.response_format,
+            "watermark": self._config.watermark,
         }
         if negative_prompt:
             payload["negative_prompt"] = negative_prompt

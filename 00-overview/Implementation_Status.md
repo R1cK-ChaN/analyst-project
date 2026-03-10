@@ -142,7 +142,7 @@ Implemented in `src/analyst/tools/` — 13 tool builders across 12 files:
 - portfolio risk tool (`_live_portfolio.py`): `get_portfolio_risk` — full risk snapshot with actionable suggestions, VIX regime guidance, per-asset risk contributions
 - portfolio holdings tool (`_live_portfolio.py`): `get_portfolio_holdings` — current composition with concentration analysis
 - VIX regime tool (`_live_portfolio.py`): `get_vix_regime` — lightweight VIX query (no holdings required)
-- **image generation tool** (`_image_gen.py`): `generate_image` — generates static images via Volcengine Ark image generation using a configurable model (default: `doubao-seedream-5-0-260128`)
+- **image generation tool** (`_image_gen.py`): `generate_image` — generates static images via Volcengine Ark image generation using a configurable model (default: `doubao-seedream-5-0-260128`) with `watermark=false` by default so Seedream does not stamp visible `AI生成` branding on delivered still images
   - `ImageGenConfig` with `from_env()` classmethod reusing `analyst.env.get_env_value()`, env vars: `VOLCENGINE_API_KEY` / `ARK_API_KEY`, `ARK_BASE_URL`, `ANALYST_IMAGE_GEN_MODEL`, `ANALYST_IMAGE_GEN_SIZE`
   - `ImageGenHandler` now supports both generic image generation and structured selfie mode (`mode`, `scene_key`, `scene_prompt`)
   - generic mode also accepts `use_attached_image=true`, which reuses the current inbound Telegram image as the Seedream reference image for variation/edit requests
