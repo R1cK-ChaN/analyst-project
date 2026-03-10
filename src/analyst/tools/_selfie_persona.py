@@ -20,36 +20,39 @@ _DEFAULT_CHARACTER_DNA = (
     "young Chinese male",
     "mid 20s",
     "short black hair",
-    "sharp jawline",
-    "bright expressive eyes",
+    "friendly smile",
     "clean casual style",
-    "warm friendly smile",
-    "slim athletic build",
+    "slim build",
+    "gentle approachable vibe",
+    "ordinary handsome in a natural way",
+    "similar vibe to Huang Zihongfan",
 )
 
 _DEFAULT_CAMERA_STYLE = (
-    "phone selfie",
-    "slightly wide lens",
+    "iphone front camera selfie",
+    "casual snapshot",
     "natural lighting",
+    "slightly messy composition",
     "realistic smartphone photo",
-    "casual everyday style",
 )
 
 _DEFAULT_QUALITY_MODIFIERS = (
     "photorealistic",
-    "high detail skin texture",
-    "natural shadows",
-    "cinematic lighting",
+    "natural skin texture",
+    "smartphone compression",
+    "slight motion blur",
+    "realistic imperfections",
 )
 
 _DEFAULT_NEGATIVE_PROMPT = (
-    "old man",
-    "beard",
-    "bald",
-    "long hair",
-    "female",
     "different person",
     "cartoon",
+    "studio lighting",
+    "fashion photography",
+    "professional photoshoot",
+    "perfect portrait",
+    "airbrushed skin",
+    "luxury editorial styling",
 )
 
 
@@ -60,19 +63,6 @@ class SelfieScene:
 
 
 _SCENE_CATALOG: dict[str, SelfieScene] = {
-    "trading_desk": SelfieScene(
-        scene_prompt=(
-            "taking a selfie at a trading desk\n"
-            "multiple monitors glowing\n"
-            "late night work atmosphere"
-        ),
-        motion_prompt=(
-            "holding a phone selfie at a trading desk\n"
-            "multiple monitors glowing behind him\n"
-            "subtle blinking and a small confident smile\n"
-            "gentle handheld phone motion"
-        ),
-    ),
     "coffee_shop": SelfieScene(
         scene_prompt=(
             "sitting in a coffee shop\n"
@@ -86,15 +76,28 @@ _SCENE_CATALOG: dict[str, SelfieScene] = {
             "gentle handheld phone motion"
         ),
     ),
-    "airport_lounge": SelfieScene(
+    "lazy_sunday_home": SelfieScene(
         scene_prompt=(
-            "taking a selfie in an airport lounge\n"
-            "carry-on luggage nearby\n"
-            "soft travel-day lighting"
+            "lazy sunday at home\n"
+            "sitting on a sofa in casual clothes\n"
+            "soft afternoon light"
         ),
         motion_prompt=(
-            "holding a phone selfie in an airport lounge\n"
-            "slight head turn and soft smile\n"
+            "holding a phone selfie on a sofa at home\n"
+            "small relaxed stretch and soft blinking\n"
+            "gentle handheld phone motion"
+        ),
+    ),
+    "night_walk": SelfieScene(
+        scene_prompt=(
+            "night street selfie\n"
+            "city lights in the background\n"
+            "casual walk outside"
+        ),
+        motion_prompt=(
+            "holding a phone selfie while walking at night\n"
+            "city lights in the background\n"
+            "soft blinking with a relaxed smile\n"
             "gentle handheld phone motion"
         ),
     ),
@@ -110,16 +113,52 @@ _SCENE_CATALOG: dict[str, SelfieScene] = {
             "subtle body movement with a relaxed smile"
         ),
     ),
-    "late_night_work": SelfieScene(
+    "airport_waiting": SelfieScene(
         scene_prompt=(
-            "taking a selfie during late night work\n"
-            "desk lamp glow\n"
-            "quiet office atmosphere"
+            "taking a selfie while waiting at the airport gate\n"
+            "backpack and boarding area nearby\n"
+            "soft travel-day lighting"
         ),
         motion_prompt=(
-            "taking a phone selfie during late night work\n"
-            "soft desk lamp glow\n"
+            "holding a phone selfie at an airport gate\n"
+            "slight head turn and soft smile\n"
+            "gentle handheld phone motion"
+        ),
+    ),
+    "bedroom_late_night": SelfieScene(
+        scene_prompt=(
+            "late night bedroom selfie\n"
+            "warm dim lighting\n"
+            "lying on a bed"
+        ),
+        motion_prompt=(
+            "taking a phone selfie in a bedroom at night\n"
+            "warm dim lighting\n"
             "small tired smile and subtle blinking\n"
+            "gentle handheld phone motion"
+        ),
+    ),
+    "rainy_day_window": SelfieScene(
+        scene_prompt=(
+            "standing by a window on a rainy day\n"
+            "soft grey daylight\n"
+            "quiet home atmosphere"
+        ),
+        motion_prompt=(
+            "holding a phone selfie by a rainy window\n"
+            "small head movement and soft blinking\n"
+            "gentle handheld phone motion"
+        ),
+    ),
+    "weekend_street": SelfieScene(
+        scene_prompt=(
+            "weekend street selfie\n"
+            "casual outfit outdoors\n"
+            "natural daylight"
+        ),
+        motion_prompt=(
+            "holding a phone selfie on a weekend street\n"
+            "small step forward and relaxed smile\n"
             "gentle handheld phone motion"
         ),
     ),
@@ -130,14 +169,15 @@ _SCENE_CATALOG: dict[str, SelfieScene] = {
 class SelfiePromptConfig:
     media_root: Path
     bootstrap_count: int = 4
+    scene_catalog_version: str = "companion-v1"
     neutral_scene: SelfieScene = SelfieScene(
         scene_prompt=(
-            "taking a casual phone selfie in a modern office\n"
+            "taking a casual phone selfie at home near a window\n"
             "soft daylight\n"
             "relaxed friendly expression"
         ),
         motion_prompt=(
-            "taking a casual phone selfie in a modern office\n"
+            "taking a casual phone selfie at home near a window\n"
             "soft daylight\n"
             "subtle blinking and a relaxed friendly smile\n"
             "gentle handheld phone motion"
@@ -172,6 +212,7 @@ class PersonaSelfieState:
     character_anchor_path: str
     latest_selfie_path: str
     bootstrap_paths: list[str]
+    scene_catalog_version: str
     character_dna: list[str]
     camera_style: list[str]
     quality_modifiers: list[str]
@@ -224,12 +265,14 @@ class SelfiePromptService:
             negative_prompt=draft.negative_prompt,
             image_input=self._build_reference_image_data_uri(state),
         )
-        image_path = image_client.materialize_image(generated, self._next_selfie_path())
+        history_path = image_client.materialize_image(generated, self._next_history_path(draft.scene_key))
+        latest_selfie_path = self._write_canonical_copy(Path(history_path), self._latest_selfie_alias_path)
         updated_state = PersonaSelfieState(
-            version=state.version,
+            version=max(state.version, 2),
             character_anchor_path=state.character_anchor_path,
-            latest_selfie_path=image_path,
+            latest_selfie_path=latest_selfie_path,
             bootstrap_paths=list(state.bootstrap_paths),
+            scene_catalog_version=self._config.scene_catalog_version,
             character_dna=list(state.character_dna),
             camera_style=list(state.camera_style),
             quality_modifiers=list(state.quality_modifiers),
@@ -242,8 +285,8 @@ class SelfiePromptService:
         )
         self._save_state(updated_state)
         return GeneratedSelfie(
-            image_path=image_path,
-            image_data_uri=self._path_to_data_uri(Path(image_path)),
+            image_path=history_path,
+            image_data_uri=self._path_to_data_uri(Path(history_path)),
             prompt_used=draft.prompt_used,
             negative_prompt=draft.negative_prompt,
             scene_key=draft.scene_key,
@@ -295,13 +338,14 @@ class SelfiePromptService:
             raise RuntimeError("Failed to bootstrap enough persona selfie images.")
 
         created_at = _now_iso()
-        character_anchor_path = bootstrap_paths[0]
-        latest_selfie_path = bootstrap_paths[1]
+        character_anchor_path = self._write_canonical_copy(Path(bootstrap_paths[0]), self._anchor_alias_path)
+        latest_selfie_path = self._write_canonical_copy(Path(bootstrap_paths[1]), self._latest_selfie_alias_path)
         state = PersonaSelfieState(
-            version=1,
+            version=2,
             character_anchor_path=character_anchor_path,
             latest_selfie_path=latest_selfie_path,
             bootstrap_paths=bootstrap_paths,
+            scene_catalog_version=self._config.scene_catalog_version,
             character_dna=list(self._config.character_dna),
             camera_style=list(self._config.camera_style),
             quality_modifiers=list(self._config.quality_modifiers),
@@ -317,6 +361,10 @@ class SelfiePromptService:
 
     def _resolve_scene(self, arguments: dict[str, Any]) -> tuple[str, str, str]:
         scene_key = str(arguments.get("scene_key", "")).strip().lower()
+        scene_key = {
+            "airport_lounge": "airport_waiting",
+            "late_night_work": "bedroom_late_night",
+        }.get(scene_key, scene_key)
         free_text = str(arguments.get("scene_prompt", "")).strip()
         fallback_prompt = str(arguments.get("prompt", "")).strip()
         scene = _SCENE_CATALOG.get(scene_key)
@@ -425,10 +473,20 @@ class SelfiePromptService:
         bootstrap_dir.mkdir(parents=True, exist_ok=True)
         return bootstrap_dir / f"bootstrap_{uuid.uuid4().hex[:12]}.jpg"
 
-    def _next_selfie_path(self) -> Path:
-        selfie_dir = self._config.media_root / "selfies"
+    @property
+    def _anchor_alias_path(self) -> Path:
+        return self._config.media_root / "character_anchor.jpg"
+
+    @property
+    def _latest_selfie_alias_path(self) -> Path:
+        return self._config.media_root / "latest_selfie.jpg"
+
+    def _next_history_path(self, scene_key: str) -> Path:
+        selfie_dir = self._config.media_root / "selfie_history"
         selfie_dir.mkdir(parents=True, exist_ok=True)
-        return selfie_dir / f"selfie_{uuid.uuid4().hex[:12]}.jpg"
+        normalized_scene = (scene_key or "scene").strip().lower().replace(" ", "_")
+        normalized_scene = "".join(ch for ch in normalized_scene if ch.isalnum() or ch == "_") or "scene"
+        return selfie_dir / f"selfie_{normalized_scene}_{uuid.uuid4().hex[:12]}.jpg"
 
     def _path_to_data_uri(self, path: Path) -> str:
         suffix = path.suffix.lower()
@@ -447,9 +505,15 @@ class SelfiePromptService:
         width = max(1, round(image.width * (height / image.height)))
         return image.resize((width, height))
 
+    def _write_canonical_copy(self, source_path: Path, target_path: Path) -> str:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(source_path.read_bytes())
+        return str(target_path)
+
     def _migrate_state_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         migrated = dict(payload)
         updated_at = str(migrated.get("updated_at") or _now_iso())
+        migrated.setdefault("scene_catalog_version", self._config.scene_catalog_version)
         migrated.setdefault("character_dna", list(self._config.character_dna))
         migrated.setdefault("camera_style", list(self._config.camera_style))
         migrated.setdefault("quality_modifiers", list(self._config.quality_modifiers))
@@ -459,6 +523,7 @@ class SelfiePromptService:
         migrated.setdefault("last_prompt_used", "")
         migrated.setdefault("last_scene_key", "")
         migrated.setdefault("last_scene_prompt", "")
+        migrated.setdefault("version", 2)
         return migrated
 
 

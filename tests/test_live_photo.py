@@ -188,9 +188,9 @@ class TestLivePhotoHandler(unittest.TestCase):
             image_path="/tmp/persona.jpg",
             image_data_uri="data:image/jpeg;base64,abc",
             prompt_used="assembled still prompt",
-            scene_key="trading_desk",
-            scene_prompt="taking a selfie at a trading desk",
-            motion_prompt="subtle desk motion",
+            scene_key="night_walk",
+            scene_prompt="night street selfie",
+            motion_prompt="subtle street motion",
             negative_prompt="different person",
         )
 
@@ -201,17 +201,17 @@ class TestLivePhotoHandler(unittest.TestCase):
             image_client=Mock(),
             selfie_service=selfie_service,
         )
-        result = handler({"mode": "selfie", "scene_key": "trading_desk", "duration_seconds": 2})
+        result = handler({"mode": "selfie", "scene_key": "night_walk", "duration_seconds": 2})
 
         selfie_service.generate_selfie.assert_called_once()
         provider.generate_video.assert_called_once_with(
-            prompt="subtle desk motion",
+            prompt="subtle street motion",
             duration_seconds=2,
             image_data_uri="data:image/jpeg;base64,abc",
         )
         self.assertEqual(result["fallback_kind"], "video")
         self.assertEqual(result["mode"], "selfie")
-        self.assertEqual(result["scene_key"], "trading_desk")
+        self.assertEqual(result["scene_key"], "night_walk")
         image_handler.assert_not_called()
 
     def test_generic_mode_can_animate_attached_image(self) -> None:

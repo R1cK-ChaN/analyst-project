@@ -555,7 +555,11 @@ def build_live_photo_tool(
                 },
                 "scene_key": {
                     "type": "string",
-                    "description": "Optional shared selfie-scene key, e.g. trading_desk or coffee_shop.",
+                    "description": (
+                        "Optional shared selfie-scene key, e.g. coffee_shop, lazy_sunday_home, "
+                        "night_walk, gym_mirror, airport_waiting, bedroom_late_night, "
+                        "rainy_day_window, or weekend_street."
+                    ),
                 },
                 "scene_prompt": {
                     "type": "string",

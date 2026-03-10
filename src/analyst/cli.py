@@ -10,8 +10,16 @@ import shutil
 from urllib.parse import urlparse
 
 from analyst.contracts import format_epoch
-from analyst.delivery.sales_chat import build_sales_services, generate_sales_reply, split_into_bubbles
-from analyst.memory import build_sales_context, record_sales_interaction
+from analyst.delivery.sales_chat import (
+    ChatPersonaMode,
+    build_chat_services,
+    build_sales_services,
+    generate_chat_reply,
+    generate_sales_reply,
+    resolve_chat_persona_mode,
+    split_into_bubbles,
+)
+from analyst.memory import build_chat_context, build_sales_context, record_chat_interaction, record_sales_interaction
 from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
 from analyst.tools import build_image_gen_tool, build_live_photo_tool
 from analyst.tools._image_gen import GeneratedImage, ImageGenConfig, SeedreamImageClient
@@ -103,6 +111,11 @@ def build_parser() -> argparse.ArgumentParser:
     sales_chat.add_argument("--thread-id", default="main")
     sales_chat.add_argument("--focus", default="global")
     sales_chat.add_argument("--db-path", default=None)
+    sales_chat.add_argument(
+        "--persona-mode",
+        choices=[ChatPersonaMode.SALES.value, ChatPersonaMode.COMPANION.value],
+        default=ChatPersonaMode.SALES.value,
+    )
     sales_chat.add_argument("--once", default=None, help="Run a single sales chat turn and exit.")
     sales_chat.add_argument(
         "--show-profile",
@@ -408,38 +421,76 @@ def _run_media_gen(args: argparse.Namespace) -> int:
 
 def _run_sales_chat(args: argparse.Namespace) -> int:
     db_path = Path(args.db_path) if args.db_path else None
-    agent_loop, tools, store = build_sales_services(db_path=db_path)
+    persona_mode = resolve_chat_persona_mode(args.persona_mode)
+    if persona_mode is ChatPersonaMode.SALES:
+        agent_loop, tools, store = build_sales_services(db_path=db_path)
+    else:
+        agent_loop, tools, store = build_chat_services(db_path=db_path, persona_mode=persona_mode)
     history: list[dict[str, str]] = []
 
     def handle_turn(user_text: str) -> None:
-        memory_context = build_sales_context(
-            store=store,
-            client_id=args.client_id,
-            channel_id=args.channel_id,
-            thread_id=args.thread_id,
-            query=user_text,
-        )
+        if persona_mode is ChatPersonaMode.COMPANION:
+            memory_context = build_chat_context(
+                store=store,
+                client_id=args.client_id,
+                channel_id=args.channel_id,
+                thread_id=args.thread_id,
+                query=user_text,
+                persona_mode=persona_mode.value,
+            )
+        else:
+            memory_context = build_sales_context(
+                store=store,
+                client_id=args.client_id,
+                channel_id=args.channel_id,
+                thread_id=args.thread_id,
+                query=user_text,
+            )
         profile = store.get_client_profile(args.client_id)
-        reply = generate_sales_reply(
-            user_text,
-            history=history,
-            agent_loop=agent_loop,
-            tools=tools,
-            memory_context=memory_context,
-            preferred_language=profile.preferred_language,
-        )
+        if persona_mode is ChatPersonaMode.SALES:
+            reply = generate_sales_reply(
+                user_text,
+                history=history,
+                agent_loop=agent_loop,
+                tools=tools,
+                memory_context=memory_context,
+                preferred_language=profile.preferred_language,
+            )
+        else:
+            reply = generate_chat_reply(
+                user_text,
+                history=history,
+                agent_loop=agent_loop,
+                tools=tools,
+                memory_context=memory_context,
+                preferred_language=profile.preferred_language,
+                persona_mode=persona_mode,
+            )
         history.append({"role": "user", "content": user_text})
         history.append({"role": "assistant", "content": reply.text})
-        record_sales_interaction(
-            store=store,
-            client_id=args.client_id,
-            channel_id=args.channel_id,
-            thread_id=args.thread_id,
-            user_text=user_text,
-            assistant_text=reply.text,
-            assistant_profile_update=reply.profile_update,
-            tool_audit=reply.tool_audit,
-        )
+        if persona_mode is ChatPersonaMode.COMPANION:
+            record_chat_interaction(
+                store=store,
+                client_id=args.client_id,
+                channel_id=args.channel_id,
+                thread_id=args.thread_id,
+                user_text=user_text,
+                assistant_text=reply.text,
+                assistant_profile_update=reply.profile_update,
+                tool_audit=reply.tool_audit,
+                persona_mode=persona_mode.value,
+            )
+        else:
+            record_sales_interaction(
+                store=store,
+                client_id=args.client_id,
+                channel_id=args.channel_id,
+                thread_id=args.thread_id,
+                user_text=user_text,
+                assistant_text=reply.text,
+                assistant_profile_update=reply.profile_update,
+                tool_audit=reply.tool_audit,
+            )
         bubbles = split_into_bubbles(reply.text)
         for bubble in bubbles:
             print(f"\nassistant> {bubble}")
@@ -450,7 +501,7 @@ def _run_sales_chat(args: argparse.Namespace) -> int:
         handle_turn(args.once)
         return 0
 
-    print("Interactive sales chat test")
+    print("Interactive companion chat test" if persona_mode is ChatPersonaMode.COMPANION else "Interactive sales chat test")
     print("Type /exit to quit, /memory to inspect current memory, /profile to inspect stored profile, /reset to clear in-memory history.")
     while True:
         try:

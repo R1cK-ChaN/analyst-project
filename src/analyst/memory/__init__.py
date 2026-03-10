@@ -8,9 +8,11 @@ from .profile import (
 )
 from .render import RenderBudget, sub_agent_budget
 from .service import (
+    build_chat_context,
     build_research_context,
     build_sales_context,
     build_trading_context,
+    record_chat_interaction,
     record_sales_interaction,
 )
 from .subagent import build_subagent_memory
@@ -18,6 +20,7 @@ from .subagent import build_subagent_memory
 __all__ = [
     "ClientProfileUpdate",
     "RenderBudget",
+    "build_chat_context",
     "build_research_context",
     "build_sales_context",
     "build_subagent_memory",
@@ -25,6 +28,7 @@ __all__ = [
     "extract_client_profile_update",
     "extract_embedded_profile_update",
     "merge_client_profile_updates",
+    "record_chat_interaction",
     "record_sales_interaction",
     "split_reply_and_profile_update",
     "strip_embedded_profile_update",

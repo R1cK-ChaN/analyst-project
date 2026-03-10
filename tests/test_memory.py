@@ -12,9 +12,11 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from analyst.memory import (
     ClientProfileUpdate,
+    build_chat_context,
     build_research_context,
     build_sales_context,
     build_trading_context,
+    record_chat_interaction,
     record_sales_interaction,
 )
 from analyst.storage import SQLiteEngineStore
@@ -262,6 +264,69 @@ class MemoryPipelineTest(unittest.TestCase):
             )
 
             self.assertIn("联储和利率主线", context)
+
+    def test_companion_context_hides_finance_profile_and_delivery_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            record_chat_interaction(
+                store=store,
+                client_id="client-companion",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="我最近主要看 BTC 和 Fed，但今天有点累。",
+                assistant_text="那你今晚先早点休息。",
+                assistant_profile_update=ClientProfileUpdate(
+                    institution_type="hedge_fund",
+                    watchlist_topics=["crypto", "fed"],
+                    current_mood="tired",
+                    personal_facts=["likes late night walks"],
+                    confidence="medium",
+                ),
+                persona_mode="companion",
+            )
+
+            context = build_chat_context(
+                store=store,
+                client_id="client-companion",
+                channel_id="telegram:1",
+                thread_id="main",
+                query="睡不着",
+                persona_mode="companion",
+            )
+
+            self.assertIn("current_mood: tired", context)
+            self.assertIn("likes late night walks", context)
+            self.assertNotIn("institution_type", context)
+            self.assertNotIn("watchlist_topics", context)
+            self.assertNotIn("sent_content", context)
+
+    def test_companion_interaction_filters_finance_dimensions_from_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            record_chat_interaction(
+                store=store,
+                client_id="client-companion",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="请简单一点，我最近主要看 BTC 和 Fed。",
+                assistant_text="行，那我就少说点。",
+                assistant_profile_update=ClientProfileUpdate(
+                    institution_type="hedge_fund",
+                    watchlist_topics=["crypto", "fed"],
+                    response_style="concise",
+                    confidence="medium",
+                ),
+                persona_mode="companion",
+            )
+
+            profile = store.get_client_profile("client-companion")
+            self.assertEqual(profile.preferred_language, "zh")
+            self.assertEqual(profile.response_style, "concise")
+            self.assertEqual(profile.confidence, "medium")
+            self.assertEqual(profile.institution_type, "")
+            self.assertEqual(profile.watchlist_topics, [])
 
     def test_research_and_trading_context_builders_use_typed_stores(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

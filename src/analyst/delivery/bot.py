@@ -55,17 +55,21 @@ from analyst.engine.live_types import AgentTool  # noqa: E402
 from analyst.env import get_env_value  # noqa: E402
 from analyst.memory import (  # noqa: E402
     ClientProfileUpdate,
+    build_chat_context,
     build_sales_context,
+    record_chat_interaction,
     record_sales_interaction,
 )
 from analyst.storage import SQLiteEngineStore  # noqa: E402
 from analyst.tools._request_context import RequestImageInput, bind_request_image  # noqa: E402
 
 from .sales_chat import (  # noqa: E402
+    ChatPersonaMode,
     MediaItem,
     SalesChatReply,
-    build_sales_services,
-    generate_sales_reply,
+    build_chat_services,
+    generate_chat_reply,
+    resolve_chat_persona_mode,
 )
 
 logger = logging.getLogger(__name__)
@@ -375,6 +379,7 @@ async def _chat_reply(
     user_content: Any | None = None,
     history_text: str | None = None,
     attached_image: RequestImageInput | None = None,
+    persona_mode: str | ChatPersonaMode = ChatPersonaMode.SALES,
 ) -> SalesChatReply:
     """Send user_text through the agent loop with persona, history, tools, and sales context."""
     history = _get_history(context, is_group=is_group, thread_id=thread_id)
@@ -382,7 +387,7 @@ async def _chat_reply(
     try:
         with bind_request_image(attached_image):
             result = await asyncio.to_thread(
-                generate_sales_reply,
+                generate_chat_reply,
                 user_text,
                 history=history,
                 agent_loop=agent_loop,
@@ -391,6 +396,7 @@ async def _chat_reply(
                 preferred_language=preferred_language,
                 group_context=group_context,
                 user_content=user_content,
+                persona_mode=persona_mode,
             )
         response_text = result.text
         profile_update = result.profile_update
@@ -428,16 +434,29 @@ async def _chat_reply(
 # Service wiring
 # ---------------------------------------------------------------------------
 
-def _build_services() -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
-    """Wire up the agent loop, tools, and sales-memory store."""
-    return build_sales_services()
+def _resolve_runtime_persona_mode() -> ChatPersonaMode:
+    return resolve_chat_persona_mode(
+        get_env_value("ANALYST_CHAT_PERSONA_MODE", default=ChatPersonaMode.SALES.value)
+    )
+
+
+def _build_services() -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore, ChatPersonaMode]:
+    """Wire up the agent loop, tools, memory store, and active chat persona."""
+    persona_mode = _resolve_runtime_persona_mode()
+    agent_loop, tools, store = build_chat_services(persona_mode=persona_mode)
+    return agent_loop, tools, store, persona_mode
 
 
 # ---------------------------------------------------------------------------
 # Handler factories
 # ---------------------------------------------------------------------------
 
-def _make_start_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
+def _make_start_handler(
+    agent_loop: PythonAgentLoop,
+    tools: list[AgentTool],
+    *,
+    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
+):
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
             return
@@ -450,13 +469,19 @@ def _make_start_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
             context,
             agent_loop,
             tools,
+            persona_mode=persona_mode,
         )
         await update.effective_message.reply_text(reply.text)
 
     return start
 
 
-def _make_help_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
+def _make_help_handler(
+    agent_loop: PythonAgentLoop,
+    tools: list[AgentTool],
+    *,
+    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
+):
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
             return
@@ -466,13 +491,19 @@ def _make_help_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
             context,
             agent_loop,
             tools,
+            persona_mode=persona_mode,
         )
         await update.effective_message.reply_text(reply.text)
 
     return help_command
 
 
-def _make_regime_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
+def _make_regime_handler(
+    agent_loop: PythonAgentLoop,
+    tools: list[AgentTool],
+    *,
+    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
+):
     async def regime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
             return
@@ -482,13 +513,19 @@ def _make_regime_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
             context,
             agent_loop,
             tools,
+            persona_mode=persona_mode,
         )
         await update.effective_message.reply_text(reply.text)
 
     return regime
 
 
-def _make_calendar_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
+def _make_calendar_handler(
+    agent_loop: PythonAgentLoop,
+    tools: list[AgentTool],
+    *,
+    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
+):
     async def calendar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
             return
@@ -498,13 +535,19 @@ def _make_calendar_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
             context,
             agent_loop,
             tools,
+            persona_mode=persona_mode,
         )
         await update.effective_message.reply_text(reply.text)
 
     return calendar
 
 
-def _make_premarket_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool]):
+def _make_premarket_handler(
+    agent_loop: PythonAgentLoop,
+    tools: list[AgentTool],
+    *,
+    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
+):
     async def premarket(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
             return
@@ -514,6 +557,7 @@ def _make_premarket_handler(agent_loop: PythonAgentLoop, tools: list[AgentTool])
             context,
             agent_loop,
             tools,
+            persona_mode=persona_mode,
         )
         await update.effective_message.reply_text(reply.text)
 
@@ -524,6 +568,8 @@ def _make_message_handler(
     agent_loop: PythonAgentLoop,
     tools: list[AgentTool],
     store: SQLiteEngineStore,
+    *,
+    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
 ):
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
@@ -576,13 +622,23 @@ def _make_message_handler(
         )
 
         await update.effective_chat.send_action(ChatAction.TYPING)
-        memory_context = build_sales_context(
-            store=store,
-            client_id=user_id,
-            channel_id=channel_id,
-            thread_id=thread_id,
-            query=llm_text,
-        )
+        if persona_mode is ChatPersonaMode.COMPANION:
+            memory_context = build_chat_context(
+                store=store,
+                client_id=user_id,
+                channel_id=channel_id,
+                thread_id=thread_id,
+                query=llm_text,
+                persona_mode=persona_mode.value,
+            )
+        else:
+            memory_context = build_sales_context(
+                store=store,
+                client_id=user_id,
+                channel_id=channel_id,
+                thread_id=thread_id,
+                query=llm_text,
+            )
         profile = store.get_client_profile(user_id)
         reply = await _chat_reply(
             llm_text,
@@ -597,17 +653,31 @@ def _make_message_handler(
             user_content=user_content,
             history_text=history_user_text,
             attached_image=attached_image,
+            persona_mode=persona_mode,
         )
-        record_sales_interaction(
-            store=store,
-            client_id=user_id,
-            channel_id=channel_id,
-            thread_id=thread_id,
-            user_text=history_user_text,
-            assistant_text=reply.text,
-            assistant_profile_update=reply.profile_update,
-            tool_audit=reply.tool_audit,
-        )
+        if persona_mode is ChatPersonaMode.COMPANION:
+            record_chat_interaction(
+                store=store,
+                client_id=user_id,
+                channel_id=channel_id,
+                thread_id=thread_id,
+                user_text=history_user_text,
+                assistant_text=reply.text,
+                assistant_profile_update=reply.profile_update,
+                tool_audit=reply.tool_audit,
+                persona_mode=persona_mode.value,
+            )
+        else:
+            record_sales_interaction(
+                store=store,
+                client_id=user_id,
+                channel_id=channel_id,
+                thread_id=thread_id,
+                user_text=history_user_text,
+                assistant_text=reply.text,
+                assistant_profile_update=reply.profile_update,
+                tool_audit=reply.tool_audit,
+            )
         from analyst.delivery.sales_chat import split_into_bubbles
         bubbles = split_into_bubbles(reply.text)
         for i, bubble in enumerate(bubbles):
@@ -662,18 +732,19 @@ def _make_message_handler(
 
 def build_application(token: str) -> Application:
     """Build and return a fully configured Telegram Application."""
-    agent_loop, tools, store = _build_services()
+    agent_loop, tools, store, persona_mode = _build_services()
 
     app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", _make_start_handler(agent_loop, tools)))
-    app.add_handler(CommandHandler("help", _make_help_handler(agent_loop, tools)))
-    app.add_handler(CommandHandler("regime", _make_regime_handler(agent_loop, tools)))
-    app.add_handler(CommandHandler("calendar", _make_calendar_handler(agent_loop, tools)))
-    app.add_handler(CommandHandler("premarket", _make_premarket_handler(agent_loop, tools)))
+    app.add_handler(CommandHandler("start", _make_start_handler(agent_loop, tools, persona_mode=persona_mode)))
+    app.add_handler(CommandHandler("help", _make_help_handler(agent_loop, tools, persona_mode=persona_mode)))
+    if persona_mode is ChatPersonaMode.SALES:
+        app.add_handler(CommandHandler("regime", _make_regime_handler(agent_loop, tools, persona_mode=persona_mode)))
+        app.add_handler(CommandHandler("calendar", _make_calendar_handler(agent_loop, tools, persona_mode=persona_mode)))
+        app.add_handler(CommandHandler("premarket", _make_premarket_handler(agent_loop, tools, persona_mode=persona_mode)))
     app.add_handler(
         MessageHandler(
             (filters.TEXT | filters.PHOTO | filters.Document.IMAGE) & ~filters.COMMAND,
-            _make_message_handler(agent_loop, tools, store),
+            _make_message_handler(agent_loop, tools, store, persona_mode=persona_mode),
         )
     )
 

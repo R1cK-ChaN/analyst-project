@@ -144,6 +144,50 @@ def build_sales_context(
     return render_context_sections(sections, budget=limits)
 
 
+def build_chat_context(
+    *,
+    store: SQLiteEngineStore,
+    client_id: str,
+    channel_id: str,
+    thread_id: str,
+    query: str,
+    persona_mode: str = "sales",
+    budget: RenderBudget | None = None,
+) -> str:
+    if str(persona_mode).strip().lower() != "companion":
+        return build_sales_context(
+            store=store,
+            client_id=client_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            query=query,
+            budget=budget,
+        )
+
+    limits = budget or RenderBudget()
+    profile = store.get_client_profile(client_id)
+    recent_messages = store.list_conversation_messages(
+        client_id=client_id,
+        channel=channel_id,
+        thread_id=thread_id,
+        limit=limits.max_recent_messages,
+    )
+    sections = [
+        (
+            "client_profile",
+            _render_companion_profile(profile),
+        ),
+        (
+            "current_thread",
+            [
+                f"- {message.role}: {trim_text(message.content, max_chars=limits.max_item_chars)}"
+                for message in recent_messages
+            ],
+        ),
+    ]
+    return render_context_sections(sections, budget=limits)
+
+
 def record_sales_interaction(
     *,
     store: SQLiteEngineStore,
@@ -178,6 +222,55 @@ def record_sales_interaction(
             "market_focus": update.market_focus,
             "expertise_level": update.expertise_level,
             "activity": update.activity,
+            "current_mood": update.current_mood,
+            "emotional_trend": update.emotional_trend,
+            "stress_level": update.stress_level,
+            "confidence": update.confidence,
+            "notes": update.notes,
+            "personal_facts": update.personal_facts,
+        },
+    )
+
+
+def record_chat_interaction(
+    *,
+    store: SQLiteEngineStore,
+    client_id: str,
+    channel_id: str,
+    thread_id: str,
+    user_text: str,
+    assistant_text: str,
+    assistant_profile_update: ClientProfileUpdate | None = None,
+    tool_audit: list[dict[str, Any]] | None = None,
+    persona_mode: str = "sales",
+) -> None:
+    if str(persona_mode).strip().lower() != "companion":
+        record_sales_interaction(
+            store=store,
+            client_id=client_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            user_text=user_text,
+            assistant_text=assistant_text,
+            assistant_profile_update=assistant_profile_update,
+            tool_audit=tool_audit,
+        )
+        return
+
+    update = merge_client_profile_updates(
+        _companion_only_update(extract_client_profile_update(user_text)),
+        _companion_only_update(assistant_profile_update or ClientProfileUpdate()),
+    )
+    store.record_sales_interaction(
+        client_id=client_id,
+        channel=channel_id,
+        thread_id=thread_id,
+        user_text=user_text,
+        assistant_text=assistant_text,
+        tool_audit=tool_audit or [],
+        profile_updates={
+            "preferred_language": update.preferred_language,
+            "response_style": update.response_style,
             "current_mood": update.current_mood,
             "emotional_trend": update.emotional_trend,
             "stress_level": update.stress_level,
@@ -238,6 +331,53 @@ def _render_client_profile(profile: ClientProfileRecord) -> list[str]:
         except (ValueError, TypeError):
             pass
     return lines
+
+
+def _render_companion_profile(profile: ClientProfileRecord) -> list[str]:
+    lines: list[str] = []
+    if profile.preferred_language:
+        lines.append(f"- preferred_language: {profile.preferred_language}")
+    if profile.response_style:
+        lines.append(f"- response_style: {profile.response_style}")
+    if profile.current_mood:
+        lines.append(f"- current_mood: {profile.current_mood}")
+    if profile.emotional_trend:
+        lines.append(f"- emotional_trend: {profile.emotional_trend}")
+    if profile.stress_level:
+        lines.append(f"- stress_level: {profile.stress_level}")
+    effective_confidence = profile.confidence or ("low" if profile.total_interactions < 3 else "")
+    if effective_confidence:
+        lines.append(f"- confidence: {effective_confidence}")
+    if profile.notes:
+        lines.append(f"- notes: {trim_text(profile.notes, max_chars=160)}")
+    if profile.personal_facts:
+        lines.append(f"- personal_facts: {'; '.join(profile.personal_facts)}")
+    if profile.total_interactions:
+        lines.append(f"- total_interactions: {profile.total_interactions}")
+    if profile.last_active_at:
+        try:
+            last = datetime.fromisoformat(profile.last_active_at)
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            days_away = (datetime.now(timezone.utc) - last).days
+            if days_away >= 1:
+                lines.append(f"- days_since_last_active: {days_away}")
+        except (ValueError, TypeError):
+            pass
+    return lines
+
+
+def _companion_only_update(update: ClientProfileUpdate) -> ClientProfileUpdate:
+    return ClientProfileUpdate(
+        preferred_language=update.preferred_language,
+        response_style=update.response_style,
+        current_mood=update.current_mood,
+        emotional_trend=update.emotional_trend,
+        stress_level=update.stress_level,
+        confidence=update.confidence,
+        notes=update.notes,
+        personal_facts=update.personal_facts,
+    )
 
 
 def _render_delivery_history(deliveries: list[DeliveryQueueRecord], *, limits: RenderBudget) -> list[str]:

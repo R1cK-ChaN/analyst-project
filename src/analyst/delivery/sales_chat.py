@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Any
@@ -33,7 +34,12 @@ from analyst.memory import ClientProfileUpdate, split_reply_and_profile_update
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
 from analyst.storage import SQLiteEngineStore
 
-from .soul import GROUP_CHAT_ADDENDUM, SOUL_SYSTEM_PROMPT
+from .soul import GROUP_CHAT_ADDENDUM, get_persona_system_prompt
+
+
+class ChatPersonaMode(str, Enum):
+    SALES = "sales"
+    COMPANION = "companion"
 
 
 @dataclass(frozen=True)
@@ -46,18 +52,45 @@ class MediaItem:
 
 
 @dataclass(frozen=True)
-class SalesChatReply:
+class ChatReply:
     text: str
     profile_update: ClientProfileUpdate
     media: list[MediaItem] = field(default_factory=list)
     tool_audit: list[dict[str, Any]] = field(default_factory=list)
 
 
-def build_sales_tools(
+SalesChatReply = ChatReply
+
+
+def resolve_chat_persona_mode(value: str | ChatPersonaMode | None = None) -> ChatPersonaMode:
+    if isinstance(value, ChatPersonaMode):
+        return value
+    lowered = str(value or ChatPersonaMode.SALES.value).strip().lower()
+    if lowered == ChatPersonaMode.COMPANION.value:
+        return ChatPersonaMode.COMPANION
+    return ChatPersonaMode.SALES
+
+
+def _build_companion_tools() -> list[AgentTool]:
+    kit = ToolKit()
+    kit.add(build_image_gen_tool())
+    live_photo_tool = build_optional_live_photo_tool()
+    if live_photo_tool is not None:
+        kit.add(live_photo_tool)
+    return kit.to_list()
+
+
+def build_chat_tools(
     engine: OpenRouterAnalystEngine,
     store: SQLiteEngineStore | None = None,
     provider: LLMProvider | None = None,
+    *,
+    persona_mode: str | ChatPersonaMode = ChatPersonaMode.SALES,
 ) -> list[AgentTool]:
+    resolved_mode = resolve_chat_persona_mode(persona_mode)
+    if resolved_mode is ChatPersonaMode.COMPANION:
+        return _build_companion_tools()
+
     def get_regime(arguments: dict[str, object]) -> str:
         note = engine.get_regime_summary()
         return note.body_markdown
@@ -119,12 +152,25 @@ def build_sales_tools(
     return kit.to_list()
 
 
-def build_sales_services(
+def build_sales_tools(
+    engine: OpenRouterAnalystEngine,
+    store: SQLiteEngineStore | None = None,
+    provider: LLMProvider | None = None,
+) -> list[AgentTool]:
+    return build_chat_tools(
+        engine,
+        store,
+        provider,
+        persona_mode=ChatPersonaMode.SALES,
+    )
+
+
+def build_chat_services(
     *,
     db_path: Path | None = None,
+    persona_mode: str | ChatPersonaMode = ChatPersonaMode.SALES,
 ) -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
-    repository = FileBackedInformationRepository()
-    info_service = AnalystInformationService(repository)
+    resolved_mode = resolve_chat_persona_mode(persona_mode)
     or_config = OpenRouterConfig.from_env(
         model_keys=(
             "ANALYST_TELEGRAM_OPENROUTER_MODEL",
@@ -135,6 +181,16 @@ def build_sales_services(
     )
     store = SQLiteEngineStore(db_path=db_path)
     provider = OpenRouterProvider(or_config)
+    agent_loop = PythonAgentLoop(
+        provider=provider,
+        config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
+    )
+    if resolved_mode is ChatPersonaMode.COMPANION:
+        tools = _build_companion_tools()
+        return agent_loop, tools, store
+
+    repository = FileBackedInformationRepository()
+    info_service = AnalystInformationService(repository)
     from analyst.engine.sub_agent_specs import build_content_sub_agents
     content_tools = build_content_sub_agents(provider, store)
     runtime = OpenRouterAgentRuntime(
@@ -150,12 +206,15 @@ def build_sales_services(
         tools=content_tools,
     )
     engine = OpenRouterAnalystEngine(info_service=info_service, runtime=runtime)
-    agent_loop = PythonAgentLoop(
-        provider=provider,
-        config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
-    )
-    tools = build_sales_tools(engine, store, provider=provider)
+    tools = build_chat_tools(engine, store, provider=provider, persona_mode=resolved_mode)
     return agent_loop, tools, store
+
+
+def build_sales_services(
+    *,
+    db_path: Path | None = None,
+) -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
+    return build_chat_services(db_path=db_path, persona_mode=ChatPersonaMode.SALES)
 
 
 def _has_cjk(text: str) -> bool:
@@ -189,8 +248,9 @@ def system_prompt_with_memory(
     *,
     user_lang: str = "",
     group_context: str = "",
+    persona_mode: str | ChatPersonaMode = ChatPersonaMode.SALES,
 ) -> str:
-    parts = [SOUL_SYSTEM_PROMPT]
+    parts = [get_persona_system_prompt(resolve_chat_persona_mode(persona_mode).value)]
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
     parts.append(f"\n[CURRENT TIME] {now.strftime('%Y-%m-%d %H:%M %A')} (Asia/Shanghai)")
     if group_context:
@@ -386,10 +446,13 @@ def _infer_selfie_scene_key(user_text: str) -> str:
     lowered = user_text.lower()
     scene_hints = (
         ("coffee_shop", ("咖啡", "coffee", "cafe")),
+        ("lazy_sunday_home", ("宅家", "在家", "home", "sofa", "couch")),
+        ("night_walk", ("散步", "walk", "night street", "city light")),
         ("gym_mirror", ("健身", "gym", "mirror")),
-        ("airport_lounge", ("机场", "airport", "lounge")),
-        ("trading_desk", ("交易", "盘前", "desk", "trading", "monitor")),
-        ("late_night_work", ("加班", "熬夜", "late night", "office", "work")),
+        ("airport_waiting", ("机场", "airport", "gate", "boarding")),
+        ("bedroom_late_night", ("卧室", "bedroom", "late night", "bed", "熬夜")),
+        ("rainy_day_window", ("下雨", "rain", "window", "雨天")),
+        ("weekend_street", ("周末", "street", "逛街", "outside")),
     )
     for scene_key, tokens in scene_hints:
         if any(token in lowered for token in tokens):
@@ -408,7 +471,7 @@ def _build_placeholder_image_arguments(
         if scene_key:
             arguments["scene_key"] = scene_key
         else:
-            arguments["prompt"] = "taking a casual phone selfie in a modern office\nsoft daylight\nrelaxed friendly expression"
+            arguments["prompt"] = "casual home selfie near a window\nsoft daylight\nrelaxed friendly expression"
         return arguments
 
     arguments = {
@@ -486,7 +549,7 @@ def _repair_missing_image_media(
     return media, [audit_entry]
 
 
-def generate_sales_reply(
+def generate_chat_reply(
     user_text: str,
     *,
     history: list[dict[str, str]] | None,
@@ -496,7 +559,8 @@ def generate_sales_reply(
     preferred_language: str = "",
     group_context: str = "",
     user_content: MessageContent | None = None,
-) -> SalesChatReply:
+    persona_mode: str | ChatPersonaMode = ChatPersonaMode.SALES,
+) -> ChatReply:
     history_messages = [
         ConversationMessage(role=message["role"], content=message["content"])
         for message in (history or [])
@@ -504,7 +568,10 @@ def generate_sales_reply(
     user_lang = _detect_language(user_text, fallback=preferred_language)
     result = agent_loop.run(
         system_prompt=system_prompt_with_memory(
-            memory_context, user_lang=user_lang, group_context=group_context,
+            memory_context,
+            user_lang=user_lang,
+            group_context=group_context,
+            persona_mode=persona_mode,
         ),
         user_prompt=user_content or user_text,
         tools=tools,
@@ -528,9 +595,33 @@ def generate_sales_reply(
             media = repaired_media
         if repaired_audit:
             tool_audit = [*tool_audit, *repaired_audit]
-    return SalesChatReply(
+    return ChatReply(
         text=response_text,
         profile_update=profile_update,
         media=media,
         tool_audit=tool_audit,
+    )
+
+
+def generate_sales_reply(
+    user_text: str,
+    *,
+    history: list[dict[str, str]] | None,
+    agent_loop: PythonAgentLoop,
+    tools: list[AgentTool],
+    memory_context: str = "",
+    preferred_language: str = "",
+    group_context: str = "",
+    user_content: MessageContent | None = None,
+) -> SalesChatReply:
+    return generate_chat_reply(
+        user_text,
+        history=history,
+        agent_loop=agent_loop,
+        tools=tools,
+        memory_context=memory_context,
+        preferred_language=preferred_language,
+        group_context=group_context,
+        user_content=user_content,
+        persona_mode=ChatPersonaMode.SALES,
     )

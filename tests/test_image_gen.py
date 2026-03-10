@@ -105,8 +105,8 @@ class TestImageGenHandler(unittest.TestCase):
         selfie_service.generate_selfie.return_value = Mock(
             image_path="/tmp/persona.jpg",
             prompt_used="assembled prompt",
-            scene_key="trading_desk",
-            scene_prompt="taking a selfie at a trading desk",
+            scene_key="night_walk",
+            scene_prompt="night street selfie",
             negative_prompt="different person",
         )
 
@@ -115,12 +115,12 @@ class TestImageGenHandler(unittest.TestCase):
             image_client=image_client,
             selfie_service=selfie_service,
         )
-        result = handler({"mode": "selfie", "scene_key": "trading_desk"})
+        result = handler({"mode": "selfie", "scene_key": "night_walk"})
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["image_path"], "/tmp/persona.jpg")
         self.assertEqual(result["mode"], "selfie")
-        self.assertEqual(result["scene_key"], "trading_desk")
+        self.assertEqual(result["scene_key"], "night_walk")
         selfie_service.generate_selfie.assert_called_once()
 
     def test_selfie_timeout_falls_back_to_generic_image(self) -> None:

@@ -238,6 +238,25 @@ class TestBuildApplication(unittest.TestCase):
         self.assertEqual(len(handlers), 6)
 
 
+class TestChatPersonaRouting(unittest.TestCase):
+    def test_companion_tools_exclude_finance_and_web_tools(self) -> None:
+        from analyst.delivery.sales_chat import ChatPersonaMode, build_chat_tools
+
+        image_tool = AgentTool(name="generate_image", description="", parameters={}, handler=lambda _: {})
+        live_tool = AgentTool(name="generate_live_photo", description="", parameters={}, handler=lambda _: {})
+
+        with patch("analyst.delivery.sales_chat.build_image_gen_tool", return_value=image_tool), \
+             patch("analyst.delivery.sales_chat.build_optional_live_photo_tool", return_value=live_tool):
+            tools = build_chat_tools(
+                engine=MagicMock(),
+                store=MagicMock(),
+                provider=MagicMock(),
+                persona_mode=ChatPersonaMode.COMPANION,
+            )
+
+        self.assertEqual([tool.name for tool in tools], ["generate_image", "generate_live_photo"])
+
+
 class TestChatReply(unittest.IsolatedAsyncioTestCase):
     """Test _chat_reply — the core agent-loop chat function."""
 
@@ -267,6 +286,24 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
         call_kwargs = self.mock_loop.run.call_args.kwargs
         self.assertIn(SOUL_SYSTEM_PROMPT, call_kwargs["system_prompt"])
         self.assertIn("陈襄", call_kwargs["system_prompt"])
+
+    async def test_companion_mode_uses_companion_prompt(self) -> None:
+        from analyst.delivery.bot import _chat_reply
+        from analyst.delivery.sales_chat import ChatPersonaMode
+        from analyst.delivery.soul import COMPANION_SYSTEM_PROMPT
+
+        self._set_loop_response("晚上好")
+        await _chat_reply(
+            "hi",
+            self.mock_context,
+            self.mock_loop,
+            self.mock_tools,
+            persona_mode=ChatPersonaMode.COMPANION,
+        )
+
+        call_kwargs = self.mock_loop.run.call_args.kwargs
+        self.assertIn(COMPANION_SYSTEM_PROMPT, call_kwargs["system_prompt"])
+        self.assertNotIn("投研老兵", call_kwargs["system_prompt"])
 
     async def test_passes_tools_to_agent_loop(self) -> None:
         from analyst.delivery.bot import _chat_reply
