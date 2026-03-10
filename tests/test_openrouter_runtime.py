@@ -4,7 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -17,7 +17,7 @@ from analyst.contracts import (
     SourceReference,
     utc_now,
 )
-from analyst.engine.live_provider import OpenRouterConfig
+from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider
 from analyst.engine.live_types import CompletionResult, ConversationMessage
 from analyst.engine.service import OpenRouterAnalystEngine
 from analyst.env import clear_env_cache
@@ -109,6 +109,47 @@ class OpenRouterRuntimeTest(unittest.TestCase):
         self.assertEqual(provider.calls[0]["max_tokens"], 333)
         self.assertEqual(provider.calls[0]["temperature"], 0.1)
         self.assertEqual(provider.calls[0]["tools"], [])
+
+
+class OpenRouterProviderTest(unittest.TestCase):
+    def test_complete_preserves_multimodal_user_content(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "ok",
+                        "tool_calls": [],
+                    }
+                }
+            ]
+        }
+        session = Mock()
+        session.post.return_value = response
+        provider = OpenRouterProvider(
+            OpenRouterConfig(api_key="test-key", model="google/gemini-3.1-flash-lite-preview"),
+            session=session,
+        )
+
+        provider.complete(
+            system_prompt="system",
+            messages=[
+                ConversationMessage(
+                    role="user",
+                    content=[
+                        {"type": "text", "text": "look at this"},
+                        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,abc"}},
+                    ],
+                )
+            ],
+            tools=[],
+            max_tokens=100,
+            temperature=0.2,
+        )
+
+        request_payload = session.post.call_args.kwargs["data"]
+        self.assertIn('"type": "image_url"', request_payload)
+        self.assertIn("data:image/jpeg;base64,abc", request_payload)
 
 
 class OpenRouterAnalystEngineTest(unittest.TestCase):

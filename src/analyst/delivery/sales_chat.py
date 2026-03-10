@@ -5,11 +5,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from typing import Any
 
 from analyst.engine import OpenRouterAnalystEngine
 from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
 from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider
-from analyst.engine.live_types import AgentTool, ConversationMessage, LLMProvider
+from analyst.engine.live_types import AgentTool, ConversationMessage, LLMProvider, MessageContent
 from analyst.tools import (
     ToolKit,
     build_article_tool,
@@ -298,6 +299,7 @@ def generate_sales_reply(
     memory_context: str = "",
     preferred_language: str = "",
     group_context: str = "",
+    user_content: MessageContent | None = None,
 ) -> SalesChatReply:
     history_messages = [
         ConversationMessage(role=message["role"], content=message["content"])
@@ -308,7 +310,7 @@ def generate_sales_reply(
         system_prompt=system_prompt_with_memory(
             memory_context, user_lang=user_lang, group_context=group_context,
         ),
-        user_prompt=user_text,
+        user_prompt=user_content or user_text,
         tools=tools,
         history=history_messages,
     )

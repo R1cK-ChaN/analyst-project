@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
+
+MessageContent = str | list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -14,7 +16,7 @@ class ToolCall:
 @dataclass(frozen=True)
 class ConversationMessage:
     role: str
-    content: str | None = None
+    content: MessageContent | None = None
     tool_call_id: str | None = None
     tool_name: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)

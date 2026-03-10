@@ -19,6 +19,8 @@ Commands
 from __future__ import annotations
 
 import asyncio
+import base64
+from io import BytesIO
 import logging
 import os
 import random
@@ -27,6 +29,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from telegram import MessageEntity, Update
 from telegram.constants import ChatAction
@@ -37,6 +40,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from PIL import Image, ImageOps
 
 # ---------------------------------------------------------------------------
 # Bootstrap the analyst package so we can import from src/
@@ -55,6 +59,7 @@ from analyst.memory import (  # noqa: E402
     record_sales_interaction,
 )
 from analyst.storage import SQLiteEngineStore  # noqa: E402
+from analyst.tools._request_context import RequestImageInput, bind_request_image  # noqa: E402
 
 from .sales_chat import (  # noqa: E402
     MediaItem,
@@ -73,6 +78,7 @@ MANAGED_MEDIA_PREFIXES = (
     "analyst_gen_",
     "analyst_live_",
 )
+MAX_INBOUND_IMAGE_EDGE = 1536
 
 
 # ---------------------------------------------------------------------------
@@ -93,15 +99,22 @@ def _is_bot_mentioned(update: Update, context: ContextTypes.DEFAULT_TYPE) -> boo
         return False
     bot_username = (context.bot.username or "").lower()
     bot_id = context.bot.id
-    for entity, text in message.parse_entities(
-        types=[MessageEntity.MENTION, MessageEntity.TEXT_MENTION]
-    ).items():
-        if entity.type == MessageEntity.MENTION:
-            if text.lstrip("@").lower() == bot_username:
-                return True
-        elif entity.type == MessageEntity.TEXT_MENTION:
-            if entity.user and entity.user.id == bot_id:
-                return True
+    entity_maps = [
+        message.parse_entities(types=[MessageEntity.MENTION, MessageEntity.TEXT_MENTION]),
+    ]
+    caption = getattr(message, "caption", None)
+    if isinstance(caption, str):
+        entity_maps.append(
+            message.parse_caption_entities(types=[MessageEntity.MENTION, MessageEntity.TEXT_MENTION])
+        )
+    for entity_map in entity_maps:
+        for entity, text in entity_map.items():
+            if entity.type == MessageEntity.MENTION:
+                if text.lstrip("@").lower() == bot_username:
+                    return True
+            elif entity.type == MessageEntity.TEXT_MENTION:
+                if entity.user and entity.user.id == bot_id:
+                    return True
     return False
 
 
@@ -129,7 +142,7 @@ def _extract_reply_context(update: Update) -> str | None:
     quote = getattr(reply_msg, "quote", None)
     if quote and getattr(quote, "text", None):
         return quote.text
-    return reply_msg.text  # may be None for non-text messages
+    return reply_msg.text or reply_msg.caption  # may be None for non-text messages
 
 
 def _strip_bot_mention(text: str, bot_username: str) -> str:
@@ -168,6 +181,94 @@ def _get_user_display_name(update: Update) -> str:
     if user and user.first_name:
         return user.first_name
     return "User"
+
+
+def _extract_message_text(message: Any) -> str:
+    return str(message.text or message.caption or "").strip()
+
+
+def _summarize_user_message(text: str, *, has_image: bool) -> str:
+    if has_image and text:
+        return f"{text}\n[Image attached]"
+    if has_image:
+        return "[Image attached]"
+    return text
+
+
+def _render_image_instruction(text: str) -> str:
+    base = text.strip() or "The user sent an image without caption. Analyze it and respond naturally."
+    return (
+        f"{base}\n\n"
+        "[The user attached an image. You can inspect it directly. "
+        "If they ask for a variation or edit of the attached image, call generate_image with "
+        "use_attached_image=true. If they ask to animate the attached image, call "
+        "generate_live_photo with use_attached_image=true.]"
+    )
+
+
+def _encode_image_data_uri(raw_bytes: bytes, mime_type: str) -> RequestImageInput:
+    normalized_mime_type = mime_type or "image/jpeg"
+    payload = raw_bytes
+    try:
+        with Image.open(BytesIO(raw_bytes)) as source_image:
+            image = ImageOps.exif_transpose(source_image)
+            if image.mode not in {"RGB", "L"}:
+                alpha_image = image.convert("RGBA")
+                background = Image.new("RGBA", alpha_image.size, (255, 255, 255, 255))
+                background.alpha_composite(alpha_image)
+                image = background.convert("RGB")
+            else:
+                image = image.convert("RGB")
+            longest_edge = max(image.size)
+            if longest_edge > MAX_INBOUND_IMAGE_EDGE:
+                scale = MAX_INBOUND_IMAGE_EDGE / float(longest_edge)
+                image = image.resize(
+                    (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
+                    Image.Resampling.LANCZOS,
+                )
+            buffer = BytesIO()
+            image.save(buffer, format="JPEG", quality=90)
+            payload = buffer.getvalue()
+            normalized_mime_type = "image/jpeg"
+    except Exception:
+        logger.warning("Failed to normalize inbound image; falling back to original bytes.")
+    encoded = base64.b64encode(payload).decode("ascii")
+    return RequestImageInput(data_uri=f"data:{normalized_mime_type};base64,{encoded}", mime_type=normalized_mime_type)
+
+
+async def _extract_attached_image(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> RequestImageInput | None:
+    message = update.effective_message
+    if message is None:
+        return None
+    file_id = ""
+    mime_type = "image/jpeg"
+    filename = ""
+    photo_items = getattr(message, "photo", None)
+    if isinstance(photo_items, (list, tuple)) and photo_items:
+        photo = photo_items[-1]
+        file_id = photo.file_id
+        filename = f"{file_id}.jpg"
+    else:
+        document = getattr(message, "document", None)
+        mime_type = getattr(document, "mime_type", "") if document is not None else ""
+        if not mime_type.startswith("image/"):
+            return None
+        file_id = document.file_id
+        filename = document.file_name or f"{file_id}.jpg"
+    if not file_id:
+        return None
+
+    telegram_file = await context.bot.get_file(file_id)
+    raw_bytes = bytes(await telegram_file.download_as_bytearray())
+    request_image = _encode_image_data_uri(raw_bytes, mime_type)
+    return RequestImageInput(
+        data_uri=request_image.data_uri,
+        mime_type=request_image.mime_type,
+        filename=filename,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -271,21 +372,26 @@ async def _chat_reply(
     group_context: str = "",
     is_group: bool = False,
     thread_id: str = "main",
+    user_content: Any | None = None,
+    history_text: str | None = None,
+    attached_image: RequestImageInput | None = None,
 ) -> SalesChatReply:
     """Send user_text through the agent loop with persona, history, tools, and sales context."""
     history = _get_history(context, is_group=is_group, thread_id=thread_id)
 
     try:
-        result = await asyncio.to_thread(
-            generate_sales_reply,
-            user_text,
-            history=history,
-            agent_loop=agent_loop,
-            tools=tools,
-            memory_context=memory_context,
-            preferred_language=preferred_language,
-            group_context=group_context,
-        )
+        with bind_request_image(attached_image):
+            result = await asyncio.to_thread(
+                generate_sales_reply,
+                user_text,
+                history=history,
+                agent_loop=agent_loop,
+                tools=tools,
+                memory_context=memory_context,
+                preferred_language=preferred_language,
+                group_context=group_context,
+                user_content=user_content,
+            )
         response_text = result.text
         profile_update = result.profile_update
         media = result.media
@@ -298,7 +404,13 @@ async def _chat_reply(
     if len(response_text) > MAX_TELEGRAM_LENGTH:
         response_text = response_text[: MAX_TELEGRAM_LENGTH - 3] + "..."
 
-    _append_history(context, "user", user_text, is_group=is_group, thread_id=thread_id)
+    _append_history(
+        context,
+        "user",
+        history_text or user_text,
+        is_group=is_group,
+        thread_id=thread_id,
+    )
     _append_history(context, "assistant", response_text, is_group=is_group, thread_id=thread_id)
 
     return SalesChatReply(text=response_text, profile_update=profile_update, media=media)
@@ -406,28 +518,34 @@ def _make_message_handler(
     store: SQLiteEngineStore,
 ):
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.effective_message is None or update.effective_message.text is None:
+        if update.effective_message is None:
+            return
+        message = update.effective_message
+        attached_image = await _extract_attached_image(update, context)
+        text = _extract_message_text(message)
+        if not text and attached_image is None:
             return
         user_id = str(update.effective_user.id) if update.effective_user else str(update.effective_chat.id)
-        text = update.effective_message.text
         channel_id = f"telegram:{update.effective_chat.id}"
-        topic_id = getattr(update.effective_message, "message_thread_id", None)
+        topic_id = getattr(message, "message_thread_id", None)
         thread_id = str(topic_id) if topic_id is not None else "main"
 
         in_group = _is_group_chat(update)
 
         reply_context = _extract_reply_context(update)
+        history_user_text = _summarize_user_message(text, has_image=attached_image is not None)
 
         if in_group:
             sender_name = _get_user_display_name(update)
-            _append_group_buffer(context, thread_id, sender_name, text)
+            _append_group_buffer(context, thread_id, sender_name, history_user_text)
 
             if not _should_reply_in_group(update, context):
                 return
 
             bot_username = context.bot.username or ""
             text = _strip_bot_mention(text, bot_username)
-            if not text:
+            history_user_text = _summarize_user_message(text, has_image=attached_image is not None)
+            if not text and attached_image is None:
                 return
 
             group_context_str = _render_group_context(context, thread_id)
@@ -435,10 +553,19 @@ def _make_message_handler(
             group_context_str = ""
 
         # Build enriched text for LLM (includes reply context)
+        base_llm_text = text or "The user sent an image without caption."
         if reply_context:
-            llm_text = f'回复消息：\n"{reply_context}"\n\n用户说：\n{text}'
+            llm_text = f'回复消息：\n"{reply_context}"\n\n用户说：\n{base_llm_text}'
         else:
-            llm_text = text
+            llm_text = base_llm_text
+        user_content = (
+            [
+                {"type": "text", "text": _render_image_instruction(llm_text)},
+                {"type": "image_url", "image_url": {"url": attached_image.data_uri}},
+            ]
+            if attached_image is not None
+            else llm_text
+        )
 
         await update.effective_chat.send_action(ChatAction.TYPING)
         memory_context = build_sales_context(
@@ -459,13 +586,16 @@ def _make_message_handler(
             group_context=group_context_str,
             is_group=in_group,
             thread_id=thread_id,
+            user_content=user_content,
+            history_text=history_user_text,
+            attached_image=attached_image,
         )
         record_sales_interaction(
             store=store,
             client_id=user_id,
             channel_id=channel_id,
             thread_id=thread_id,
-            user_text=text,
+            user_text=history_user_text,
             assistant_text=reply.text,
             assistant_profile_update=reply.profile_update,
         )
@@ -531,7 +661,12 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("regime", _make_regime_handler(agent_loop, tools)))
     app.add_handler(CommandHandler("calendar", _make_calendar_handler(agent_loop, tools)))
     app.add_handler(CommandHandler("premarket", _make_premarket_handler(agent_loop, tools)))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _make_message_handler(agent_loop, tools, store)))
+    app.add_handler(
+        MessageHandler(
+            (filters.TEXT | filters.PHOTO | filters.Document.IMAGE) & ~filters.COMMAND,
+            _make_message_handler(agent_loop, tools, store),
+        )
+    )
 
     return app
 

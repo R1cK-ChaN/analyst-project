@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from analyst.tools._image_gen import ImageGenConfig, ImageGenHandler
+from analyst.tools._request_context import RequestImageInput, bind_request_image
 
 
 class TestImageGenHandler(unittest.TestCase):
@@ -87,6 +88,61 @@ class TestImageGenHandler(unittest.TestCase):
         result = handler({"prompt": "generate a chart"})
 
         self.assertEqual(result, {"status": "error", "error": "No image found in model response"})
+
+    def test_selfie_mode_routes_through_selfie_service(self) -> None:
+        image_client = Mock()
+        selfie_service = Mock()
+        selfie_service.is_selfie_request.return_value = True
+        selfie_service.generate_selfie.return_value = Mock(
+            image_path="/tmp/persona.jpg",
+            prompt_used="assembled prompt",
+            scene_key="trading_desk",
+            scene_prompt="taking a selfie at a trading desk",
+            negative_prompt="different person",
+        )
+
+        handler = ImageGenHandler(
+            self.config,
+            image_client=image_client,
+            selfie_service=selfie_service,
+        )
+        result = handler({"mode": "selfie", "scene_key": "trading_desk"})
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["image_path"], "/tmp/persona.jpg")
+        self.assertEqual(result["mode"], "selfie")
+        self.assertEqual(result["scene_key"], "trading_desk")
+        selfie_service.generate_selfie.assert_called_once()
+
+    def test_generic_mode_can_use_attached_image_context(self) -> None:
+        image_client = Mock()
+        image_client.generate_image.return_value = Mock(
+            image_path="",
+            image_url="https://example.com/variation.jpg",
+        )
+        selfie_service = Mock()
+        selfie_service.is_selfie_request.return_value = False
+        handler = ImageGenHandler(
+            self.config,
+            image_client=image_client,
+            selfie_service=selfie_service,
+        )
+
+        with bind_request_image(
+            RequestImageInput(
+                data_uri="data:image/jpeg;base64,abc",
+                mime_type="image/jpeg",
+                filename="user.jpg",
+            )
+        ):
+            result = handler({"prompt": "make it cinematic", "use_attached_image": True})
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["used_attached_image"])
+        image_client.generate_image.assert_called_once_with(
+            prompt="make it cinematic",
+            image_input="data:image/jpeg;base64,abc",
+        )
 
 
 if __name__ == "__main__":

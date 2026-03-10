@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from .live_types import AgentLoopResult, AgentTool, ConversationMessage, LLMProvider, LoopEvent
+from .live_types import AgentLoopResult, AgentTool, ConversationMessage, LLMProvider, LoopEvent, MessageContent
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,7 @@ class PythonAgentLoop:
         self,
         *,
         system_prompt: str,
-        user_prompt: str,
+        user_prompt: MessageContent,
         tools: list[AgentTool],
         history: list[ConversationMessage] | None = None,
     ) -> AgentLoopResult:

@@ -25,6 +25,7 @@ from analyst.tools._live_photo import (
     VideoGenerationError,
     build_optional_live_photo_tool,
 )
+from analyst.tools._request_context import RequestImageInput, bind_request_image
 
 
 class TestSeedDanceVideoProvider(unittest.TestCase):
@@ -104,6 +105,34 @@ class TestSeedDanceVideoProvider(unittest.TestCase):
         self.assertEqual(result.video_url, "https://example.com/generated.mp4")
         Path(result.video_path).unlink()
 
+    def test_generate_video_includes_image_part_when_present(self) -> None:
+        session = Mock()
+        session.post.return_value = _json_response({"id": "task-123"})
+        session.get.side_effect = [
+            _json_response({"status": "succeeded", "content": {"video_url": "https://example.com/generated.mp4"}}),
+            _download_response(b"fake video bytes"),
+        ]
+        provider = SeedDanceVideoProvider(
+            SeedDanceConfig(
+                api_key="test-key",
+                base_url="https://seedance.example/api/v3",
+                model="seedance-test",
+                poll_interval_seconds=0,
+            ),
+            session=session,
+            sleep_fn=lambda _: None,
+        )
+
+        provider.generate_video(
+            prompt="animate this selfie",
+            duration_seconds=2,
+            image_data_uri="data:image/png;base64,abc",
+        )
+
+        request_payload = json.loads(session.post.call_args.kwargs["data"])
+        self.assertEqual(request_payload["content"][1]["type"], "image_url")
+        self.assertEqual(request_payload["content"][1]["image_url"]["url"], "data:image/png;base64,abc")
+
 
 class TestLivePhotoHandler(unittest.TestCase):
     def test_falls_back_to_static_image_when_motion_generation_fails(self) -> None:
@@ -111,9 +140,11 @@ class TestLivePhotoHandler(unittest.TestCase):
         provider.generate_video.side_effect = VideoGenerationError("timed out")
         packager = Mock()
         image_handler = Mock(return_value={"status": "ok", "image_path": "/tmp/fallback.png"})
+        selfie_service = Mock()
+        selfie_service.is_selfie_request.return_value = False
 
-        handler = LivePhotoHandler(provider, packager, image_handler)
-        result = handler({"prompt": "dynamic selfie"})
+        handler = LivePhotoHandler(provider, packager, image_handler, selfie_service=selfie_service)
+        result = handler({"prompt": "generic motion clip"})
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["fallback_kind"], "image")
@@ -128,9 +159,11 @@ class TestLivePhotoHandler(unittest.TestCase):
         packager = Mock()
         packager.is_available.return_value = False
         image_handler = Mock()
+        selfie_service = Mock()
+        selfie_service.is_selfie_request.return_value = False
 
-        handler = LivePhotoHandler(provider, packager, image_handler)
-        result = handler({"prompt": "dynamic selfie"})
+        handler = LivePhotoHandler(provider, packager, image_handler, selfie_service=selfie_service)
+        result = handler({"prompt": "generic motion clip"})
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["fallback_kind"], "video")
@@ -139,6 +172,77 @@ class TestLivePhotoHandler(unittest.TestCase):
         self.assertEqual(result["cleanup_paths"], ["/tmp/generated.mp4"])
         self.assertIn("motion video only", result["warning"])
         image_handler.assert_not_called()
+
+    def test_selfie_mode_generates_still_before_motion_video(self) -> None:
+        provider = Mock()
+        provider.generate_video.return_value = GeneratedVideo(
+            video_path="/tmp/generated.mp4",
+            video_url="https://example.com/generated.mp4",
+        )
+        packager = Mock()
+        packager.is_available.return_value = False
+        image_handler = Mock()
+        selfie_service = Mock()
+        selfie_service.is_selfie_request.return_value = True
+        selfie_service.generate_selfie.return_value = Mock(
+            image_path="/tmp/persona.jpg",
+            image_data_uri="data:image/jpeg;base64,abc",
+            prompt_used="assembled still prompt",
+            scene_key="trading_desk",
+            scene_prompt="taking a selfie at a trading desk",
+            motion_prompt="subtle desk motion",
+            negative_prompt="different person",
+        )
+
+        handler = LivePhotoHandler(
+            provider,
+            packager,
+            image_handler,
+            image_client=Mock(),
+            selfie_service=selfie_service,
+        )
+        result = handler({"mode": "selfie", "scene_key": "trading_desk", "duration_seconds": 2})
+
+        selfie_service.generate_selfie.assert_called_once()
+        provider.generate_video.assert_called_once_with(
+            prompt="subtle desk motion",
+            duration_seconds=2,
+            image_data_uri="data:image/jpeg;base64,abc",
+        )
+        self.assertEqual(result["fallback_kind"], "video")
+        self.assertEqual(result["mode"], "selfie")
+        self.assertEqual(result["scene_key"], "trading_desk")
+        image_handler.assert_not_called()
+
+    def test_generic_mode_can_animate_attached_image(self) -> None:
+        provider = Mock()
+        provider.generate_video.return_value = GeneratedVideo(
+            video_path="/tmp/generated.mp4",
+            video_url="https://example.com/generated.mp4",
+        )
+        packager = Mock()
+        packager.is_available.return_value = False
+        image_handler = Mock()
+        selfie_service = Mock()
+        selfie_service.is_selfie_request.return_value = False
+        handler = LivePhotoHandler(provider, packager, image_handler, selfie_service=selfie_service)
+
+        with bind_request_image(
+            RequestImageInput(
+                data_uri="data:image/jpeg;base64,abc",
+                mime_type="image/jpeg",
+                filename="user.jpg",
+            )
+        ):
+            result = handler({"use_attached_image": True, "duration_seconds": 3})
+
+        provider.generate_video.assert_called_once_with(
+            prompt="Animate the attached image naturally with subtle motion and realistic camera movement.",
+            duration_seconds=3,
+            image_data_uri="data:image/jpeg;base64,abc",
+        )
+        self.assertEqual(result["fallback_kind"], "video")
+        self.assertTrue(result["used_attached_image"])
 
 
 class TestLivePhotoPackager(unittest.TestCase):

@@ -373,13 +373,17 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
     def _make_update(
         self,
         text: str = "hello",
+        caption: str | None = None,
         chat_type: str = "supergroup",
         chat_id: int = -100123,
         user_id: int = 42,
         first_name: str = "Alice",
         entities: dict | None = None,
+        caption_entities: dict | None = None,
         reply_to_bot: bool = False,
         bot_id: int = 999,
+        with_photo: bool = False,
+        document_mime_type: str | None = None,
     ) -> tuple:
         """Build mock Update + Context for group/private scenarios."""
         update = MagicMock()
@@ -387,26 +391,50 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         update.effective_chat.id = chat_id
         update.effective_chat.send_action = AsyncMock()
         update.effective_message.text = text
+        update.effective_message.caption = caption
         update.effective_message.message_thread_id = None
         update.effective_message.reply_text = AsyncMock()
+        update.effective_message.reply_photo = AsyncMock()
+        update.effective_message.reply_video = AsyncMock()
         update.effective_user.id = user_id
         update.effective_user.first_name = first_name
+        update.effective_message.photo = []
+        update.effective_message.document = None
 
         if entities is None:
             update.effective_message.parse_entities.return_value = {}
         else:
             update.effective_message.parse_entities.return_value = entities
+        if caption_entities is None:
+            update.effective_message.parse_caption_entities.return_value = {}
+        else:
+            update.effective_message.parse_caption_entities.return_value = caption_entities
+
+        if with_photo:
+            photo = MagicMock()
+            photo.file_id = "photo-file-id"
+            update.effective_message.photo = [photo]
+        if document_mime_type is not None:
+            document = MagicMock()
+            document.file_id = "document-file-id"
+            document.file_name = "upload.png"
+            document.mime_type = document_mime_type
+            update.effective_message.document = document
 
         if reply_to_bot:
             reply_user = MagicMock()
             reply_user.id = bot_id
             update.effective_message.reply_to_message.from_user = reply_user
+            update.effective_message.reply_to_message.text = None
+            update.effective_message.reply_to_message.caption = None
+            update.effective_message.reply_to_message.quote = None
         else:
             update.effective_message.reply_to_message = None
 
         context = MagicMock()
         context.bot.username = "testbot"
         context.bot.id = bot_id
+        context.bot.get_file = AsyncMock()
         context.user_data = {}
         context.chat_data = {}
 
@@ -459,6 +487,30 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         update, context = self._make_update(
             text="@testbot what's the regime?", chat_type="supergroup", entities=entities,
         )
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
+             patch("analyst.delivery.bot.record_sales_interaction"):
+            await handler(update, context)
+
+        update.effective_message.reply_text.assert_called()
+
+    async def test_group_photo_caption_mention_triggers_reply(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+
+        mention_entity = MagicMock()
+        mention_entity.type = "mention"
+        caption_entities = {mention_entity: "@testbot"}
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(
+            text="",
+            caption="@testbot animate this",
+            chat_type="supergroup",
+            caption_entities=caption_entities,
+            with_photo=True,
+        )
+        telegram_file = MagicMock()
+        telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake image bytes"))
+        context.bot.get_file.return_value = telegram_file
 
         with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
              patch("analyst.delivery.bot.record_sales_interaction"):
@@ -544,6 +596,55 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
 
         # Private chat always triggers a reply
         update.effective_message.reply_text.assert_called()
+
+    async def test_private_photo_message_passes_multimodal_prompt(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(
+            text="",
+            caption="make this move",
+            chat_type="private",
+            with_photo=True,
+        )
+        telegram_file = MagicMock()
+        telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake image bytes"))
+        context.bot.get_file.return_value = telegram_file
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
+             patch("analyst.delivery.bot.record_sales_interaction") as mock_record:
+            await handler(update, context)
+
+        call_kwargs = self.mock_loop.run.call_args.kwargs
+        self.assertIsInstance(call_kwargs["user_prompt"], list)
+        self.assertEqual(call_kwargs["user_prompt"][1]["type"], "image_url")
+        self.assertTrue(
+            call_kwargs["user_prompt"][1]["image_url"]["url"].startswith("data:image/")
+        )
+        mock_record.assert_called_once()
+        self.assertIn("[Image attached]", mock_record.call_args.kwargs["user_text"])
+
+    async def test_private_image_document_passes_multimodal_prompt(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(
+            text="turn this into a poster",
+            chat_type="private",
+            document_mime_type="image/png",
+        )
+        telegram_file = MagicMock()
+        telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake image bytes"))
+        context.bot.get_file.return_value = telegram_file
+
+        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
+             patch("analyst.delivery.bot.record_sales_interaction"):
+            await handler(update, context)
+
+        call_kwargs = self.mock_loop.run.call_args.kwargs
+        self.assertIsInstance(call_kwargs["user_prompt"], list)
+        self.assertEqual(call_kwargs["user_prompt"][0]["type"], "text")
+        self.assertEqual(call_kwargs["user_prompt"][1]["type"], "image_url")
 
     async def test_private_chat_sends_and_cleans_up_generated_photo(self) -> None:
         from analyst.delivery.bot import _make_message_handler

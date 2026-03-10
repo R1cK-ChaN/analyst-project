@@ -9,7 +9,7 @@ import requests
 
 from analyst.env import get_env_value
 
-from .live_types import AgentTool, CompletionResult, ConversationMessage, ToolCall
+from .live_types import AgentTool, CompletionResult, ConversationMessage, MessageContent, ToolCall
 
 
 @dataclass(frozen=True)
@@ -135,8 +135,13 @@ class OpenRouterProvider:
                     }
                 )
                 continue
-            payload.append({"role": message.role, "content": message.content or ""})
+            payload.append({"role": message.role, "content": self._normalize_content(message.content)})
         return payload
+
+    def _normalize_content(self, content: MessageContent | None) -> MessageContent:
+        if content is None:
+            return ""
+        return content
 
     def _parse_arguments(self, raw_arguments: str) -> dict[str, Any]:
         if not raw_arguments:

@@ -19,13 +19,21 @@ from analyst.engine.live_types import AgentTool
 from analyst.env import get_env_value
 
 from ._ffmpeg import resolve_ffmpeg_binary
-from ._image_gen import ImageGenConfig, ImageGenHandler
+from ._image_gen import ImageGenConfig, ImageGenHandler, SeedreamImageClient
+from ._request_context import get_request_image
+from ._selfie_persona import GeneratedSelfie, SelfiePromptService
 
 logger = logging.getLogger(__name__)
 
 
 class VideoGenProvider(Protocol):
-    def generate_video(self, *, prompt: str, duration_seconds: int) -> "GeneratedVideo":
+    def generate_video(
+        self,
+        *,
+        prompt: str,
+        duration_seconds: int,
+        image_data_uri: str = "",
+    ) -> "GeneratedVideo":
         ...
 
 
@@ -121,14 +129,23 @@ class SeedDanceVideoProvider:
         self._session = session or requests.Session()
         self._sleep = sleep_fn
 
-    def generate_video(self, *, prompt: str, duration_seconds: int) -> GeneratedVideo:
+    def generate_video(
+        self,
+        *,
+        prompt: str,
+        duration_seconds: int,
+        image_data_uri: str = "",
+    ) -> GeneratedVideo:
         headers = {
             "Authorization": f"Bearer {self._config.api_key}",
             "Content-Type": "application/json",
         }
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        if image_data_uri:
+            content.append({"type": "image_url", "image_url": {"url": image_data_uri}})
         payload: dict[str, Any] = {
             "model": self._config.model,
-            "content": [{"type": "text", "text": prompt}],
+            "content": content,
             "duration": duration_seconds,
             "ratio": self._config.default_ratio,
             "resolution": self._config.default_resolution,
@@ -360,30 +377,71 @@ class LivePhotoHandler:
         video_provider: VideoGenProvider,
         packager: LivePhotoPackager | None,
         image_handler: ImageGenHandler,
+        *,
+        image_client: SeedreamImageClient | None = None,
+        selfie_service: SelfiePromptService | None = None,
     ) -> None:
         self._video_provider = video_provider
         self._packager = packager
         self._image_handler = image_handler
+        self._image_client = image_client
+        self._selfie_service = selfie_service or SelfiePromptService()
 
     def __call__(self, arguments: dict[str, Any]) -> dict[str, Any]:
         prompt = str(arguments.get("prompt", "")).strip()
-        if not prompt:
+        is_selfie_request = self._selfie_service.is_selfie_request(arguments)
+        use_attached_image = bool(arguments.get("use_attached_image"))
+        attached_image = get_request_image() if use_attached_image else None
+        if use_attached_image and attached_image is None:
+            return {"status": "error", "error": "No attached image is available for this request."}
+        if not prompt and attached_image is not None and not is_selfie_request:
+            prompt = "Animate the attached image naturally with subtle motion and realistic camera movement."
+        if not prompt and not is_selfie_request:
             return {"status": "error", "error": "prompt is required"}
         duration_seconds = _clamp_duration(arguments.get("duration_seconds", 3))
+        generated_selfie: GeneratedSelfie | None = None
 
         try:
-            generated_video = self._video_provider.generate_video(
-                prompt=prompt,
-                duration_seconds=duration_seconds,
-            )
+            if is_selfie_request:
+                if self._image_client is None:
+                    raise RuntimeError("Image client is required for selfie motion generation.")
+                generated_selfie = self._selfie_service.generate_selfie(arguments, self._image_client)
+                generated_video = self._video_provider.generate_video(
+                    prompt=generated_selfie.motion_prompt,
+                    duration_seconds=duration_seconds,
+                    image_data_uri=generated_selfie.image_data_uri,
+                )
+            else:
+                generated_video = self._video_provider.generate_video(
+                    prompt=prompt,
+                    duration_seconds=duration_seconds,
+                    image_data_uri=attached_image.data_uri if attached_image is not None else "",
+                )
         except VideoGenerationError as exc:
             logger.warning("Live photo generation failed: %s", exc)
-            fallback = self._image_handler({"prompt": prompt})
+            if generated_selfie is not None:
+                return {
+                    "status": "ok",
+                    "fallback_kind": "image",
+                    "image_path": generated_selfie.image_path,
+                    "prompt_used": generated_selfie.prompt_used,
+                    "warning": str(exc),
+                    "mode": "selfie",
+                    "scene_prompt": generated_selfie.scene_prompt,
+                    "negative_prompt_used": generated_selfie.negative_prompt,
+                }
+            fallback_arguments: dict[str, Any] = {"prompt": prompt}
+            if attached_image is not None:
+                fallback_arguments["use_attached_image"] = True
+            fallback = self._image_handler(fallback_arguments)
             if fallback.get("status") == "ok":
                 fallback["fallback_kind"] = "image"
                 fallback["prompt_used"] = prompt
                 fallback["warning"] = str(exc)
                 return fallback
+            return {"status": "error", "error": str(exc)}
+        except RuntimeError as exc:
+            logger.warning("Live selfie generation failed before motion render: %s", exc)
             return {"status": "error", "error": str(exc)}
 
         if self._packager and self._packager.is_available():
@@ -393,7 +451,7 @@ class LivePhotoHandler:
                     "status": "ok",
                     "fallback_kind": "live_photo",
                     "asset_id": live_photo.asset_id,
-                    "prompt_used": prompt,
+                    "prompt_used": generated_selfie.prompt_used if generated_selfie is not None else prompt,
                     "delivery_video_path": live_photo.delivery_video_path,
                     "live_photo_image_path": live_photo.live_photo_image_path,
                     "live_photo_video_path": live_photo.live_photo_video_path,
@@ -403,15 +461,17 @@ class LivePhotoHandler:
             except LivePhotoPackagingError as exc:
                 logger.warning("True Live Photo packaging failed; returning motion video only: %s", exc)
                 return self._build_video_result(
-                    prompt=prompt,
+                    prompt=generated_selfie.prompt_used if generated_selfie is not None else prompt,
                     generated_video=generated_video,
                     warning=str(exc),
+                    generated_selfie=generated_selfie,
                 )
 
         return self._build_video_result(
-            prompt=prompt,
+            prompt=generated_selfie.prompt_used if generated_selfie is not None else prompt,
             generated_video=generated_video,
             warning="True Live Photo packaging is unavailable on this runtime; returning motion video only.",
+            generated_selfie=generated_selfie,
         )
 
     def _build_video_result(
@@ -420,6 +480,7 @@ class LivePhotoHandler:
         prompt: str,
         generated_video: GeneratedVideo,
         warning: str = "",
+        generated_selfie: GeneratedSelfie | None = None,
     ) -> dict[str, Any]:
         result: dict[str, Any] = {
             "status": "ok",
@@ -432,6 +493,14 @@ class LivePhotoHandler:
             result["delivery_video_url"] = generated_video.video_url
         if warning:
             result["warning"] = warning
+        if generated_selfie is None and get_request_image() is not None:
+            result["used_attached_image"] = True
+        if generated_selfie is not None:
+            result["mode"] = "selfie"
+            result["scene_prompt"] = generated_selfie.scene_prompt
+            result["negative_prompt_used"] = generated_selfie.negative_prompt
+            if generated_selfie.scene_key:
+                result["scene_key"] = generated_selfie.scene_key
         return result
 
 
@@ -448,8 +517,19 @@ def build_live_photo_tool(
     resolved_config = config or SeedDanceConfig.from_env()
     provider = SeedDanceVideoProvider(resolved_config, session=session, sleep_fn=sleep_fn)
     packager = LivePhotoPackager(runner=runner, which=which)
-    fallback_handler = ImageGenHandler(image_config or ImageGenConfig.from_env())
-    handler = LivePhotoHandler(provider, packager, fallback_handler)
+    resolved_image_config = image_config or ImageGenConfig.from_env()
+    image_client = SeedreamImageClient(resolved_image_config, session=session)
+    fallback_handler = ImageGenHandler(
+        resolved_image_config,
+        session=session,
+        image_client=image_client,
+    )
+    handler = LivePhotoHandler(
+        provider,
+        packager,
+        fallback_handler,
+        image_client=image_client,
+    )
     return AgentTool(
         name="generate_live_photo",
         description=(
@@ -460,18 +540,35 @@ def build_live_photo_tool(
         ),
         parameters={
             "type": "object",
-            "required": ["prompt"],
             "properties": {
                 "prompt": {
                     "type": "string",
                     "description": (
-                        "English text description of the motion scene. "
-                        "Be specific about the subject, background, action, lighting, and framing."
+                        "Free-form English motion prompt for generic non-selfie videos, or a short fallback scene "
+                        "description for selfie mode when scene_prompt is omitted."
                     ),
+                },
+                "mode": {
+                    "type": "string",
+                    "description": "Set to 'selfie' for persona-consistent motion selfies.",
+                },
+                "scene_key": {
+                    "type": "string",
+                    "description": "Optional shared selfie-scene key, e.g. trading_desk or coffee_shop.",
+                },
+                "scene_prompt": {
+                    "type": "string",
+                    "description": "Optional short English scene detail appended to the selected selfie scene.",
                 },
                 "duration_seconds": {
                     "type": "integer",
                     "description": "Length of the motion clip in seconds. Use 2-4 seconds; default is 3.",
+                },
+                "use_attached_image": {
+                    "type": "boolean",
+                    "description": (
+                        "Set true only when the user attached an image and wants that exact image animated."
+                    ),
                 },
             },
         },
