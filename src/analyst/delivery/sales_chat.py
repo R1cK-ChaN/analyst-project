@@ -307,10 +307,18 @@ def _extract_tool_audit(messages: list[ConversationMessage]) -> list[dict[str, A
 
 
 SPLIT_MARKER = "[SPLIT]"
+IMAGE_PLACEHOLDER = "[IMAGE]"
+VIDEO_PLACEHOLDER = "[VIDEO]"
 
 
 def normalize_sales_reply(text: str) -> str:
-    cleaned = text.replace("**", "").replace("__", "").replace("`", "")
+    cleaned = (
+        text.replace("**", "")
+        .replace("__", "")
+        .replace("`", "")
+        .replace(IMAGE_PLACEHOLDER, "")
+        .replace(VIDEO_PLACEHOLDER, "")
+    )
     normalized_lines: list[str] = []
     for raw_line in cleaned.splitlines():
         line = raw_line.strip()
@@ -338,6 +346,146 @@ def split_into_bubbles(text: str) -> list[str]:
     return bubbles or [text]
 
 
+def _find_tool(tools: list[AgentTool], name: str) -> AgentTool | None:
+    for tool in tools:
+        if tool.name == name:
+            return tool
+    return None
+
+
+def _has_attached_image(user_content: MessageContent | None) -> bool:
+    if not isinstance(user_content, list):
+        return False
+    for item in user_content:
+        if isinstance(item, dict) and item.get("type") == "image_url":
+            return True
+    return False
+
+
+def _looks_like_selfie_request(user_text: str) -> bool:
+    lowered = user_text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "自拍",
+            "selfie",
+            "my photo",
+            "your photo",
+            "your pic",
+            "your selfie",
+            "发张照片",
+            "发你照片",
+            "看看你",
+            "看看自拍",
+            "你长什么样",
+        )
+    )
+
+
+def _infer_selfie_scene_key(user_text: str) -> str:
+    lowered = user_text.lower()
+    scene_hints = (
+        ("coffee_shop", ("咖啡", "coffee", "cafe")),
+        ("gym_mirror", ("健身", "gym", "mirror")),
+        ("airport_lounge", ("机场", "airport", "lounge")),
+        ("trading_desk", ("交易", "盘前", "desk", "trading", "monitor")),
+        ("late_night_work", ("加班", "熬夜", "late night", "office", "work")),
+    )
+    for scene_key, tokens in scene_hints:
+        if any(token in lowered for token in tokens):
+            return scene_key
+    return ""
+
+
+def _build_placeholder_image_arguments(
+    user_text: str,
+    *,
+    user_content: MessageContent | None,
+) -> dict[str, Any]:
+    if _looks_like_selfie_request(user_text):
+        arguments: dict[str, Any] = {"mode": "selfie"}
+        scene_key = _infer_selfie_scene_key(user_text)
+        if scene_key:
+            arguments["scene_key"] = scene_key
+        else:
+            arguments["prompt"] = "taking a casual phone selfie in a modern office\nsoft daylight\nrelaxed friendly expression"
+        return arguments
+
+    arguments = {
+        "prompt": user_text.strip() or "Create a photorealistic image that matches the user's request.",
+    }
+    if _has_attached_image(user_content):
+        arguments["use_attached_image"] = True
+    return arguments
+
+
+def _repair_missing_image_media(
+    *,
+    response_text: str,
+    user_text: str,
+    user_content: MessageContent | None,
+    tools: list[AgentTool],
+) -> tuple[list[MediaItem], list[dict[str, Any]]]:
+    if IMAGE_PLACEHOLDER not in response_text:
+        return [], []
+
+    image_tool = _find_tool(tools, "generate_image")
+    if image_tool is None:
+        return [], [{
+            "tool_name": "generate_image",
+            "tool_call_id": "",
+            "arguments": {},
+            "status": "error",
+            "error": "generate_image tool unavailable for placeholder repair",
+            "repair_kind": "placeholder_image",
+        }]
+
+    arguments = _build_placeholder_image_arguments(user_text, user_content=user_content)
+    try:
+        raw_result = image_tool.handler(arguments)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        return [], [{
+            "tool_name": "generate_image",
+            "tool_call_id": "",
+            "arguments": arguments,
+            "status": "error",
+            "error": str(exc),
+            "repair_kind": "placeholder_image",
+        }]
+
+    if not isinstance(raw_result, dict):
+        raw_result = {"status": "error", "error": "Invalid generate_image repair result."}
+
+    media = _extract_media([
+        ConversationMessage(
+            role="tool",
+            tool_name="generate_image",
+            content=json.dumps(raw_result, ensure_ascii=False),
+        )
+    ])
+    audit_entry: dict[str, Any] = {
+        "tool_name": "generate_image",
+        "tool_call_id": "",
+        "arguments": arguments,
+        "status": str(raw_result.get("status", "")),
+        "repair_kind": "placeholder_image",
+    }
+    for key in (
+        "fallback_kind",
+        "warning",
+        "error",
+        "image_path",
+        "image_url",
+        "mode",
+        "scene_key",
+        "scene_prompt",
+    ):
+        value = raw_result.get(key)
+        if value:
+            audit_entry[key] = value
+    return media, [audit_entry]
+
+
 def generate_sales_reply(
     user_text: str,
     *,
@@ -363,11 +511,23 @@ def generate_sales_reply(
         history=history_messages,
     )
     response_text, profile_update = split_reply_and_profile_update(result.final_text)
+    contains_image_placeholder = IMAGE_PLACEHOLDER in response_text
     response_text = normalize_sales_reply(response_text)
     if not response_text:
         response_text = "嗯"
     media = _extract_media(result.messages)
     tool_audit = _extract_tool_audit(result.messages)
+    if contains_image_placeholder and not media:
+        repaired_media, repaired_audit = _repair_missing_image_media(
+            response_text=result.final_text,
+            user_text=user_text,
+            user_content=user_content,
+            tools=tools,
+        )
+        if repaired_media:
+            media = repaired_media
+        if repaired_audit:
+            tool_audit = [*tool_audit, *repaired_audit]
     return SalesChatReply(
         text=response_text,
         profile_update=profile_update,

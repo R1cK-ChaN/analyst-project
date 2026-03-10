@@ -31,7 +31,7 @@ from analyst.contracts import (
 )
 from analyst.delivery.telegram import MAX_TELEGRAM_MESSAGE_LENGTH, TelegramFormatter, _truncate_body
 from analyst.engine import AnalystEngine
-from analyst.engine.live_types import AgentLoopResult, ConversationMessage
+from analyst.engine.live_types import AgentLoopResult, AgentTool, ConversationMessage
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.integration import AnalystIntegrationService, detect_mode
 from analyst.runtime import TemplateAgentRuntime
@@ -349,6 +349,35 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "直接回答\n我偏谨慎。")
         self.assertEqual(result.profile_update.current_mood, "cautious")
         self.assertEqual(result.profile_update.confidence, "medium")
+
+    async def test_repairs_literal_image_placeholder_with_generate_image_tool(self) -> None:
+        from analyst.delivery.bot import _chat_reply
+
+        self._set_loop_response(
+            "行啊，稍等我一下。[SPLIT]这就发你。 [IMAGE]<profile_update>{}</profile_update>"
+        )
+        image_tool = AgentTool(
+            name="generate_image",
+            description="",
+            parameters={},
+            handler=lambda arguments: {
+                "status": "ok",
+                "image_url": "https://example.com/selfie.jpg",
+                "mode": "selfie",
+            },
+        )
+
+        result = await _chat_reply("看看自拍 静态就行", self.mock_context, self.mock_loop, [image_tool])
+
+        self.assertEqual(result.text, "行啊，稍等我一下。[SPLIT]这就发你。")
+        self.assertEqual(len(result.media), 1)
+        self.assertEqual(result.media[0].kind, "photo")
+        self.assertEqual(result.media[0].url, "https://example.com/selfie.jpg")
+        self.assertEqual(len(result.tool_audit), 1)
+        self.assertEqual(result.tool_audit[0]["tool_name"], "generate_image")
+        self.assertEqual(result.tool_audit[0]["status"], "ok")
+        self.assertEqual(result.tool_audit[0]["repair_kind"], "placeholder_image")
+        self.assertEqual(result.tool_audit[0]["arguments"]["mode"], "selfie")
 
 
 class TestGroupChat(unittest.IsolatedAsyncioTestCase):
