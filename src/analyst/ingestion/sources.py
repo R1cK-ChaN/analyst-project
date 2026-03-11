@@ -24,8 +24,11 @@ from analyst.ingestion.scrapers import (
     TradingEconomicsCalendarClient,
 )
 from analyst.ingestion.scrapers.gov_report import GovReportClient, GovReportItem
+from analyst.ingestion.scrapers.eia import EIAClient
+from analyst.ingestion.scrapers.fred import FredClient
 from analyst.ingestion.scrapers.nyfed import NYFedRatesClient
 from analyst.ingestion.scrapers.rateprobability import RateProbabilityClient
+from analyst.ingestion.scrapers.treasury_fiscal import TreasuryFiscalClient
 
 logger = logging.getLogger(__name__)
 from analyst.storage import (
@@ -34,6 +37,7 @@ from analyst.storage import (
     DocumentExtraRecord,
     DocumentRecord,
     IndicatorObservationRecord,
+    IndicatorVintageRecord,
     MarketPriceRecord,
     NewsArticleRecord,
     SQLiteEngineStore,
@@ -153,29 +157,127 @@ class RefreshStats:
     count: int
 
 
+VINTAGE_SERIES = ["GDP", "GDPC1", "CPIAUCSL", "PAYEMS", "UNRATE", "INDPRO", "RSAFS"]
+
+EIA_SERIES = {
+    "petroleum_brent": {
+        "route": "petroleum/pri/spt/data",
+        "params": {"data[]": "value", "facets[product][]": "EPCBRENT", "frequency": "daily"},
+        "series_id": "EIA_BRENT",
+        "category": "energy",
+    },
+    "petroleum_wti": {
+        "route": "petroleum/pri/spt/data",
+        "params": {"data[]": "value", "facets[product][]": "EPCWTI", "frequency": "daily"},
+        "series_id": "EIA_WTI",
+        "category": "energy",
+    },
+    "petroleum_stocks": {
+        "route": "petroleum/stoc/wstk/data",
+        "params": {"data[]": "value", "facets[product][]": "EPC0", "frequency": "weekly"},
+        "series_id": "EIA_CRUDE_STOCKS",
+        "category": "energy",
+    },
+    "natgas_futures": {
+        "route": "natural-gas/pri/fut/data",
+        "params": {"data[]": "value", "frequency": "daily"},
+        "series_id": "EIA_NATGAS",
+        "category": "energy",
+    },
+    "petroleum_supply": {
+        "route": "petroleum/sum/snd/data",
+        "params": {"data[]": "value", "frequency": "weekly"},
+        "series_id": "EIA_PETROL_SUPPLY",
+        "category": "energy",
+    },
+}
+
+TREASURY_DATASETS = {
+    "debt_outstanding": {
+        "endpoint": "v2/accounting/od/debt_to_penny",
+        "series_id": "TREAS_DEBT_TOTAL",
+        "category": "fiscal",
+    },
+    "dts_operating_cash": {
+        "endpoint": "v1/accounting/dts/deposits_withdrawals_operating_cash",
+        "series_id": "TREAS_TGA_BALANCE",
+        "category": "fiscal",
+    },
+    "avg_interest_rates": {
+        "endpoint": "v2/accounting/od/avg_interest_rates",
+        "series_id": "TREAS_AVG_RATE",
+        "category": "fiscal",
+    },
+}
+
+
 class FREDIngestionClient:
-    BASE_URL = "https://api.stlouisfed.org/fred"
-
     def __init__(self, api_key: str | None = None) -> None:
-        self.api_key = api_key or get_env_value("FRED_API_KEY")
-        self.session = requests.Session()
+        self.client = FredClient(api_key=api_key)
 
-    def refresh_daily_series(self, store: SQLiteEngineStore) -> RefreshStats:
-        daily_series = {series_id: meta for series_id, meta in MACRO_SERIES.items() if meta["freq"] == "daily"}
+    @property
+    def api_key(self) -> str:
+        return self.client.api_key
+
+    def refresh_daily_series(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        daily_series = {sid: meta for sid, meta in MACRO_SERIES.items() if meta["freq"] == "daily"}
         count = 0
         start_date = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%d")
         for series_id, meta in daily_series.items():
-            count += self._store_series(store, series_id, meta, start_date=start_date, limit=5)
+            count += self._store_series(store, series_id, meta, start_date=start_date, limit=5, family_lookup=family_lookup)
             time.sleep(0.2)
         return RefreshStats(source="fred_daily", count=count)
 
-    def refresh_all_series(self, store: SQLiteEngineStore, *, lookback_days: int = 365) -> RefreshStats:
+    def refresh_all_series(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        lookback_days: int = 365,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
         count = 0
         start_date = (datetime.now(UTC) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
         for series_id, meta in MACRO_SERIES.items():
-            count += self._store_series(store, series_id, meta, start_date=start_date, limit=100)
+            count += self._store_series(store, series_id, meta, start_date=start_date, limit=100, family_lookup=family_lookup)
             time.sleep(0.2)
         return RefreshStats(source="fred_all", count=count)
+
+    def refresh_vintages(
+        self,
+        store: SQLiteEngineStore,
+        vintage_series: list[str] | None = None,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        series_list = vintage_series or VINTAGE_SERIES
+        count = 0
+        start_date = (datetime.now(UTC) - timedelta(days=365)).strftime("%Y-%m-%d")
+        for series_id in series_list:
+            try:
+                vintages = self.client.get_vintages(series_id, start_date=start_date)
+                fam_id = family_lookup.get(("fred", series_id)) if family_lookup else None
+                for v in vintages:
+                    store.upsert_indicator_vintage(
+                        IndicatorVintageRecord(
+                            series_id=v.series_id,
+                            source="fred",
+                            observation_date=v.date,
+                            vintage_date=v.vintage_date,
+                            value=v.value,
+                            metadata={"name": MACRO_SERIES.get(series_id, {}).get("name", series_id)},
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("FRED vintage refresh failed for %s", series_id, exc_info=True)
+            time.sleep(0.3)
+        return RefreshStats(source="fred_vintages", count=count)
 
     def _store_series(
         self,
@@ -185,44 +287,100 @@ class FREDIngestionClient:
         *,
         start_date: str,
         limit: int,
+        family_lookup: dict[tuple[str, str], str] | None = None,
     ) -> int:
         stored = 0
-        for observation in self.get_series(series_id, start_date=start_date, limit=limit):
+        fam_id = family_lookup.get(("fred", series_id)) if family_lookup else None
+        for obs in self.client.get_series(series_id, start_date=start_date, limit=limit):
             store.upsert_indicator_observation(
                 IndicatorObservationRecord(
                     series_id=series_id,
                     source="fred",
-                    date=observation["date"],
-                    value=observation["value"],
+                    date=obs.date,
+                    value=obs.value,
                     metadata={"name": meta["name"], "category": meta["category"]},
+                    obs_family_id=fam_id,
                 )
             )
             stored += 1
         return stored
 
-    def get_series(self, series_id: str, *, start_date: str, limit: int) -> list[dict[str, Any]]:
-        if not self.api_key:
-            return []
-        response = self.session.get(
-            f"{self.BASE_URL}/series/observations",
-            params={
-                "series_id": series_id,
-                "observation_start": start_date,
-                "sort_order": "desc",
-                "limit": limit,
-                "api_key": self.api_key,
-                "file_type": "json",
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        observations: list[dict[str, Any]] = []
-        for observation in payload.get("observations", []):
-            if observation["value"] == ".":
-                continue
-            observations.append({"date": observation["date"], "value": float(observation["value"])})
-        return observations
+
+class EIAIngestionClient:
+    def __init__(self, api_key: str | None = None) -> None:
+        self.client = EIAClient(api_key=api_key)
+
+    def refresh(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        count = 0
+        for key, cfg in EIA_SERIES.items():
+            try:
+                observations = self.client.get_series(
+                    cfg["route"],
+                    params=dict(cfg["params"]),
+                    series_id=cfg["series_id"],
+                    limit=30,
+                )
+                fam_id = family_lookup.get(("eia", cfg["series_id"])) if family_lookup else None
+                for obs in observations:
+                    store.upsert_indicator_observation(
+                        IndicatorObservationRecord(
+                            series_id=obs.series_id,
+                            source="eia",
+                            date=obs.date,
+                            value=obs.value,
+                            metadata={"category": cfg["category"], "unit": obs.unit},
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("EIA refresh failed for %s", key, exc_info=True)
+            time.sleep(0.5)
+        return RefreshStats(source="eia", count=count)
+
+
+class TreasuryFiscalIngestionClient:
+    def __init__(self) -> None:
+        self.client = TreasuryFiscalClient()
+
+    def refresh(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        count = 0
+        fetchers = {
+            "debt_outstanding": self.client.fetch_debt_outstanding,
+            "dts_operating_cash": self.client.fetch_tga_balance,
+            "avg_interest_rates": self.client.fetch_avg_interest_rates,
+        }
+        for key, fetch_fn in fetchers.items():
+            cfg = TREASURY_DATASETS[key]
+            try:
+                observations = fetch_fn(limit=30)
+                fam_id = family_lookup.get(("treasury_fiscal", cfg["series_id"])) if family_lookup else None
+                for obs in observations:
+                    store.upsert_indicator_observation(
+                        IndicatorObservationRecord(
+                            series_id=obs.series_id,
+                            source="treasury_fiscal",
+                            date=obs.date,
+                            value=obs.value,
+                            metadata={**obs.metadata, "category": cfg["category"]},
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("Treasury fiscal refresh failed for %s", key, exc_info=True)
+            time.sleep(0.5)
+        return RefreshStats(source="treasury_fiscal", count=count)
 
 
 class FedIngestionClient:
@@ -616,6 +774,8 @@ class IngestionOrchestrator:
         rate_probability: RateProbabilityClient | None = None,
         nyfed: NYFedRatesClient | None = None,
         gov_report: GovReportIngestionClient | None = None,
+        eia: EIAIngestionClient | None = None,
+        treasury_fiscal: TreasuryFiscalIngestionClient | None = None,
     ) -> None:
         self.store = store
         self.fred = fred or FREDIngestionClient()
@@ -628,6 +788,19 @@ class IngestionOrchestrator:
         self.rate_probability = rate_probability or RateProbabilityClient()
         self.nyfed = nyfed or NYFedRatesClient()
         self.gov_report = gov_report or GovReportIngestionClient()
+        self.eia = eia or EIAIngestionClient()
+        self.treasury_fiscal = treasury_fiscal or TreasuryFiscalIngestionClient()
+        self._obs_seeded = False
+        self._family_lookup: dict[tuple[str, str], str] = {}
+
+    def _ensure_obs_seed(self) -> None:
+        """Seed observation sources/families once, then build lookup cache."""
+        if self._obs_seeded:
+            return
+        self.store.seed_obs_sources_and_families()
+        self.store.backfill_obs_family_ids()
+        self._family_lookup = self.store.build_obs_family_lookup()
+        self._obs_seeded = True
 
     def refresh_calendar(self) -> dict[str, int]:
         total = 0
@@ -660,11 +833,11 @@ class IngestionOrchestrator:
         return {stats.source: stats.count}
 
     def refresh_fred_daily(self) -> dict[str, int]:
-        stats = self.fred.refresh_daily_series(self.store)
+        stats = self.fred.refresh_daily_series(self.store, family_lookup=self._family_lookup or None)
         return {stats.source: stats.count}
 
     def refresh_fred_full(self, *, lookback_days: int = 365) -> dict[str, int]:
-        stats = self.fred.refresh_all_series(self.store, lookback_days=lookback_days)
+        stats = self.fred.refresh_all_series(self.store, lookback_days=lookback_days, family_lookup=self._family_lookup or None)
         return {stats.source: stats.count}
 
     def refresh_news(self, *, category: str | None = None) -> dict[str, int]:
@@ -689,12 +862,25 @@ class IngestionOrchestrator:
                             "change_bps": m.change_bps,
                             "current_band": prob.current_band,
                         },
+                        # Dynamic series — no pre-registered family
                     )
                 )
                 count += 1
         except Exception:
             logger.warning("rateprobability.com refresh failed", exc_info=True)
         return {"rate_probability": count}
+
+    def refresh_fred_vintages(self) -> dict[str, int]:
+        stats = self.fred.refresh_vintages(self.store, family_lookup=self._family_lookup or None)
+        return {stats.source: stats.count}
+
+    def refresh_eia(self) -> dict[str, int]:
+        stats = self.eia.refresh(self.store, family_lookup=self._family_lookup or None)
+        return {stats.source: stats.count}
+
+    def refresh_treasury_fiscal(self) -> dict[str, int]:
+        stats = self.treasury_fiscal.refresh(self.store, family_lookup=self._family_lookup or None)
+        return {stats.source: stats.count}
 
     def refresh_gov_reports(self) -> dict[str, int]:
         try:
@@ -721,13 +907,16 @@ class IngestionOrchestrator:
                     metadata["volume_billions"] = rate.volume_billions
                 if rate.target_rate_from is not None:
                     metadata["target_range"] = f"{rate.target_rate_from}-{rate.target_rate_to}"
+                series_id = f"NYFED_{rate.type}"
+                fam_id = self._family_lookup.get(("nyfed", series_id)) if self._family_lookup else None
                 self.store.upsert_indicator_observation(
                     IndicatorObservationRecord(
-                        series_id=f"NYFED_{rate.type}",
+                        series_id=series_id,
                         source="nyfed",
                         date=rate.date,
                         value=rate.rate,
                         metadata=metadata,
+                        obs_family_id=fam_id,
                     )
                 )
                 count += 1
@@ -736,6 +925,7 @@ class IngestionOrchestrator:
         return {"nyfed_rates": count}
 
     def refresh_all(self) -> dict[str, int]:
+        self._ensure_obs_seed()
         results: dict[str, int] = {}
         for batch in (
             self.refresh_calendar(),
@@ -746,6 +936,8 @@ class IngestionOrchestrator:
             self.refresh_rate_probability(),
             self.refresh_nyfed_rates(),
             self.refresh_gov_reports(),
+            self.refresh_eia(),
+            self.refresh_treasury_fiscal(),
         ):
             results.update(batch)
         return results
@@ -756,10 +948,13 @@ class IngestionOrchestrator:
             "fed": {"interval": 14_400, "handler": self.refresh_fed},
             "market": {"interval": 1800, "handler": self.refresh_market},
             "fred_daily": {"interval": 86_400, "handler": self.refresh_fred_daily},
+            "fred_vintages": {"interval": 86_400, "handler": self.refresh_fred_vintages},
             "news": {"interval": 900, "handler": self.refresh_news},
             "rate_probability": {"interval": 3600, "handler": self.refresh_rate_probability},
             "nyfed_rates": {"interval": 86_400, "handler": self.refresh_nyfed_rates},
             "gov_reports": {"interval": 21_600, "handler": self.refresh_gov_reports},
+            "eia": {"interval": 86_400, "handler": self.refresh_eia},
+            "treasury_fiscal": {"interval": 86_400, "handler": self.refresh_treasury_fiscal},
         }
         next_run = {name: 0.0 for name in jobs}
         self.refresh_all()

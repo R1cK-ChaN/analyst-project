@@ -71,6 +71,60 @@ class IndicatorObservationRecord:
     date: str
     value: float
     metadata: dict[str, Any] = field(default_factory=dict)
+    obs_family_id: str | None = None
+
+
+@dataclass(frozen=True)
+class IndicatorVintageRecord:
+    series_id: str
+    source: str
+    observation_date: str   # the date being measured
+    vintage_date: str       # when this measurement was published
+    value: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+    obs_family_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ObsSourceRecord:
+    source_id: str          # 'fred', 'eia', 'treasury_fiscal'
+    source_code: str
+    source_name: str
+    source_type: str        # data_aggregator, government_agency, central_bank, exchange, market_data
+    country_code: str
+    homepage_url: str
+    api_base_url: str
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class ObsFamilyRecord:
+    family_id: str                  # 'us.inflation.cpi_all'
+    source_id: str                  # 'fred'
+    provider_series_id: str         # 'CPIAUCSL' (matches indicators.series_id)
+    canonical_name: str             # 'CPI All Urban Consumers'
+    short_name: str
+    unit: str                       # 'index', 'percent', 'billions_usd'
+    frequency: str                  # daily, weekly, monthly, quarterly, annual, irregular
+    seasonal_adjustment: str        # sa, nsa, saar, none
+    country_code: str
+    topic_code: str                 # inflation, employment, rates, energy, fiscal
+    category: str                   # consumer_prices, treasury_yields
+    is_active: bool
+    has_vintages: bool
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class ObsFamilyDocumentRecord:
+    family_id: str
+    release_family_id: str
+    relationship: str           # produced_by, derived_from, related_to
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -371,6 +425,86 @@ class DocumentExtraRecord:
     extra_json: dict[str, Any]
 
 
+# ── Observation family seed data ─────────────────────────────────────
+
+_FRED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "CPIAUCSL":     ("us.inflation.cpi_all",          "CPI All Urban Consumers",    "index",        "monthly",   "sa"),
+    "CPILFESL":     ("us.inflation.cpi_core",          "Core CPI",                   "index",        "monthly",   "sa"),
+    "PCEPILFE":     ("us.inflation.pce_core",          "Core PCE Price Index",        "index",        "monthly",   "sa"),
+    "T5YIE":        ("us.inflation.breakeven_5y",      "5Y Breakeven Inflation",      "percent",      "daily",     "none"),
+    "T10YIE":       ("us.inflation.breakeven_10y",     "10Y Breakeven Inflation",     "percent",      "daily",     "none"),
+    "UNRATE":       ("us.employment.unemployment",     "Unemployment Rate",           "percent",      "monthly",   "sa"),
+    "PAYEMS":       ("us.employment.nonfarm_payrolls", "Total Nonfarm Payrolls",      "thousands",    "monthly",   "sa"),
+    "ICSA":         ("us.employment.initial_claims",   "Initial Jobless Claims",      "thousands",    "weekly",    "sa"),
+    "CCSA":         ("us.employment.continuing_claims","Continuing Jobless Claims",   "thousands",    "weekly",    "sa"),
+    "GDP":          ("us.growth.gdp_nominal",          "GDP",                         "billions_usd", "quarterly", "saar"),
+    "GDPC1":        ("us.growth.gdp_real",             "Real GDP",                    "billions_usd", "quarterly", "saar"),
+    "RSAFS":        ("us.growth.retail_sales",         "Retail Sales",                "millions_usd", "monthly",   "sa"),
+    "INDPRO":       ("us.growth.industrial_production","Industrial Production",       "index",        "monthly",   "sa"),
+    "DFF":          ("us.rates.fed_funds",             "Fed Funds Rate",              "percent",      "daily",     "none"),
+    "DGS2":         ("us.rates.treasury_2y",           "2Y Treasury Yield",           "percent",      "daily",     "none"),
+    "DGS10":        ("us.rates.treasury_10y",          "10Y Treasury Yield",          "percent",      "daily",     "none"),
+    "DGS30":        ("us.rates.treasury_30y",          "30Y Treasury Yield",          "percent",      "daily",     "none"),
+    "DFII10":       ("us.rates.real_yield_10y",        "10Y Real Yield",              "percent",      "daily",     "none"),
+    "T10Y2Y":       ("us.rates.spread_10y2y",          "10Y-2Y Spread",               "percent",      "daily",     "none"),
+    "WALCL":        ("us.liquidity.fed_balance_sheet", "Fed Balance Sheet",           "millions_usd", "weekly",    "none"),
+    "M2SL":         ("us.liquidity.m2",                "M2 Money Supply",             "billions_usd", "monthly",   "sa"),
+    "RRPONTSYD":    ("us.liquidity.reverse_repo",      "Reverse Repo",                "billions_usd", "daily",     "none"),
+    "WTREGEN":      ("us.liquidity.tga",               "Treasury General Account",    "millions_usd", "weekly",    "none"),
+    "DTWEXBGS":     ("us.fx.dollar_index_broad",       "Broad Dollar Index",          "index",        "daily",     "none"),
+    "DEXCHUS":      ("us.fx.cny_usd",                  "CNY/USD Exchange Rate",       "ratio",        "daily",     "none"),
+    "BAMLH0A0HYM2": ("us.credit.hy_oas",              "High Yield OAS",              "percent",      "daily",     "none"),
+}
+
+_EIA_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "EIA_BRENT":         ("us.energy.brent_spot",        "Brent Crude Spot Price",      "usd_per_barrel",           "daily",  "none"),
+    "EIA_WTI":           ("us.energy.wti_spot",           "WTI Crude Spot Price",        "usd_per_barrel",           "daily",  "none"),
+    "EIA_CRUDE_STOCKS":  ("us.energy.crude_stocks",       "Crude Oil Stocks",            "thousand_barrels",         "weekly", "none"),
+    "EIA_NATGAS":        ("us.energy.natgas_futures",      "Natural Gas Futures",         "usd_per_mmbtu",           "daily",  "none"),
+    "EIA_PETROL_SUPPLY": ("us.energy.petroleum_supply",    "Petroleum Supply",            "thousand_barrels_per_day", "weekly", "none"),
+}
+
+_TREASURY_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "TREAS_DEBT_TOTAL":  ("us.fiscal.debt_outstanding",   "Debt Outstanding",            "millions_usd", "daily",   "none"),
+    "TREAS_TGA_BALANCE": ("us.fiscal.tga_balance",        "TGA Balance",                 "millions_usd", "daily",   "none"),
+    "TREAS_AVG_RATE":    ("us.fiscal.avg_interest_rate",   "Average Interest Rate",       "percent",      "monthly", "none"),
+}
+
+_NYFED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "NYFED_SOFR": ("us.rates.sofr", "Secured Overnight Financing Rate", "percent", "daily", "none"),
+    "NYFED_EFFR": ("us.rates.effr", "Effective Federal Funds Rate",     "percent", "daily", "none"),
+    "NYFED_OBFR": ("us.rates.obfr", "Overnight Bank Funding Rate",     "percent", "daily", "none"),
+}
+
+_VINTAGE_FAMILY_IDS = {"GDP", "GDPC1", "CPIAUCSL", "PAYEMS", "UNRATE", "INDPRO", "RSAFS"}
+
+_OBS_DOC_LINKS: list[tuple[str, str, str]] = [
+    ("us.inflation.cpi_all",           "us.bls.cpi",       "produced_by"),
+    ("us.inflation.cpi_core",          "us.bls.cpi",       "produced_by"),
+    ("us.inflation.pce_core",          "us.bea.pce",       "produced_by"),
+    ("us.employment.nonfarm_payrolls", "us.bls.nfp",       "produced_by"),
+    ("us.employment.unemployment",     "us.bls.nfp",       "produced_by"),
+    ("us.growth.gdp_nominal",          "us.bea.gdp",       "produced_by"),
+    ("us.growth.gdp_real",             "us.bea.gdp",       "produced_by"),
+    ("us.growth.retail_sales",         "us.census.retail",  "produced_by"),
+    ("us.growth.industrial_production","us.fed.ip",         "produced_by"),
+    ("us.fiscal.debt_outstanding",     "us.treasury.debt",  "produced_by"),
+]
+
+_OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
+    # source_id, source_code, source_name, source_type, country_code, homepage_url, api_base_url
+    ("fred",            "fred",            "Federal Reserve Economic Data",     "data_aggregator",   "US", "https://fred.stlouisfed.org",                                    "https://api.stlouisfed.org/fred"),
+    ("eia",             "eia",             "Energy Information Administration", "government_agency", "US", "https://www.eia.gov",                                            "https://api.eia.gov/v2"),
+    ("treasury_fiscal", "treasury_fiscal", "Treasury Fiscal Data",             "government_agency", "US", "https://fiscaldata.treasury.gov",                                "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"),
+    ("nyfed",           "nyfed",           "Federal Reserve Bank of New York", "central_bank",      "US", "https://www.newyorkfed.org",                                     "https://markets.newyorkfed.org/api"),
+    ("rateprobability", "rateprobability", "rateprobability.com",              "market_data",       "US", "https://rateprobability.com",                                    "https://rateprobability.com/api"),
+]
+
+
 class SQLiteEngineStore:
     def __init__(self, db_path: Path | None = None) -> None:
         self.db_path = db_path or default_engine_db_path()
@@ -468,6 +602,21 @@ class SQLiteEngineStore:
                     metadata_json TEXT NOT NULL,
                     scraped_at TEXT NOT NULL,
                     UNIQUE(series_id, source, date)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS indicator_vintages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    series_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    observation_date TEXT NOT NULL,
+                    vintage_date TEXT NOT NULL,
+                    value REAL NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    scraped_at TEXT NOT NULL,
+                    UNIQUE(series_id, source, observation_date, vintage_date)
                 )
                 """
             )
@@ -1010,6 +1159,16 @@ class SQLiteEngineStore:
                 )
                 """
             )
+            # -- RAG sync watermarks ----------------------------------------
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS rag_sync_watermarks (
+                    source_type TEXT PRIMARY KEY,
+                    last_synced_id INTEGER NOT NULL DEFAULT 0,
+                    last_synced_at TEXT NOT NULL
+                )
+                """
+            )
             # -- Document storage indexes ----------------------------------------
             connection.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_document_url "
@@ -1034,6 +1193,108 @@ class SQLiteEngineStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_blob_document_role "
                 "ON document_blob(document_id, blob_role)"
+            )
+            # -- Observation family: 3-table hierarchy --------------------------
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS obs_source (
+                    source_id TEXT PRIMARY KEY,
+                    source_code TEXT NOT NULL,
+                    source_name TEXT NOT NULL,
+                    source_type TEXT NOT NULL
+                        CHECK (source_type IN (
+                            'data_aggregator', 'government_agency', 'central_bank',
+                            'exchange', 'market_data'
+                        )),
+                    country_code TEXT NOT NULL CHECK (length(country_code) = 2),
+                    homepage_url TEXT,
+                    api_base_url TEXT,
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS obs_family (
+                    family_id TEXT PRIMARY KEY,
+                    source_id TEXT NOT NULL,
+                    provider_series_id TEXT NOT NULL,
+                    canonical_name TEXT NOT NULL,
+                    short_name TEXT NOT NULL DEFAULT '',
+                    unit TEXT NOT NULL DEFAULT '',
+                    frequency TEXT NOT NULL DEFAULT 'irregular'
+                        CHECK (frequency IN (
+                            'daily','weekly','monthly','quarterly','annual','irregular'
+                        )),
+                    seasonal_adjustment TEXT NOT NULL DEFAULT 'none'
+                        CHECK (seasonal_adjustment IN ('sa','nsa','saar','none')),
+                    country_code TEXT NOT NULL CHECK (length(country_code) = 2),
+                    topic_code TEXT NOT NULL DEFAULT '',
+                    category TEXT NOT NULL DEFAULT '',
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    has_vintages INTEGER NOT NULL DEFAULT 0,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (source_id) REFERENCES obs_source(source_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS obs_family_document (
+                    family_id TEXT NOT NULL,
+                    release_family_id TEXT NOT NULL,
+                    relationship TEXT NOT NULL DEFAULT 'produced_by'
+                        CHECK (relationship IN (
+                            'produced_by','derived_from','related_to'
+                        )),
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (family_id, release_family_id),
+                    FOREIGN KEY (family_id) REFERENCES obs_family(family_id),
+                    FOREIGN KEY (release_family_id) REFERENCES doc_release_family(release_family_id)
+                )
+                """
+            )
+            # ALTER TABLE migrations for obs_family_id
+            try:
+                connection.execute(
+                    "ALTER TABLE indicators ADD COLUMN obs_family_id TEXT DEFAULT NULL"
+                )
+            except sqlite3.OperationalError:
+                pass  # column already exists
+            try:
+                connection.execute(
+                    "ALTER TABLE indicator_vintages ADD COLUMN obs_family_id TEXT DEFAULT NULL"
+                )
+            except sqlite3.OperationalError:
+                pass  # column already exists
+            # -- Observation family indexes --------------------------------------
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_obs_family_source "
+                "ON obs_family(source_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_obs_family_country_topic "
+                "ON obs_family(country_code, topic_code)"
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_obs_family_provider_series "
+                "ON obs_family(source_id, provider_series_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_indicators_family_date "
+                "ON indicators(obs_family_id, date)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_vintages_family_date "
+                "ON indicator_vintages(obs_family_id, observation_date)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_obs_family_doc_release "
+                "ON obs_family_document(release_family_id)"
             )
 
     def _ensure_table_columns(
@@ -1159,8 +1420,9 @@ class SQLiteEngineStore:
                     date,
                     value,
                     metadata_json,
+                    obs_family_id,
                     scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     observation.series_id,
@@ -1168,6 +1430,7 @@ class SQLiteEngineStore:
                     observation.date,
                     observation.value,
                     json.dumps(observation.metadata, ensure_ascii=True, sort_keys=True),
+                    observation.obs_family_id,
                     utc_now().isoformat(),
                 ),
             )
@@ -2228,6 +2491,76 @@ class SQLiteEngineStore:
             series_id=row["series_id"],
             source=row["source"],
             date=row["date"],
+            value=float(row["value"]),
+            metadata=json.loads(row["metadata_json"]),
+        )
+
+    # -- Indicator vintages --------------------------------------------------
+
+    def upsert_indicator_vintage(self, vintage: IndicatorVintageRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO indicator_vintages (
+                    series_id,
+                    source,
+                    observation_date,
+                    vintage_date,
+                    value,
+                    metadata_json,
+                    obs_family_id,
+                    scraped_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    vintage.series_id,
+                    vintage.source,
+                    vintage.observation_date,
+                    vintage.vintage_date,
+                    vintage.value,
+                    json.dumps(vintage.metadata, ensure_ascii=True, sort_keys=True),
+                    vintage.obs_family_id,
+                    utc_now().isoformat(),
+                ),
+            )
+
+    def get_vintage_history(
+        self, series_id: str, observation_date: str,
+    ) -> list[IndicatorVintageRecord]:
+        """Return all vintages for a given series_id + observation_date."""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM indicator_vintages
+                WHERE series_id = ? AND observation_date = ?
+                ORDER BY vintage_date ASC
+                """,
+                (series_id, observation_date),
+            ).fetchall()
+        return [self._row_to_vintage(row) for row in rows]
+
+    def get_vintages_for_series(
+        self, series_id: str, *, limit: int = 50,
+    ) -> list[IndicatorVintageRecord]:
+        """Return the most recent vintage records for a series."""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM indicator_vintages
+                WHERE series_id = ?
+                ORDER BY vintage_date DESC, observation_date DESC
+                LIMIT ?
+                """,
+                (series_id, limit),
+            ).fetchall()
+        return [self._row_to_vintage(row) for row in rows]
+
+    def _row_to_vintage(self, row: sqlite3.Row) -> IndicatorVintageRecord:
+        return IndicatorVintageRecord(
+            series_id=row["series_id"],
+            source=row["source"],
+            observation_date=row["observation_date"],
+            vintage_date=row["vintage_date"],
             value=float(row["value"]),
             metadata=json.loads(row["metadata_json"]),
         )
@@ -3999,3 +4332,307 @@ class SQLiteEngineStore:
         if data_category in ("monetary_policy", "economic_conditions"):
             return "irregular"
         return "irregular"
+
+    # ── Observation family CRUD ────────────────────────────────────────
+
+    def upsert_obs_source(self, record: ObsSourceRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO obs_source (
+                    source_id, source_code, source_name, source_type,
+                    country_code, homepage_url, api_base_url,
+                    is_active, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.source_id,
+                    record.source_code,
+                    record.source_name,
+                    record.source_type,
+                    record.country_code,
+                    record.homepage_url,
+                    record.api_base_url,
+                    int(record.is_active),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_obs_source(self, source_id: str) -> ObsSourceRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM obs_source WHERE source_id = ?",
+                (source_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_obs_source(row)
+
+    def list_obs_sources(self, *, active_only: bool = True) -> list[ObsSourceRecord]:
+        query = "SELECT * FROM obs_source"
+        params: list[Any] = []
+        if active_only:
+            query += " WHERE is_active = 1"
+        query += " ORDER BY source_id"
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._row_to_obs_source(row) for row in rows]
+
+    def _row_to_obs_source(self, row: sqlite3.Row) -> ObsSourceRecord:
+        return ObsSourceRecord(
+            source_id=row["source_id"],
+            source_code=row["source_code"],
+            source_name=row["source_name"],
+            source_type=row["source_type"],
+            country_code=row["country_code"],
+            homepage_url=row["homepage_url"] or "",
+            api_base_url=row["api_base_url"] or "",
+            is_active=bool(row["is_active"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def upsert_obs_family(self, record: ObsFamilyRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO obs_family (
+                    family_id, source_id, provider_series_id, canonical_name,
+                    short_name, unit, frequency, seasonal_adjustment,
+                    country_code, topic_code, category,
+                    is_active, has_vintages, metadata_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.family_id,
+                    record.source_id,
+                    record.provider_series_id,
+                    record.canonical_name,
+                    record.short_name,
+                    record.unit,
+                    record.frequency,
+                    record.seasonal_adjustment,
+                    record.country_code,
+                    record.topic_code,
+                    record.category,
+                    int(record.is_active),
+                    int(record.has_vintages),
+                    json.dumps(record.metadata, ensure_ascii=False, sort_keys=True),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_obs_family(self, family_id: str) -> ObsFamilyRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM obs_family WHERE family_id = ?",
+                (family_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_obs_family(row)
+
+    def get_obs_family_by_series(
+        self, source_id: str, provider_series_id: str,
+    ) -> ObsFamilyRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM obs_family WHERE source_id = ? AND provider_series_id = ?",
+                (source_id, provider_series_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_obs_family(row)
+
+    def list_obs_families(
+        self,
+        *,
+        source_id: str | None = None,
+        country_code: str | None = None,
+        topic_code: str | None = None,
+        frequency: str | None = None,
+        active_only: bool = True,
+    ) -> list[ObsFamilyRecord]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if active_only:
+            conditions.append("is_active = 1")
+        if source_id:
+            conditions.append("source_id = ?")
+            params.append(source_id)
+        if country_code:
+            conditions.append("country_code = ?")
+            params.append(country_code)
+        if topic_code:
+            conditions.append("topic_code = ?")
+            params.append(topic_code)
+        if frequency:
+            conditions.append("frequency = ?")
+            params.append(frequency)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"SELECT * FROM obs_family {where} ORDER BY family_id",
+                params,
+            ).fetchall()
+        return [self._row_to_obs_family(row) for row in rows]
+
+    def _row_to_obs_family(self, row: sqlite3.Row) -> ObsFamilyRecord:
+        return ObsFamilyRecord(
+            family_id=row["family_id"],
+            source_id=row["source_id"],
+            provider_series_id=row["provider_series_id"],
+            canonical_name=row["canonical_name"],
+            short_name=row["short_name"] or "",
+            unit=row["unit"] or "",
+            frequency=row["frequency"] or "irregular",
+            seasonal_adjustment=row["seasonal_adjustment"] or "none",
+            country_code=row["country_code"],
+            topic_code=row["topic_code"] or "",
+            category=row["category"] or "",
+            is_active=bool(row["is_active"]),
+            has_vintages=bool(row["has_vintages"]),
+            metadata=json.loads(row["metadata_json"]) if row["metadata_json"] else {},
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def upsert_obs_family_document(self, record: ObsFamilyDocumentRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO obs_family_document (
+                    family_id, release_family_id, relationship, created_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    record.family_id,
+                    record.release_family_id,
+                    record.relationship,
+                    record.created_at,
+                ),
+            )
+
+    def list_obs_families_for_release(
+        self, release_family_id: str,
+    ) -> list[ObsFamilyRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT f.* FROM obs_family f
+                JOIN obs_family_document d ON f.family_id = d.family_id
+                WHERE d.release_family_id = ?
+                ORDER BY f.family_id
+                """,
+                (release_family_id,),
+            ).fetchall()
+        return [self._row_to_obs_family(row) for row in rows]
+
+    def list_releases_for_obs_family(
+        self, family_id: str,
+    ) -> list[DocReleaseFamilyRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT r.* FROM doc_release_family r
+                JOIN obs_family_document d ON r.release_family_id = d.release_family_id
+                WHERE d.family_id = ?
+                ORDER BY r.release_family_id
+                """,
+                (family_id,),
+            ).fetchall()
+        return [self._row_to_doc_release_family(row) for row in rows]
+
+    # ── Observation family seed & backfill ─────────────────────────────
+
+    def seed_obs_sources_and_families(self) -> None:
+        """Populate obs_source, obs_family, and obs_family_document tables
+        from the module-level seed data constants."""
+        now = utc_now().isoformat()
+
+        # 1. Seed obs_source entries
+        for src_id, code, name, stype, country, homepage, api_url in _OBS_SOURCE_DEFS:
+            self.upsert_obs_source(ObsSourceRecord(
+                source_id=src_id,
+                source_code=code,
+                source_name=name,
+                source_type=stype,
+                country_code=country,
+                homepage_url=homepage,
+                api_base_url=api_url,
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            ))
+
+        # 2. Seed obs_family entries from all maps
+        source_maps: list[tuple[str, dict[str, tuple[str, str, str, str, str]]]] = [
+            ("fred", _FRED_FAMILY_MAP),
+            ("eia", _EIA_FAMILY_MAP),
+            ("treasury_fiscal", _TREASURY_FAMILY_MAP),
+            ("nyfed", _NYFED_FAMILY_MAP),
+        ]
+        for source_id, family_map in source_maps:
+            for series_id, (fam_id, canon_name, unit, freq, sa) in family_map.items():
+                parts = fam_id.split(".")
+                topic = parts[1] if len(parts) > 1 else ""
+                category = parts[2] if len(parts) > 2 else ""
+                self.upsert_obs_family(ObsFamilyRecord(
+                    family_id=fam_id,
+                    source_id=source_id,
+                    provider_series_id=series_id,
+                    canonical_name=canon_name,
+                    short_name="",
+                    unit=unit,
+                    frequency=freq,
+                    seasonal_adjustment=sa,
+                    country_code=parts[0].upper() if parts else "US",
+                    topic_code=topic,
+                    category=category,
+                    is_active=True,
+                    has_vintages=series_id in _VINTAGE_FAMILY_IDS,
+                    created_at=now,
+                    updated_at=now,
+                ))
+
+        # 3. Seed obs_family_document links (only if both sides exist)
+        for fam_id, rel_fam_id, relationship in _OBS_DOC_LINKS:
+            if self.get_obs_family(fam_id) and self.get_doc_release_family(rel_fam_id):
+                self.upsert_obs_family_document(ObsFamilyDocumentRecord(
+                    family_id=fam_id,
+                    release_family_id=rel_fam_id,
+                    relationship=relationship,
+                    created_at=now,
+                ))
+
+    def backfill_obs_family_ids(self) -> int:
+        """Set obs_family_id on existing indicators/vintages rows from obs_family table.
+        Returns total number of rows updated."""
+        with self._connection(commit=True) as connection:
+            cur1 = connection.execute(
+                """
+                UPDATE indicators SET obs_family_id = (
+                    SELECT family_id FROM obs_family
+                    WHERE obs_family.provider_series_id = indicators.series_id
+                      AND obs_family.source_id = indicators.source
+                ) WHERE obs_family_id IS NULL
+                """
+            )
+            cur2 = connection.execute(
+                """
+                UPDATE indicator_vintages SET obs_family_id = (
+                    SELECT family_id FROM obs_family
+                    WHERE obs_family.provider_series_id = indicator_vintages.series_id
+                      AND obs_family.source_id = indicator_vintages.source
+                ) WHERE obs_family_id IS NULL
+                """
+            )
+        return (cur1.rowcount or 0) + (cur2.rowcount or 0)
+
+    def build_obs_family_lookup(self) -> dict[tuple[str, str], str]:
+        """Build a lookup dict mapping (source_id, provider_series_id) -> family_id."""
+        families = self.list_obs_families(active_only=False)
+        return {(f.source_id, f.provider_series_id): f.family_id for f in families}

@@ -125,6 +125,162 @@ This populates 16 sources and 41 release families.
 
 ---
 
+## Observation Family Storage (3-table hierarchy)
+
+Formalizes the observation/indicator side with a parallel hierarchy to the
+document schema. Connects numeric data streams (CPI = 3.2%, Fed Funds = 4.33%)
+to their document publication streams (BLS CPI report, FOMC statement).
+
+### Tables
+
+```
+obs_source               Data provider info (FRED, EIA, NY Fed...)
+  |
+  +-- obs_family           Series definitions (us.inflation.cpi_all, us.rates.sofr...)
+        |
+        +-- indicators       Existing time series (linked via obs_family_id)
+        +-- indicator_vintages  Existing revision data (linked via obs_family_id)
+
+obs_family_document      Links obs_family <-> doc_release_family
+```
+
+### obs_source
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `source_id` | TEXT PK | `fred`, `eia`, `treasury_fiscal`, `nyfed`, `rateprobability` |
+| `source_code` | TEXT | Short code |
+| `source_name` | TEXT | Full name |
+| `source_type` | TEXT | CHECK: `data_aggregator`, `government_agency`, `central_bank`, `exchange`, `market_data` |
+| `country_code` | TEXT | 2-letter ISO |
+| `homepage_url` | TEXT | Provider homepage |
+| `api_base_url` | TEXT | API endpoint base |
+| `is_active` | INTEGER | 1/0 |
+
+### obs_family
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `family_id` | TEXT PK | e.g. `us.inflation.cpi_all`, `us.rates.sofr` |
+| `source_id` | TEXT FK | -> `obs_source` |
+| `provider_series_id` | TEXT | Maps to `indicators.series_id` (e.g. `CPIAUCSL`) |
+| `canonical_name` | TEXT | Human-readable name |
+| `unit` | TEXT | `index`, `percent`, `billions_usd`, etc. |
+| `frequency` | TEXT | CHECK: `daily`, `weekly`, `monthly`, `quarterly`, `annual`, `irregular` |
+| `seasonal_adjustment` | TEXT | CHECK: `sa`, `nsa`, `saar`, `none` |
+| `country_code` | TEXT | 2-letter ISO |
+| `topic_code` | TEXT | `inflation`, `employment`, `rates`, `energy`, `fiscal` |
+| `category` | TEXT | `cpi_all`, `treasury_yields`, etc. |
+| `has_vintages` | INTEGER | 1 if series has revision history |
+
+### obs_family_document
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `family_id` | TEXT FK | -> `obs_family` |
+| `release_family_id` | TEXT FK | -> `doc_release_family` |
+| `relationship` | TEXT | CHECK: `produced_by`, `derived_from`, `related_to` |
+| PRIMARY KEY | | `(family_id, release_family_id)` |
+
+### Indexes
+
+```sql
+idx_obs_family_source            ON obs_family(source_id)
+idx_obs_family_country_topic     ON obs_family(country_code, topic_code)
+idx_obs_family_provider_series   UNIQUE ON obs_family(source_id, provider_series_id)
+idx_indicators_family_date       ON indicators(obs_family_id, date)
+idx_vintages_family_date         ON indicator_vintages(obs_family_id, observation_date)
+idx_obs_family_doc_release       ON obs_family_document(release_family_id)
+```
+
+### ALTER TABLE migrations
+
+Both `indicators` and `indicator_vintages` gain a nullable `obs_family_id TEXT`
+column, populated via backfill after seeding.
+
+### Seeding
+
+Auto-seeded on first `IngestionOrchestrator.refresh_all()`:
+
+```python
+store.seed_obs_sources_and_families()   # 5 sources, 37 families
+store.backfill_obs_family_ids()         # populate existing rows
+```
+
+Seed data: 26 FRED series + 5 EIA + 3 Treasury Fiscal + 3 NY Fed = 37 families.
+10 obs_family_document links connect observation families to document release families.
+
+### CRUD Methods
+
+| Method | Description |
+|--------|-------------|
+| `upsert_obs_source()` | Insert/update a source |
+| `get_obs_source()` / `list_obs_sources()` | Query sources |
+| `upsert_obs_family()` | Insert/update a family |
+| `get_obs_family()` / `get_obs_family_by_series()` | Lookup by family_id or (source, series) |
+| `list_obs_families()` | Filter by source, country, topic, frequency |
+| `upsert_obs_family_document()` | Insert/update a link |
+| `list_obs_families_for_release()` | Obs families linked to a doc release family |
+| `list_releases_for_obs_family()` | Doc releases linked to an obs family |
+| `seed_obs_sources_and_families()` | Populate all seed data |
+| `backfill_obs_family_ids()` | Set obs_family_id on existing indicator rows |
+| `build_obs_family_lookup()` | Build (source, series) -> family_id dict |
+
+---
+
+## Indicator Vintage Storage
+
+Tracks **revision history** for macro series (GDP, CPI, payrolls, etc.) where
+official agencies publish initial estimates then revise them over subsequent
+releases. The `indicators` table always holds the **latest** value; the
+`indicator_vintages` table stores the **full revision timeline**.
+
+### indicator_vintages
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | INTEGER PK | Auto-increment |
+| `series_id` | TEXT | e.g. `GDP`, `CPIAUCSL`, `PAYEMS` |
+| `source` | TEXT | e.g. `fred` |
+| `observation_date` | TEXT | The date being measured (`YYYY-MM-DD`) |
+| `vintage_date` | TEXT | When this value was published/revised (`YYYY-MM-DD`) |
+| `value` | REAL | The observed value at this vintage |
+| `metadata_json` | TEXT | JSON: `{"name": "GDP"}` |
+| `scraped_at` | TEXT | ISO timestamp of ingestion |
+
+**Unique constraint:** `(series_id, source, observation_date, vintage_date)`
+
+Same observation_date can have multiple vintage_dates showing how a value
+changed over time (e.g. GDP advance → second → third estimate).
+
+### CRUD Methods
+
+| Method | Description |
+|--------|-------------|
+| `upsert_indicator_vintage(vintage)` | Insert/update a vintage record |
+| `get_vintage_history(series_id, observation_date)` | All vintages for one observation, ordered by vintage_date ASC |
+| `get_vintages_for_series(series_id, *, limit=50)` | Most recent vintage records for a series |
+
+### Data Record
+
+```python
+@dataclass(frozen=True)
+class IndicatorVintageRecord:
+    series_id: str
+    source: str
+    observation_date: str   # the date being measured
+    vintage_date: str       # when this measurement was published
+    value: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+```
+
+### Key Vintage Series (ALFRED)
+
+`GDP`, `GDPC1`, `CPIAUCSL`, `PAYEMS`, `UNRATE`, `INDPRO`, `RSAFS` —
+monthly/quarterly macro that gets revised across releases.
+
+---
+
 ## Other Tables
 
 | Table | Purpose |
@@ -132,7 +288,11 @@ This populates 16 sources and 41 release families.
 | `calendar_events` | Economic calendar (Investing, ForexFactory, TradingEconomics) |
 | `market_prices` | Asset price snapshots (yfinance) |
 | `central_bank_comms` | Fed speeches, statements, testimony (RSS feeds) |
-| `indicators` | Time series macro data (FRED, NY Fed, rate probabilities) |
+| `obs_source` | Observation data providers (FRED, EIA, Treasury Fiscal, NY Fed, rateprobability) |
+| `obs_family` | Series definitions — canonical metadata for each observation stream |
+| `obs_family_document` | Links observation families to document release families |
+| `indicators` | Time series macro data (FRED, EIA, Treasury Fiscal, NY Fed, rate probabilities) |
+| `indicator_vintages` | Revision history for macro series (ALFRED vintage data) |
 | `news_articles` | News + gov reports (FTS5 full-text search) |
 | `regime_snapshots` | Market regime JSON snapshots |
 | `generated_notes` | AI-generated analysis notes |
@@ -153,5 +313,5 @@ This populates 16 sources and 41 release families.
 ## Running Tests
 
 ```bash
-python3 -m pytest tests/test_document_storage.py -v
+python3 -m pytest tests/test_document_storage.py tests/test_obs_family.py -v
 ```
