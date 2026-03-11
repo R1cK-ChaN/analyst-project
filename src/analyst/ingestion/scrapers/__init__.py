@@ -7,6 +7,7 @@ from .bloomberg import BloombergArticle, BloombergArticleClient, BloombergNewsCl
 from .ft import FTArticle, FTArticleClient, FTNewsClient
 from .reuters import ReutersArticle, ReutersArticleClient, ReutersNewsClient
 from .wsj import WSJArticle, WSJArticleClient, WSJNewsClient
+from .gov_report import GovReportClient, GovReportItem
 from .nyfed import NYFedRate, NYFedRatesClient
 from .rateprobability import (
     FedMeetingProbability,
@@ -26,6 +27,8 @@ __all__ = [
     "FTArticle",
     "FedMeetingProbability",
     "FedRateProbability",
+    "GovReportClient",
+    "GovReportItem",
     "NYFedRate",
     "ReutersArticle",
     "ScrapedIndicator",

@@ -23,6 +23,7 @@ from analyst.ingestion.scrapers import (
     InvestingCalendarClient,
     TradingEconomicsCalendarClient,
 )
+from analyst.ingestion.scrapers.gov_report import GovReportClient, GovReportItem
 from analyst.ingestion.scrapers.nyfed import NYFedRatesClient
 from analyst.ingestion.scrapers.rateprobability import RateProbabilityClient
 
@@ -455,6 +456,56 @@ class NewsIngestionClient:
         self._article_fetcher.close()
 
 
+class GovReportIngestionClient:
+    """Fetches government reports and stores them as news articles."""
+
+    def __init__(self) -> None:
+        self._client = GovReportClient()
+
+    def refresh(self, store: SQLiteEngineStore) -> RefreshStats:
+        items = self._client.fetch_all()
+        count = 0
+        for item in items:
+            try:
+                url_hash = hashlib.sha256(item.url.encode("utf-8")).hexdigest()
+                if store.news_article_exists(url_hash):
+                    continue
+                ts = 0
+                if item.published_at:
+                    try:
+                        from datetime import datetime as _dt
+                        dt = _dt.strptime(item.published_at, "%Y-%m-%d")
+                        ts = int(dt.replace(tzinfo=UTC).timestamp())
+                    except ValueError:
+                        ts = int(datetime.now(UTC).timestamp())
+                else:
+                    ts = int(datetime.now(UTC).timestamp())
+                record = NewsArticleRecord(
+                    url_hash=url_hash,
+                    source_feed=f"gov_{item.source_id}",
+                    feed_category="government",
+                    title=item.title,
+                    url=item.url,
+                    timestamp=ts,
+                    description=item.description,
+                    content_markdown=item.content_markdown,
+                    impact_level=item.importance or "medium",
+                    finance_category=item.data_category,
+                    confidence=0.8,
+                    content_fetched=bool(item.content_markdown),
+                    institution=item.institution,
+                    country=item.country,
+                    document_type="government_report",
+                    language=item.language,
+                )
+                store.upsert_news_article(record)
+                count += 1
+            except Exception:
+                logger.warning("Gov report storage failed: %s", item.source_id, exc_info=True)
+                continue
+        return RefreshStats(source="gov_reports", count=count)
+
+
 class IngestionOrchestrator:
     def __init__(
         self,
@@ -469,6 +520,7 @@ class IngestionOrchestrator:
         news: NewsIngestionClient | None = None,
         rate_probability: RateProbabilityClient | None = None,
         nyfed: NYFedRatesClient | None = None,
+        gov_report: GovReportIngestionClient | None = None,
     ) -> None:
         self.store = store
         self.fred = fred or FREDIngestionClient()
@@ -480,6 +532,7 @@ class IngestionOrchestrator:
         self.news = news or NewsIngestionClient()
         self.rate_probability = rate_probability or RateProbabilityClient()
         self.nyfed = nyfed or NYFedRatesClient()
+        self.gov_report = gov_report or GovReportIngestionClient()
 
     def refresh_calendar(self) -> dict[str, int]:
         total = 0
@@ -548,6 +601,14 @@ class IngestionOrchestrator:
             logger.warning("rateprobability.com refresh failed", exc_info=True)
         return {"rate_probability": count}
 
+    def refresh_gov_reports(self) -> dict[str, int]:
+        try:
+            stats = self.gov_report.refresh(self.store)
+            return {stats.source: stats.count}
+        except Exception:
+            logger.warning("Gov reports refresh failed", exc_info=True)
+            return {"gov_reports": 0}
+
     def refresh_nyfed_rates(self) -> dict[str, int]:
         count = 0
         try:
@@ -589,6 +650,7 @@ class IngestionOrchestrator:
             self.refresh_news(),
             self.refresh_rate_probability(),
             self.refresh_nyfed_rates(),
+            self.refresh_gov_reports(),
         ):
             results.update(batch)
         return results
@@ -602,6 +664,7 @@ class IngestionOrchestrator:
             "news": {"interval": 900, "handler": self.refresh_news},
             "rate_probability": {"interval": 3600, "handler": self.refresh_rate_probability},
             "nyfed_rates": {"interval": 86_400, "handler": self.refresh_nyfed_rates},
+            "gov_reports": {"interval": 21_600, "handler": self.refresh_gov_reports},
         }
         next_run = {name: 0.0 for name in jobs}
         self.refresh_all()
