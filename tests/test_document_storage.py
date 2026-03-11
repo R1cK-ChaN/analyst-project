@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from analyst.storage import (
@@ -107,6 +108,10 @@ class TestDocumentStorageSchema(unittest.TestCase):
         fetched = self.store.get_document("doc001")
         self.assertIsNotNone(fetched)
         self.assertEqual(fetched.title, "CPI March 2026")
+        expected_published_ms = int(datetime(2026, 3, 11, tzinfo=timezone.utc).timestamp() * 1000)
+        self.assertEqual(fetched.published_epoch_ms, expected_published_ms)
+        self.assertGreater(fetched.created_epoch_ms, 0)
+        self.assertGreater(fetched.updated_epoch_ms, 0)
 
     def test_document_exists(self) -> None:
         self._seed_source("us.bls")

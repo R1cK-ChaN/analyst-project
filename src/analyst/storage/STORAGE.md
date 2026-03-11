@@ -60,9 +60,12 @@ doc_source              Publisher-level info (BLS, ECB, NBS...)
 | `country_code` | TEXT | 2-letter ISO |
 | `topic_code` | TEXT | Same codes as release_family |
 | `published_date` | TEXT | `YYYY-MM-DD` |
+| `published_epoch_ms` | INTEGER | Canonical UTC publish timestamp in milliseconds |
 | `status` | TEXT | CHECK: `published`, `revised`, `superseded`, `withdrawn` |
 | `version_no` | INTEGER | Default 1 |
 | `hash_sha256` | TEXT | Full SHA-256 of URL |
+| `created_epoch_ms` | INTEGER | Canonical UTC ingest timestamp in milliseconds |
+| `updated_epoch_ms` | INTEGER | Canonical UTC update timestamp in milliseconds |
 
 ### document_blob
 

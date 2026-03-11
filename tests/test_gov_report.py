@@ -1,6 +1,7 @@
 """Unit tests for the gov_report scraper parsing helpers."""
 
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from analyst.ingestion.scrapers.gov_report import (
@@ -361,13 +362,22 @@ class TestGovReportIngestionClient(unittest.TestCase):
             ),
         ]
         mock_store = MagicMock()
+        mock_store.document_exists.return_value = False
         mock_store.news_article_exists.return_value = False
 
         ingestion = GovReportIngestionClient()
         stats = ingestion.refresh(mock_store)
         self.assertEqual(stats.source, "gov_reports")
         self.assertEqual(stats.count, 1)
+        mock_store.upsert_document.assert_called_once()
         mock_store.upsert_news_article.assert_called_once()
+        stored_doc = mock_store.upsert_document.call_args.args[0]
+        self.assertEqual(stored_doc.published_date, "2025-12-01")
+        self.assertEqual(stored_doc.published_at, "2025-12-01T00:00:00+00:00")
+        self.assertEqual(
+            stored_doc.published_epoch_ms,
+            int(datetime(2025, 12, 1, tzinfo=timezone.utc).timestamp() * 1000),
+        )
 
     @patch("analyst.ingestion.sources.GovReportClient")
     def test_refresh_skips_existing(self, mock_client_cls):

@@ -13,7 +13,7 @@ import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
 
-from analyst.contracts import format_epoch_iso
+from analyst.contracts import format_epoch_iso, normalize_utc_iso, to_epoch_ms
 from analyst.env import get_env_value
 from analyst.ingestion.news_extract import extract_news_metadata
 from analyst.ingestion.news_feeds import get_feeds
@@ -1387,10 +1387,19 @@ class GovReportIngestionClient:
         self._ensure_seed(store)
         items = self._client.fetch_all()
         count = 0
-        now_iso = datetime.now(UTC).isoformat()
+        now_dt = datetime.now(UTC)
+        now_iso = now_dt.isoformat()
+        now_epoch_ms = int(now_dt.timestamp() * 1000)
         for item in items:
             try:
                 url_hash = hashlib.sha256(item.url.encode("utf-8")).hexdigest()
+                try:
+                    published_at = normalize_utc_iso(item.published_at) if item.published_at else now_iso
+                    published_epoch_ms = to_epoch_ms(item.published_at) if item.published_at else now_epoch_ms
+                except ValueError:
+                    published_at = now_iso
+                    published_epoch_ms = now_epoch_ms
+                published_date = published_at[:10]
 
                 # --- Normalized document storage ---
                 if not store.document_exists(item.url):
@@ -1398,7 +1407,6 @@ class GovReportIngestionClient:
                     release_family_id = item.source_id.replace("_", ".")
                     parts = item.source_id.split("_")
                     source_key = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else item.source_id
-                    published_date = item.published_at or datetime.now(UTC).strftime("%Y-%m-%d")
 
                     doc = DocumentRecord(
                         document_id=doc_id,
@@ -1413,13 +1421,16 @@ class GovReportIngestionClient:
                         country_code=item.country,
                         topic_code=item.data_category,
                         published_date=published_date,
-                        published_at=now_iso,
+                        published_at=published_at,
                         status="published",
                         version_no=1,
                         parent_document_id="",
                         hash_sha256=url_hash,
                         created_at=now_iso,
                         updated_at=now_iso,
+                        published_epoch_ms=published_epoch_ms,
+                        created_epoch_ms=now_epoch_ms,
+                        updated_epoch_ms=now_epoch_ms,
                     )
                     store.upsert_document(doc)
 
@@ -1452,15 +1463,7 @@ class GovReportIngestionClient:
                 # --- Legacy news_articles storage ---
                 if store.news_article_exists(url_hash):
                     continue
-                ts = 0
-                if item.published_at:
-                    try:
-                        dt = datetime.strptime(item.published_at, "%Y-%m-%d")
-                        ts = int(dt.replace(tzinfo=UTC).timestamp())
-                    except ValueError:
-                        ts = int(datetime.now(UTC).timestamp())
-                else:
-                    ts = int(datetime.now(UTC).timestamp())
+                ts = int(published_epoch_ms / 1000)
                 record = NewsArticleRecord(
                     url_hash=url_hash,
                     source_feed=f"gov_{item.source_id}",

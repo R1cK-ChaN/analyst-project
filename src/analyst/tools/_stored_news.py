@@ -26,6 +26,7 @@ class StoredNewsHandler:
         finance_category = (arguments.get("finance_category") or "").strip() or None
         country = (arguments.get("country") or "").strip() or None
         asset_class = (arguments.get("asset_class") or "").strip() or None
+        timezone_name = (arguments.get("timezone") or "").strip() or None
 
         try:
             articles = self._store.get_news_context(
@@ -37,6 +38,7 @@ class StoredNewsHandler:
                 finance_category=finance_category,
                 country=country,
                 asset_class=asset_class,
+                display_timezone=timezone_name,
             )
         except Exception as exc:
             logger.warning("search_news failed: %s", exc)
@@ -95,6 +97,10 @@ def build_stored_news_tool(store: SQLiteEngineStore) -> AgentTool:
                 "limit": {
                     "type": "integer",
                     "description": "Max results to return (default 10, max 25)",
+                },
+                "timezone": {
+                    "type": "string",
+                    "description": "Optional IANA timezone for display, e.g. Asia/Singapore",
                 },
             },
         },

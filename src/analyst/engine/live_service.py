@@ -341,6 +341,7 @@ class LiveAnalystEngine:
                     "finance_category": {"type": "string", "description": "monetary_policy, inflation, rates, etc."},
                     "country": {"type": "string", "description": "Country code, e.g. US, CN, EU, Global"},
                     "asset_class": {"type": "string", "description": "Asset class, e.g. Macro, Fixed Income, Equity, FX, Commodity"},
+                    "timezone": {"type": "string", "description": "Optional IANA timezone for display, e.g. Asia/Singapore"},
                 },
             },
             handler=self._tool_recent_news,
@@ -357,6 +358,7 @@ class LiveAnalystEngine:
                     "days": {"type": "integer", "default": 7},
                     "country": {"type": "string", "description": "Country code, e.g. US, CN, EU"},
                     "asset_class": {"type": "string", "description": "Asset class filter"},
+                    "timezone": {"type": "string", "description": "Optional IANA timezone for display, e.g. America/New_York"},
                 },
             },
             handler=self._tool_search_news,
@@ -527,6 +529,7 @@ class LiveAnalystEngine:
             finance_category=arguments.get("finance_category"),
             country=arguments.get("country"),
             asset_class=arguments.get("asset_class"),
+            display_timezone=arguments.get("timezone"),
         )
         return {"articles": articles}
 
@@ -537,6 +540,7 @@ class LiveAnalystEngine:
             limit=int(arguments.get("limit", 15)),
             country=arguments.get("country"),
             asset_class=arguments.get("asset_class"),
+            display_timezone=arguments.get("timezone"),
         )
         return {"articles": articles}
 

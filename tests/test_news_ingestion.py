@@ -402,6 +402,18 @@ class TestNewsStorage:
         titles = [r["title"] for r in results]
         assert "Banking crisis erupts" in titles
 
+    def test_get_news_context_projects_display_timezone(self, store: SQLiteEngineStore):
+        ts = int(datetime(2026, 3, 7, 14, 30, tzinfo=timezone.utc).timestamp())
+        store.upsert_news_article(self._make_article(
+            url="https://example.com/timezone-test",
+            title="Timezone projection",
+            timestamp=ts,
+        ))
+        results = store.get_news_context(days=30, limit=5, display_timezone="Asia/Singapore")
+        assert results[0]["published_at"] == "2026-03-07T14:30:00+00:00"
+        assert results[0]["published_at_local"] == "2026-03-07T22:30:00+08:00"
+        assert results[0]["published_timezone"] == "Asia/Singapore"
+
     def test_epoch_timestamp_round_trip(self, store: SQLiteEngineStore):
         """timestamp must round-trip as int through the store."""
         ts = int(datetime(2026, 3, 7, 14, 30, tzinfo=timezone.utc).timestamp())

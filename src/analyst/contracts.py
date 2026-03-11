@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from enum import Enum
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def utc_now() -> datetime:
@@ -14,6 +15,10 @@ def epoch_to_datetime(ts: int) -> datetime:
     return datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
+def epoch_ms_to_datetime(ts_ms: int) -> datetime:
+    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+
+
 def format_epoch(ts: int) -> str:
     """'2026-03-08 14:30' — for CLI display."""
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -22,6 +27,53 @@ def format_epoch(ts: int) -> str:
 def format_epoch_iso(ts: int) -> str:
     """'2026-03-08T14:30:00+00:00' — for LLM-readable dicts and prompts."""
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
+def format_epoch_ms_iso(ts_ms: int) -> str:
+    """'2026-03-08T14:30:00+00:00' — for milliseconds-based UTC timestamps."""
+    return epoch_ms_to_datetime(ts_ms).isoformat()
+
+
+def _coerce_utc_datetime(value: str | datetime, *, default_tz: tzinfo = timezone.utc) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = value.strip()
+        if not text:
+            raise ValueError("timestamp is empty")
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+                try:
+                    parsed = datetime.strptime(text, pattern)
+                    break
+                except ValueError:
+                    continue
+            else:
+                raise
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=default_tz)
+    return parsed.astimezone(timezone.utc)
+
+
+def normalize_utc_iso(value: str | datetime, *, default_tz: tzinfo = timezone.utc) -> str:
+    return _coerce_utc_datetime(value, default_tz=default_tz).isoformat()
+
+
+def to_epoch_ms(value: str | datetime, *, default_tz: tzinfo = timezone.utc) -> int:
+    return int(_coerce_utc_datetime(value, default_tz=default_tz).timestamp() * 1000)
+
+
+def format_epoch_iso_in_timezone(ts: int, timezone_name: str, *, milliseconds: bool = False) -> str:
+    try:
+        zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"unknown timezone: {timezone_name}") from exc
+    moment = epoch_ms_to_datetime(ts) if milliseconds else epoch_to_datetime(ts)
+    return moment.astimezone(zone).isoformat()
 
 
 class Serializable:

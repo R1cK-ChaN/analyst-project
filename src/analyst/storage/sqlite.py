@@ -10,7 +10,14 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from analyst.contracts import epoch_to_datetime, format_epoch_iso, utc_now
+from analyst.contracts import (
+    epoch_to_datetime,
+    format_epoch_iso,
+    format_epoch_iso_in_timezone,
+    normalize_utc_iso,
+    to_epoch_ms,
+    utc_now,
+)
 
 
 def default_engine_db_path(root: Path | None = None) -> Path:
@@ -402,6 +409,9 @@ class DocumentRecord:
     hash_sha256: str
     created_at: str
     updated_at: str
+    published_epoch_ms: int = 0
+    created_epoch_ms: int = 0
+    updated_epoch_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -423,6 +433,24 @@ class DocumentBlobRecord:
 class DocumentExtraRecord:
     document_id: str
     extra_json: dict[str, Any]
+
+
+def _safe_epoch_ms(value: str | datetime | None) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        return to_epoch_ms(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_utc_iso(value: str | datetime | None) -> str:
+    if value in (None, ""):
+        return ""
+    try:
+        return normalize_utc_iso(value)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 # ── Observation family seed data ─────────────────────────────────────
@@ -1190,6 +1218,7 @@ class SQLiteEngineStore:
                     topic_code TEXT NOT NULL,
                     published_date TEXT NOT NULL,
                     published_at TEXT,
+                    published_epoch_ms INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL DEFAULT 'published'
                         CHECK (status IN ('published', 'revised', 'superseded', 'withdrawn')),
                     version_no INTEGER NOT NULL DEFAULT 1,
@@ -1197,11 +1226,22 @@ class SQLiteEngineStore:
                     hash_sha256 TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    created_epoch_ms INTEGER NOT NULL DEFAULT 0,
+                    updated_epoch_ms INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY (release_family_id) REFERENCES doc_release_family(release_family_id),
                     FOREIGN KEY (source_id) REFERENCES doc_source(source_id),
                     FOREIGN KEY (parent_document_id) REFERENCES document(document_id)
                 )
                 """
+            )
+            self._ensure_table_columns(
+                connection,
+                table_name="document",
+                columns={
+                    "published_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
+                    "created_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
+                    "updated_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
+                },
             )
             connection.execute(
                 """
@@ -1260,6 +1300,10 @@ class SQLiteEngineStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_document_country_topic_date "
                 "ON document(country_code, topic_code, published_date)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_published_epoch "
+                "ON document(published_epoch_ms)"
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_document_status "
@@ -2773,6 +2817,7 @@ class SQLiteEngineStore:
         finance_category: str | None = None,
         country: str | None = None,
         asset_class: str | None = None,
+        display_timezone: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve news with time-decay + impact-weight composite scoring."""
         cutoff = int((utc_now() - timedelta(days=days)).timestamp())
@@ -2842,7 +2887,7 @@ class SQLiteEngineStore:
             desc = article.description
             if len(desc) > 500:
                 desc = desc[:500] + "..."
-            scored.append((composite, {
+            payload = {
                 "source_feed": article.source_feed,
                 "title": article.title,
                 "url": article.url,
@@ -2856,7 +2901,17 @@ class SQLiteEngineStore:
                 "subject": article.subject,
                 "event_type": article.event_type,
                 "score": round(composite, 4),
-            }))
+            }
+            if display_timezone:
+                try:
+                    payload["published_at_local"] = format_epoch_iso_in_timezone(
+                        article.timestamp,
+                        display_timezone,
+                    )
+                    payload["published_timezone"] = display_timezone
+                except ValueError:
+                    pass
+            scored.append((composite, payload))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [item for _, item in scored[:limit]]
@@ -4092,6 +4147,10 @@ class SQLiteEngineStore:
         )
 
     def upsert_document(self, record: DocumentRecord) -> None:
+        published_at = record.published_at or _safe_utc_iso(record.published_date)
+        published_epoch_ms = record.published_epoch_ms or _safe_epoch_ms(published_at or record.published_date)
+        created_epoch_ms = record.created_epoch_ms or _safe_epoch_ms(record.created_at)
+        updated_epoch_ms = record.updated_epoch_ms or _safe_epoch_ms(record.updated_at)
         with self._connection(commit=True) as connection:
             connection.execute(
                 """
@@ -4099,10 +4158,10 @@ class SQLiteEngineStore:
                     document_id, release_family_id, source_id, canonical_url,
                     title, subtitle, document_type, mime_type,
                     language_code, country_code, topic_code,
-                    published_date, published_at, status, version_no,
+                    published_date, published_at, published_epoch_ms, status, version_no,
                     parent_document_id, hash_sha256,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, created_epoch_ms, updated_epoch_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.document_id,
@@ -4117,13 +4176,16 @@ class SQLiteEngineStore:
                     record.country_code,
                     record.topic_code,
                     record.published_date,
-                    record.published_at or None,
+                    published_at or None,
+                    published_epoch_ms,
                     record.status,
                     record.version_no,
                     record.parent_document_id or None,
                     record.hash_sha256 or None,
                     record.created_at,
                     record.updated_at,
+                    created_epoch_ms,
+                    updated_epoch_ms,
                 ),
             )
 
@@ -4189,8 +4251,10 @@ class SQLiteEngineStore:
             params.append(document_type)
         if days is not None:
             cutoff = (date.today() - timedelta(days=days)).isoformat()
-            conditions.append("published_date >= ?")
-            params.append(cutoff)
+            cutoff_dt = datetime.fromisoformat(cutoff).replace(tzinfo=timezone.utc)
+            cutoff_epoch_ms = int(cutoff_dt.timestamp() * 1000)
+            conditions.append("(published_epoch_ms >= ? OR published_date >= ?)")
+            params.extend([cutoff_epoch_ms, cutoff])
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.append(limit)
         with self._connection(commit=False) as connection:
@@ -4198,7 +4262,7 @@ class SQLiteEngineStore:
                 f"""
                 SELECT * FROM document
                 {where}
-                ORDER BY published_date DESC
+                ORDER BY published_epoch_ms DESC, published_date DESC, document_id DESC
                 LIMIT ?
                 """,
                 params,
@@ -4219,13 +4283,28 @@ class SQLiteEngineStore:
             country_code=row["country_code"],
             topic_code=row["topic_code"],
             published_date=row["published_date"],
-            published_at=row["published_at"] or "",
+            published_at=row["published_at"] or _safe_utc_iso(row["published_date"]),
             status=row["status"],
             version_no=int(row["version_no"]),
             parent_document_id=row["parent_document_id"] or "",
             hash_sha256=row["hash_sha256"] or "",
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            published_epoch_ms=(
+                int(row["published_epoch_ms"])
+                if row["published_epoch_ms"]
+                else _safe_epoch_ms(row["published_at"] or row["published_date"])
+            ),
+            created_epoch_ms=(
+                int(row["created_epoch_ms"])
+                if row["created_epoch_ms"]
+                else _safe_epoch_ms(row["created_at"])
+            ),
+            updated_epoch_ms=(
+                int(row["updated_epoch_ms"])
+                if row["updated_epoch_ms"]
+                else _safe_epoch_ms(row["updated_at"])
+            ),
         )
 
     def upsert_document_blob(self, record: DocumentBlobRecord) -> None:
