@@ -564,7 +564,7 @@ class LiveAnalystEngine:
         }
 
     def _stored_event_to_dict(self, event: StoredEventRecord) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "source": event.source,
             "event_id": event.event_id,
             "timestamp": event.timestamp,
@@ -578,6 +578,9 @@ class LiveAnalystEngine:
             "previous": event.previous,
             "surprise": event.surprise,
         }
+        if event.indicator_id:
+            d["indicator_id"] = event.indicator_id
+        return d
 
     def _baseline_regime(self, trigger_event: StoredEventRecord | None = None) -> dict[str, Any]:
         latest_snapshot = self.store.latest_regime_snapshot()

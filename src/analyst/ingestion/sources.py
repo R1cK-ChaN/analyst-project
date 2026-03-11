@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import re
 import time
@@ -15,9 +16,11 @@ from bs4 import BeautifulSoup
 
 from analyst.contracts import format_epoch_iso, normalize_utc_iso, to_epoch_ms
 from analyst.env import get_env_value
+from analyst.ingestion.news_classify import Deduplicator
 from analyst.ingestion.news_extract import extract_news_metadata
 from analyst.ingestion.news_feeds import get_feeds
 from analyst.ingestion.news_fetcher import ArticleFetcher
+from analyst.ingestion.url_canon import canonicalize_url, content_hash
 from analyst.ingestion.scrapers import (
     ForexFactoryCalendarClient,
     InvestingCalendarClient,
@@ -47,7 +50,16 @@ from analyst.storage import (
     MarketPriceRecord,
     NewsArticleRecord,
     SQLiteEngineStore,
+    StoredEventRecord,
 )
+
+
+def _infer_publish_precision(value: str | None) -> str:
+    if not value:
+        return "estimated"
+    if re.search(r"[T ]\d{1,2}:\d{2}", value):
+        return "exact"
+    return "date_only"
 
 FED_FEEDS = {
     "press_releases": {
@@ -1256,6 +1268,11 @@ class NewsIngestionClient:
         """Fetch -> extract articles -> LLM/keyword metadata -> store."""
         feeds = get_feeds(category)
 
+        # Seed fuzzy deduplicator with recent titles
+        deduplicator = Deduplicator(threshold=0.6)
+        recent_titles = store.get_recent_news_titles(hours=24)
+        deduplicator.seed(recent_titles)
+
         stored_count = 0
         for feed in feeds:
             try:
@@ -1276,14 +1293,7 @@ class NewsIngestionClient:
                     if not link:
                         continue
 
-                    url_hash = hashlib.sha256(link.encode("utf-8")).hexdigest()
-                    if store.news_article_exists(url_hash):
-                        continue
-
-                    raw_desc = entry.get("summary", "") or entry.get("description", "")
-                    from bs4 import BeautifulSoup as _BS
-                    description = _BS(raw_desc, "html.parser").get_text(" ", strip=True)
-
+                    # Compute timestamp early — needed for content_hash
                     ts = 0
                     if hasattr(entry, "published_parsed") and entry.published_parsed:
                         ts = int(datetime(
@@ -1291,6 +1301,21 @@ class NewsIngestionClient:
                         ).timestamp())
                     if not ts:
                         ts = int(datetime.now(timezone.utc).timestamp())
+
+                    # Layer 1+2: fingerprint check (cheap, before HTTP fetch)
+                    canonical = canonicalize_url(link)
+                    url_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+                    title_hash = content_hash(title, ts)
+                    if store.fingerprint_exists(url_hash=url_hash, title_hash=title_hash):
+                        continue
+
+                    # Layer 3: fuzzy title check
+                    if deduplicator.is_duplicate(title):
+                        continue
+
+                    raw_desc = entry.get("summary", "") or entry.get("description", "")
+                    from bs4 import BeautifulSoup as _BS
+                    description = _BS(raw_desc, "html.parser").get_text(" ", strip=True)
 
                     article = self._article_fetcher.fetch_article(link, description)
                     extraction = extract_news_metadata(
@@ -1331,6 +1356,14 @@ class NewsIngestionClient:
                         extraction_provider=extraction.extraction_provider,
                     )
                     store.upsert_news_article(record)
+                    store.insert_fingerprint(
+                        url_hash=url_hash,
+                        title_hash=title_hash,
+                        canonical_url=canonical,
+                        raw_url=link,
+                        title=title,
+                        source_feed=feed.name,
+                    )
                     stored_count += 1
 
                     time.sleep(0.5)
@@ -1393,12 +1426,22 @@ class GovReportIngestionClient:
         for item in items:
             try:
                 url_hash = hashlib.sha256(item.url.encode("utf-8")).hexdigest()
+                published_precision = item.published_precision or _infer_publish_precision(item.published_at)
                 try:
-                    published_at = normalize_utc_iso(item.published_at) if item.published_at else now_iso
-                    published_epoch_ms = to_epoch_ms(item.published_at) if item.published_at else now_epoch_ms
+                    if published_precision == "exact" and item.published_at:
+                        published_at = normalize_utc_iso(item.published_at)
+                        published_epoch_ms = to_epoch_ms(item.published_at)
+                    elif published_precision == "date_only" and item.published_at:
+                        published_at = item.published_at[:10]
+                        published_epoch_ms = to_epoch_ms(published_at)
+                    else:
+                        published_at = now_iso
+                        published_epoch_ms = now_epoch_ms
+                        published_precision = "estimated"
                 except ValueError:
                     published_at = now_iso
                     published_epoch_ms = now_epoch_ms
+                    published_precision = "estimated"
                 published_date = published_at[:10]
 
                 # --- Normalized document storage ---
@@ -1422,6 +1465,7 @@ class GovReportIngestionClient:
                         topic_code=item.data_category,
                         published_date=published_date,
                         published_at=published_at,
+                        published_precision=published_precision,
                         status="published",
                         version_no=1,
                         parent_document_id="",
@@ -1455,6 +1499,7 @@ class GovReportIngestionClient:
                         extra_data["importance"] = item.importance
                         extra_data["institution"] = item.institution
                         extra_data["description"] = item.description
+                        extra_data["published_precision"] = published_precision
                         store.upsert_document_extra(DocumentExtraRecord(
                             document_id=doc_id,
                             extra_json=extra_data,
@@ -1534,6 +1579,7 @@ class IngestionOrchestrator:
         self.oecd = oecd or OECDIngestionClient()
         self.worldbank = worldbank or WorldBankIngestionClient()
         self._obs_seeded = False
+        self._cal_seeded = False
         self._family_lookup: dict[tuple[str, str], str] = {}
 
     def _ensure_obs_seed(self) -> None:
@@ -1545,26 +1591,35 @@ class IngestionOrchestrator:
         self._family_lookup = self.store.build_obs_family_lookup()
         self._obs_seeded = True
 
+    def _ensure_calendar_indicator_seed(self) -> None:
+        if self._cal_seeded:
+            return
+        self.store.seed_calendar_indicators()
+        self._cal_seeded = True
+
+    def _resolve_calendar_indicator(self, event: StoredEventRecord) -> StoredEventRecord:
+        indicator_id = self.store.resolve_calendar_alias(
+            event.indicator, event.source, event.country
+        )
+        if indicator_id:
+            return dataclasses.replace(event, indicator_id=indicator_id)
+        return event
+
     def refresh_calendar(self) -> dict[str, int]:
+        self._ensure_calendar_indicator_seed()
         total = 0
-        try:
-            for event in self.investing.fetch_range(days_back=1, days_forward=3):
-                self.store.upsert_calendar_event(event)
-                total += 1
-        except Exception:
-            logger.warning("Investing.com calendar refresh failed", exc_info=True)
-        try:
-            for event in self.forexfactory.fetch():
-                self.store.upsert_calendar_event(event)
-                total += 1
-        except Exception:
-            logger.warning("ForexFactory calendar refresh failed", exc_info=True)
-        try:
-            for event in self.tradingeconomics.fetch():
-                self.store.upsert_calendar_event(event)
-                total += 1
-        except Exception:
-            logger.warning("TradingEconomics calendar refresh failed", exc_info=True)
+        for label, fetch_fn in [
+            ("Investing.com", lambda: self.investing.fetch_range(days_back=1, days_forward=3)),
+            ("ForexFactory", lambda: self.forexfactory.fetch()),
+            ("TradingEconomics", lambda: self.tradingeconomics.fetch()),
+        ]:
+            try:
+                for event in fetch_fn():
+                    event = self._resolve_calendar_indicator(event)
+                    self.store.upsert_calendar_event(event)
+                    total += 1
+            except Exception:
+                logger.warning("%s calendar refresh failed", label, exc_info=True)
         return {"calendar": total}
 
     def refresh_market(self) -> dict[str, int]:

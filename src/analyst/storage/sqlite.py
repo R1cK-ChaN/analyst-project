@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
 import json
 import math
 import re
@@ -47,6 +48,31 @@ class StoredEventRecord:
     currency: str = ""
     unit: str = ""
     raw_json: dict[str, Any] = field(default_factory=dict)
+    indicator_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CalendarIndicatorRecord:
+    indicator_id: str               # 'us.inflation.cpi_mom'
+    canonical_name: str             # 'CPI MoM'
+    topic: str
+    country_code: str
+    frequency: str                  # monthly, quarterly, etc.
+    unit: str
+    obs_family_id: str | None = None
+    is_active: bool = True
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class CalendarIndicatorAliasRecord:
+    alias_normalized: str           # lowercased, stripped
+    indicator_id: str               # FK → calendar_indicator
+    source: str                     # 'investing'|'forexfactory'|'tradingeconomics'
+    country_code: str
+    alias_original: str = ""
+    created_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -409,6 +435,7 @@ class DocumentRecord:
     hash_sha256: str
     created_at: str
     updated_at: str
+    published_precision: str = ""
     published_epoch_ms: int = 0
     created_epoch_ms: int = 0
     updated_epoch_ms: int = 0
@@ -451,6 +478,14 @@ def _safe_utc_iso(value: str | datetime | None) -> str:
         return normalize_utc_iso(value)
     except (TypeError, ValueError):
         return str(value)
+
+
+def _infer_timestamp_precision(value: str | None) -> str:
+    if not value:
+        return "estimated"
+    if re.search(r"[T ]\d{1,2}:\d{2}", value):
+        return "exact"
+    return "date_only"
 
 
 # ── Observation family seed data ─────────────────────────────────────
@@ -605,6 +640,253 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("ecb",             "ecb",             "European Central Bank",             "central_bank",     "EU", "https://www.ecb.europa.eu",                                      "https://data-api.ecb.europa.eu/service/data"),
     ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
     ("worldbank",       "worldbank",       "World Bank",                        "data_aggregator",  "XX", "https://www.worldbank.org",                                      "https://api.worldbank.org/v2"),
+]
+
+# ── Calendar indicator seed data ──────────────────────────────────────
+
+# (indicator_id, canonical_name, topic, country_code, frequency, unit, obs_family_id)
+_CALENDAR_INDICATOR_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
+    # -- US Inflation --
+    ("us.inflation.cpi_mom",      "CPI MoM",               "inflation",  "US", "monthly",   "percent", ""),
+    ("us.inflation.cpi_yoy",      "CPI YoY",               "inflation",  "US", "monthly",   "percent", "us.inflation.cpi_all"),
+    ("us.inflation.core_cpi_mom", "Core CPI MoM",          "inflation",  "US", "monthly",   "percent", ""),
+    ("us.inflation.core_cpi_yoy", "Core CPI YoY",          "inflation",  "US", "monthly",   "percent", "us.inflation.cpi_core"),
+    ("us.inflation.pce_mom",      "PCE Price Index MoM",   "inflation",  "US", "monthly",   "percent", ""),
+    ("us.inflation.pce_yoy",      "PCE Price Index YoY",   "inflation",  "US", "monthly",   "percent", ""),
+    ("us.inflation.core_pce_mom", "Core PCE MoM",          "inflation",  "US", "monthly",   "percent", ""),
+    ("us.inflation.core_pce_yoy", "Core PCE YoY",          "inflation",  "US", "monthly",   "percent", "us.inflation.pce_core"),
+    ("us.inflation.ppi_mom",      "PPI MoM",               "inflation",  "US", "monthly",   "percent", ""),
+    ("us.inflation.ppi_yoy",      "PPI YoY",               "inflation",  "US", "monthly",   "percent", ""),
+    # -- US Employment --
+    ("us.employment.nfp",                "Nonfarm Payrolls",          "employment", "US", "monthly", "thousands", "us.employment.nonfarm_payrolls"),
+    ("us.employment.unemployment_rate",  "Unemployment Rate",         "employment", "US", "monthly", "percent",   "us.employment.unemployment"),
+    ("us.employment.initial_claims",     "Initial Jobless Claims",    "employment", "US", "weekly",  "thousands", "us.employment.initial_claims"),
+    ("us.employment.continuing_claims",  "Continuing Jobless Claims", "employment", "US", "weekly",  "thousands", "us.employment.continuing_claims"),
+    ("us.employment.adp",               "ADP Employment Change",     "employment", "US", "monthly", "thousands", ""),
+    ("us.employment.jolts",             "JOLTS Job Openings",        "employment", "US", "monthly", "thousands", ""),
+    ("us.employment.avg_hourly_earnings","Avg Hourly Earnings MoM",  "employment", "US", "monthly", "percent",   ""),
+    # -- US Growth --
+    ("us.growth.gdp_qoq",          "GDP QoQ",                  "growth", "US", "quarterly", "percent", "us.growth.gdp_real"),
+    ("us.growth.retail_sales_mom",  "Retail Sales MoM",         "growth", "US", "monthly",   "percent", "us.growth.retail_sales"),
+    ("us.growth.ism_mfg_pmi",      "ISM Manufacturing PMI",    "growth", "US", "monthly",   "index",   ""),
+    ("us.growth.ism_services_pmi",  "ISM Services PMI",         "growth", "US", "monthly",   "index",   ""),
+    ("us.growth.industrial_prod",   "Industrial Production MoM","growth", "US", "monthly",   "percent", "us.growth.industrial_production"),
+    ("us.growth.durable_goods",     "Durable Goods Orders MoM", "growth", "US", "monthly",   "percent", ""),
+    ("us.growth.sp_global_mfg_pmi", "S&P Global Mfg PMI",      "growth", "US", "monthly",   "index",   ""),
+    # -- US Policy --
+    ("us.policy.fed_rate",       "Fed Interest Rate Decision", "policy", "US", "irregular", "percent", "us.rates.fed_funds"),
+    ("us.policy.fomc_minutes",   "FOMC Minutes",               "policy", "US", "irregular", "",        ""),
+    ("us.policy.fomc_statement", "FOMC Statement",             "policy", "US", "irregular", "",        ""),
+    ("us.policy.fed_chair_speech","Fed Chair Speech",           "policy", "US", "irregular", "",        ""),
+    # -- US Housing --
+    ("us.housing.existing_home_sales", "Existing Home Sales",  "housing", "US", "monthly", "millions", ""),
+    ("us.housing.new_home_sales",      "New Home Sales",       "housing", "US", "monthly", "thousands",""),
+    ("us.housing.building_permits",    "Building Permits",     "housing", "US", "monthly", "millions", ""),
+    # -- US Consumer --
+    ("us.consumer.michigan_sentiment",  "Michigan Consumer Sentiment", "consumer", "US", "monthly", "index", ""),
+    ("us.consumer.cb_confidence",       "CB Consumer Confidence",      "consumer", "US", "monthly", "index", ""),
+    # -- US Trade --
+    ("us.trade.balance", "Trade Balance", "trade", "US", "monthly", "billions_usd", ""),
+    # -- EU --
+    ("eu.inflation.hicp_yoy",      "HICP YoY",              "inflation",  "EU", "monthly",   "percent", "eu.inflation.hicp"),
+    ("eu.inflation.hicp_mom",      "HICP MoM",              "inflation",  "EU", "monthly",   "percent", ""),
+    ("eu.inflation.core_hicp_yoy", "Core HICP YoY",         "inflation",  "EU", "monthly",   "percent", ""),
+    ("eu.growth.gdp_qoq",         "GDP QoQ",                "growth",     "EU", "quarterly", "percent", "eu.growth.gdp_qoq"),
+    ("eu.employment.unemployment", "Unemployment Rate",      "employment", "EU", "monthly",   "percent", "eu.employment.unemployment"),
+    ("eu.policy.ecb_rate",         "ECB Interest Rate Decision","policy",  "EU", "irregular", "percent", ""),
+    # -- JP --
+    ("jp.policy.boj_rate", "BOJ Interest Rate Decision", "policy",    "JP", "irregular", "percent", ""),
+    ("jp.inflation.cpi_yoy","CPI YoY",                   "inflation", "JP", "monthly",   "percent", "jp.inflation.cpi"),
+    ("jp.growth.gdp_qoq",  "GDP QoQ",                    "growth",    "JP", "quarterly", "percent", ""),
+    # -- UK --
+    ("gb.policy.boe_rate", "BOE Interest Rate Decision", "policy",    "UK", "irregular", "percent", ""),
+    ("gb.inflation.cpi_yoy","CPI YoY",                   "inflation", "UK", "monthly",   "percent", ""),
+    ("gb.growth.gdp_qoq",  "GDP QoQ",                    "growth",    "UK", "quarterly", "percent", ""),
+    # -- CN --
+    ("cn.policy.pboc_rate", "PBOC Interest Rate Decision","policy",    "CN", "irregular", "percent", ""),
+    ("cn.inflation.cpi_yoy","CPI YoY",                    "inflation", "CN", "monthly",   "percent", "cn.inflation.cpi"),
+    ("cn.growth.gdp_yoy",  "GDP YoY",                     "growth",    "CN", "quarterly", "percent", ""),
+    ("cn.growth.mfg_pmi",  "Manufacturing PMI",            "growth",    "CN", "monthly",   "index",   ""),
+]
+
+# (alias_original, indicator_id, source, country_code)
+_CALENDAR_ALIAS_DEFS: list[tuple[str, str, str, str]] = [
+    # ── US Inflation ─────────────────────────────────────────────
+    ("CPI m/m",                        "us.inflation.cpi_mom",      "investing",         "US"),
+    ("CPI (MoM)",                      "us.inflation.cpi_mom",      "investing",         "US"),
+    ("Consumer Price Index m/m",       "us.inflation.cpi_mom",      "forexfactory",      "US"),
+    ("Inflation Rate MoM",             "us.inflation.cpi_mom",      "tradingeconomics",  "US"),
+    ("CPI y/y",                        "us.inflation.cpi_yoy",      "investing",         "US"),
+    ("CPI (YoY)",                      "us.inflation.cpi_yoy",      "investing",         "US"),
+    ("Consumer Price Index (YoY)",     "us.inflation.cpi_yoy",      "investing",         "US"),
+    ("Inflation Rate YoY",             "us.inflation.cpi_yoy",      "tradingeconomics",  "US"),
+    ("Core CPI m/m",                   "us.inflation.core_cpi_mom", "investing",         "US"),
+    ("Core CPI (MoM)",                 "us.inflation.core_cpi_mom", "investing",         "US"),
+    ("Core Consumer Price Index m/m",  "us.inflation.core_cpi_mom", "forexfactory",      "US"),
+    ("Core Inflation Rate MoM",        "us.inflation.core_cpi_mom", "tradingeconomics",  "US"),
+    ("Core CPI y/y",                   "us.inflation.core_cpi_yoy", "investing",         "US"),
+    ("Core CPI (YoY)",                 "us.inflation.core_cpi_yoy", "investing",         "US"),
+    ("Core Inflation Rate YoY",        "us.inflation.core_cpi_yoy", "tradingeconomics",  "US"),
+    ("PCE Price Index m/m",            "us.inflation.pce_mom",      "investing",         "US"),
+    ("PCE Prices (MoM)",               "us.inflation.pce_mom",      "investing",         "US"),
+    ("Personal Spending m/m",          "us.inflation.pce_mom",      "forexfactory",      "US"),
+    ("PCE Price Index MoM",            "us.inflation.pce_mom",      "tradingeconomics",  "US"),
+    ("PCE Price Index y/y",            "us.inflation.pce_yoy",      "investing",         "US"),
+    ("PCE Prices (YoY)",               "us.inflation.pce_yoy",      "investing",         "US"),
+    ("PCE Price Index YoY",            "us.inflation.pce_yoy",      "tradingeconomics",  "US"),
+    ("Core PCE Price Index m/m",       "us.inflation.core_pce_mom", "investing",         "US"),
+    ("Core PCE Prices (MoM)",          "us.inflation.core_pce_mom", "investing",         "US"),
+    ("Core PCE Price Index MoM",       "us.inflation.core_pce_mom", "tradingeconomics",  "US"),
+    ("Core PCE Price Index y/y",       "us.inflation.core_pce_yoy", "investing",         "US"),
+    ("Core PCE Prices (YoY)",          "us.inflation.core_pce_yoy", "investing",         "US"),
+    ("Core PCE Price Index YoY",       "us.inflation.core_pce_yoy", "tradingeconomics",  "US"),
+    ("PPI m/m",                        "us.inflation.ppi_mom",      "investing",         "US"),
+    ("PPI (MoM)",                      "us.inflation.ppi_mom",      "investing",         "US"),
+    ("Producer Price Index m/m",       "us.inflation.ppi_mom",      "forexfactory",      "US"),
+    ("PPI MoM",                        "us.inflation.ppi_mom",      "tradingeconomics",  "US"),
+    ("PPI y/y",                        "us.inflation.ppi_yoy",      "investing",         "US"),
+    ("PPI (YoY)",                      "us.inflation.ppi_yoy",      "investing",         "US"),
+    ("PPI YoY",                        "us.inflation.ppi_yoy",      "tradingeconomics",  "US"),
+    # ── US Employment ────────────────────────────────────────────
+    ("Non-Farm Employment Change",     "us.employment.nfp",                "investing",         "US"),
+    ("Nonfarm Payrolls",               "us.employment.nfp",                "investing",         "US"),
+    ("Non-Farm Payrolls",              "us.employment.nfp",                "forexfactory",      "US"),
+    ("Non Farm Payrolls",              "us.employment.nfp",                "tradingeconomics",  "US"),
+    ("Nonfarm Payrolls Change",        "us.employment.nfp",                "tradingeconomics",  "US"),
+    ("Unemployment Rate",              "us.employment.unemployment_rate",  "investing",         "US"),
+    ("Unemployment Rate",              "us.employment.unemployment_rate",  "forexfactory",      "US"),
+    ("Unemployment Rate",              "us.employment.unemployment_rate",  "tradingeconomics",  "US"),
+    ("Initial Jobless Claims",         "us.employment.initial_claims",     "investing",         "US"),
+    ("Unemployment Claims",            "us.employment.initial_claims",     "forexfactory",      "US"),
+    ("Initial Claims",                 "us.employment.initial_claims",     "tradingeconomics",  "US"),
+    ("Continuing Jobless Claims",      "us.employment.continuing_claims",  "investing",         "US"),
+    ("Continuing Claims",              "us.employment.continuing_claims",  "tradingeconomics",  "US"),
+    ("ADP Non-Farm Employment Change", "us.employment.adp",               "investing",         "US"),
+    ("ADP Nonfarm Employment Change",  "us.employment.adp",               "investing",         "US"),
+    ("ADP Employment Change",          "us.employment.adp",               "forexfactory",      "US"),
+    ("ADP Employment Change",          "us.employment.adp",               "tradingeconomics",  "US"),
+    ("JOLTS Job Openings",             "us.employment.jolts",             "investing",         "US"),
+    ("JOLTs Job Openings",             "us.employment.jolts",             "forexfactory",      "US"),
+    ("Job Openings",                   "us.employment.jolts",             "tradingeconomics",  "US"),
+    ("Average Hourly Earnings m/m",    "us.employment.avg_hourly_earnings","investing",         "US"),
+    ("Average Hourly Earnings (MoM)",  "us.employment.avg_hourly_earnings","investing",         "US"),
+    ("Average Hourly Earnings MoM",    "us.employment.avg_hourly_earnings","tradingeconomics",  "US"),
+    # ── US Growth ────────────────────────────────────────────────
+    ("GDP q/q",                        "us.growth.gdp_qoq",          "investing",         "US"),
+    ("Advance GDP q/q",                "us.growth.gdp_qoq",          "investing",         "US"),
+    ("GDP (QoQ)",                      "us.growth.gdp_qoq",          "investing",         "US"),
+    ("Preliminary GDP q/q",            "us.growth.gdp_qoq",          "investing",         "US"),
+    ("Final GDP q/q",                  "us.growth.gdp_qoq",          "investing",         "US"),
+    ("GDP Growth Rate QoQ",            "us.growth.gdp_qoq",          "tradingeconomics",  "US"),
+    ("Advance GDP",                    "us.growth.gdp_qoq",          "forexfactory",      "US"),
+    ("Final GDP",                      "us.growth.gdp_qoq",          "forexfactory",      "US"),
+    ("Prelim GDP",                     "us.growth.gdp_qoq",          "forexfactory",      "US"),
+    ("Retail Sales m/m",               "us.growth.retail_sales_mom",  "investing",         "US"),
+    ("Retail Sales (MoM)",             "us.growth.retail_sales_mom",  "investing",         "US"),
+    ("Retail Sales MoM",               "us.growth.retail_sales_mom",  "tradingeconomics",  "US"),
+    ("Core Retail Sales m/m",          "us.growth.retail_sales_mom",  "forexfactory",      "US"),
+    ("ISM Manufacturing PMI",          "us.growth.ism_mfg_pmi",      "investing",         "US"),
+    ("ISM Manufacturing PMI",          "us.growth.ism_mfg_pmi",      "forexfactory",      "US"),
+    ("ISM Manufacturing PMI",          "us.growth.ism_mfg_pmi",      "tradingeconomics",  "US"),
+    ("ISM Non-Manufacturing PMI",      "us.growth.ism_services_pmi",  "investing",         "US"),
+    ("ISM Services PMI",               "us.growth.ism_services_pmi",  "investing",         "US"),
+    ("ISM Services PMI",               "us.growth.ism_services_pmi",  "forexfactory",      "US"),
+    ("ISM Services PMI",               "us.growth.ism_services_pmi",  "tradingeconomics",  "US"),
+    ("Industrial Production m/m",      "us.growth.industrial_prod",   "investing",         "US"),
+    ("Industrial Production (MoM)",    "us.growth.industrial_prod",   "investing",         "US"),
+    ("Industrial Production MoM",      "us.growth.industrial_prod",   "tradingeconomics",  "US"),
+    ("Durable Goods Orders m/m",       "us.growth.durable_goods",     "investing",         "US"),
+    ("Core Durable Goods Orders m/m",  "us.growth.durable_goods",     "investing",         "US"),
+    ("Durable Goods Orders MoM",       "us.growth.durable_goods",     "tradingeconomics",  "US"),
+    ("S&P Global Manufacturing PMI",   "us.growth.sp_global_mfg_pmi", "investing",         "US"),
+    ("Flash Manufacturing PMI",        "us.growth.sp_global_mfg_pmi", "investing",         "US"),
+    ("S&P Global Manufacturing PMI",   "us.growth.sp_global_mfg_pmi", "tradingeconomics",  "US"),
+    # ── US Policy ────────────────────────────────────────────────
+    ("Fed Interest Rate Decision",     "us.policy.fed_rate",          "investing",         "US"),
+    ("Federal Funds Rate",             "us.policy.fed_rate",          "investing",         "US"),
+    ("Federal Funds Rate",             "us.policy.fed_rate",          "forexfactory",      "US"),
+    ("Fed Interest Rate Decision",     "us.policy.fed_rate",          "tradingeconomics",  "US"),
+    ("FOMC Minutes",                   "us.policy.fomc_minutes",      "investing",         "US"),
+    ("FOMC Meeting Minutes",           "us.policy.fomc_minutes",      "investing",         "US"),
+    ("FOMC Meeting Minutes",           "us.policy.fomc_minutes",      "forexfactory",      "US"),
+    ("FOMC Minutes",                   "us.policy.fomc_minutes",      "tradingeconomics",  "US"),
+    ("FOMC Statement",                 "us.policy.fomc_statement",    "investing",         "US"),
+    ("FOMC Statement",                 "us.policy.fomc_statement",    "forexfactory",      "US"),
+    ("FOMC Statement",                 "us.policy.fomc_statement",    "tradingeconomics",  "US"),
+    ("Fed Chair Powell Speaks",        "us.policy.fed_chair_speech",  "investing",         "US"),
+    ("FOMC Press Conference",          "us.policy.fed_chair_speech",  "investing",         "US"),
+    ("FOMC Press Conference",          "us.policy.fed_chair_speech",  "forexfactory",      "US"),
+    # ── US Housing ───────────────────────────────────────────────
+    ("Existing Home Sales",            "us.housing.existing_home_sales","investing",        "US"),
+    ("Existing Home Sales",            "us.housing.existing_home_sales","forexfactory",     "US"),
+    ("Existing Home Sales",            "us.housing.existing_home_sales","tradingeconomics", "US"),
+    ("New Home Sales",                 "us.housing.new_home_sales",     "investing",        "US"),
+    ("New Home Sales",                 "us.housing.new_home_sales",     "forexfactory",     "US"),
+    ("New Home Sales",                 "us.housing.new_home_sales",     "tradingeconomics", "US"),
+    ("Building Permits",               "us.housing.building_permits",   "investing",        "US"),
+    ("Building Permits",               "us.housing.building_permits",   "forexfactory",     "US"),
+    ("Building Permits",               "us.housing.building_permits",   "tradingeconomics", "US"),
+    # ── US Consumer ──────────────────────────────────────────────
+    ("Michigan Consumer Sentiment",            "us.consumer.michigan_sentiment", "investing",        "US"),
+    ("Revised UoM Consumer Sentiment",         "us.consumer.michigan_sentiment", "investing",        "US"),
+    ("Prelim UoM Consumer Sentiment",          "us.consumer.michigan_sentiment", "investing",        "US"),
+    ("University of Michigan Consumer Sentiment","us.consumer.michigan_sentiment","tradingeconomics","US"),
+    ("CB Consumer Confidence",                  "us.consumer.cb_confidence",      "investing",        "US"),
+    ("Consumer Confidence",                     "us.consumer.cb_confidence",      "forexfactory",     "US"),
+    ("Consumer Confidence",                     "us.consumer.cb_confidence",      "tradingeconomics", "US"),
+    # ── US Trade ─────────────────────────────────────────────────
+    ("Trade Balance",                  "us.trade.balance",            "investing",         "US"),
+    ("Trade Balance",                  "us.trade.balance",            "forexfactory",      "US"),
+    ("Trade Balance",                  "us.trade.balance",            "tradingeconomics",  "US"),
+    # ── EU ───────────────────────────────────────────────────────
+    ("CPI y/y",                        "eu.inflation.hicp_yoy",      "investing",         "EU"),
+    ("CPI (YoY)",                      "eu.inflation.hicp_yoy",      "investing",         "EU"),
+    ("HICP YoY",                       "eu.inflation.hicp_yoy",      "tradingeconomics",  "EU"),
+    ("Inflation Rate YoY",             "eu.inflation.hicp_yoy",      "tradingeconomics",  "EU"),
+    ("CPI m/m",                        "eu.inflation.hicp_mom",      "investing",         "EU"),
+    ("HICP MoM",                       "eu.inflation.hicp_mom",      "tradingeconomics",  "EU"),
+    ("Core CPI y/y",                   "eu.inflation.core_hicp_yoy", "investing",         "EU"),
+    ("Core CPI (YoY)",                 "eu.inflation.core_hicp_yoy", "investing",         "EU"),
+    ("Core Inflation Rate YoY",        "eu.inflation.core_hicp_yoy", "tradingeconomics",  "EU"),
+    ("GDP q/q",                        "eu.growth.gdp_qoq",         "investing",         "EU"),
+    ("GDP (QoQ)",                      "eu.growth.gdp_qoq",         "investing",         "EU"),
+    ("GDP Growth Rate QoQ",            "eu.growth.gdp_qoq",         "tradingeconomics",  "EU"),
+    ("Unemployment Rate",              "eu.employment.unemployment", "investing",         "EU"),
+    ("Unemployment Rate",              "eu.employment.unemployment", "tradingeconomics",  "EU"),
+    ("ECB Interest Rate Decision",     "eu.policy.ecb_rate",         "investing",         "EU"),
+    ("ECB Main Refinancing Rate",      "eu.policy.ecb_rate",         "investing",         "EU"),
+    ("Minimum Bid Rate",               "eu.policy.ecb_rate",         "forexfactory",      "EU"),
+    ("ECB Interest Rate Decision",     "eu.policy.ecb_rate",         "tradingeconomics",  "EU"),
+    # ── JP ───────────────────────────────────────────────────────
+    ("BOJ Interest Rate Decision",     "jp.policy.boj_rate",         "investing",         "JP"),
+    ("BOJ Policy Rate",                "jp.policy.boj_rate",         "investing",         "JP"),
+    ("Monetary Policy Statement",      "jp.policy.boj_rate",         "forexfactory",      "JP"),
+    ("BOJ Interest Rate Decision",     "jp.policy.boj_rate",         "tradingeconomics",  "JP"),
+    ("CPI y/y",                        "jp.inflation.cpi_yoy",       "investing",         "JP"),
+    ("National Core CPI y/y",          "jp.inflation.cpi_yoy",       "investing",         "JP"),
+    ("Inflation Rate YoY",             "jp.inflation.cpi_yoy",       "tradingeconomics",  "JP"),
+    ("GDP q/q",                        "jp.growth.gdp_qoq",         "investing",         "JP"),
+    ("GDP Growth Rate QoQ",            "jp.growth.gdp_qoq",         "tradingeconomics",  "JP"),
+    # ── UK ───────────────────────────────────────────────────────
+    ("BOE Interest Rate Decision",     "gb.policy.boe_rate",         "investing",         "UK"),
+    ("Official Bank Rate",             "gb.policy.boe_rate",         "forexfactory",      "UK"),
+    ("BOE Interest Rate Decision",     "gb.policy.boe_rate",         "tradingeconomics",  "UK"),
+    ("CPI y/y",                        "gb.inflation.cpi_yoy",       "investing",         "UK"),
+    ("Inflation Rate YoY",             "gb.inflation.cpi_yoy",       "tradingeconomics",  "UK"),
+    ("GDP q/q",                        "gb.growth.gdp_qoq",         "investing",         "UK"),
+    ("GDP Growth Rate QoQ",            "gb.growth.gdp_qoq",         "tradingeconomics",  "UK"),
+    # ── CN ───────────────────────────────────────────────────────
+    ("PBoC Interest Rate Decision",    "cn.policy.pboc_rate",        "investing",         "CN"),
+    ("PBOC Interest Rate Decision",    "cn.policy.pboc_rate",        "tradingeconomics",  "CN"),
+    ("Chinese CPI y/y",                "cn.inflation.cpi_yoy",       "investing",         "CN"),
+    ("CPI y/y",                        "cn.inflation.cpi_yoy",       "investing",         "CN"),
+    ("Inflation Rate YoY",             "cn.inflation.cpi_yoy",       "tradingeconomics",  "CN"),
+    ("GDP y/y",                        "cn.growth.gdp_yoy",          "investing",         "CN"),
+    ("Chinese GDP q/q",                "cn.growth.gdp_yoy",          "investing",         "CN"),
+    ("GDP Growth Rate YoY",            "cn.growth.gdp_yoy",          "tradingeconomics",  "CN"),
+    ("Manufacturing PMI",              "cn.growth.mfg_pmi",          "investing",         "CN"),
+    ("NBS Manufacturing PMI",          "cn.growth.mfg_pmi",          "investing",         "CN"),
+    ("Manufacturing PMI",              "cn.growth.mfg_pmi",          "tradingeconomics",  "CN"),
 ]
 
 
@@ -809,6 +1091,27 @@ class SQLiteEngineStore:
                 connection.execute("INSERT INTO news_fts(news_fts) VALUES('rebuild')")
             except sqlite3.OperationalError:
                 pass  # FTS5 not available; search_news() will use LIKE fallback
+            # -- Article fingerprint table for multi-layer dedup ----------
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS article_fingerprint (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url_hash TEXT NOT NULL,
+                    title_hash TEXT NOT NULL,
+                    canonical_url TEXT NOT NULL,
+                    raw_url TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    source_feed TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_fp_url ON article_fingerprint(url_hash)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_fp_title ON article_fingerprint(title_hash)"
+            )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS regime_snapshots (
@@ -1218,6 +1521,7 @@ class SQLiteEngineStore:
                     topic_code TEXT NOT NULL,
                     published_date TEXT NOT NULL,
                     published_at TEXT,
+                    published_precision TEXT NOT NULL DEFAULT 'date_only',
                     published_epoch_ms INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL DEFAULT 'published'
                         CHECK (status IN ('published', 'revised', 'superseded', 'withdrawn')),
@@ -1238,6 +1542,7 @@ class SQLiteEngineStore:
                 connection,
                 table_name="document",
                 columns={
+                    "published_precision": "TEXT NOT NULL DEFAULT 'date_only'",
                     "published_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
                     "created_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
                     "updated_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
@@ -1416,6 +1721,54 @@ class SQLiteEngineStore:
                 "ON obs_family_document(release_family_id)"
             )
 
+            # ── Calendar indicator normalization tables ───────────────
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS calendar_indicator (
+                    indicator_id   TEXT PRIMARY KEY,
+                    canonical_name TEXT NOT NULL,
+                    topic          TEXT NOT NULL DEFAULT '',
+                    country_code   TEXT NOT NULL,
+                    frequency      TEXT NOT NULL DEFAULT 'monthly',
+                    unit           TEXT NOT NULL DEFAULT '',
+                    obs_family_id  TEXT DEFAULT NULL,
+                    is_active      INTEGER NOT NULL DEFAULT 1,
+                    created_at     TEXT NOT NULL,
+                    updated_at     TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_indicator_country_topic "
+                "ON calendar_indicator(country_code, topic)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS calendar_indicator_alias (
+                    alias_normalized TEXT NOT NULL,
+                    indicator_id     TEXT NOT NULL,
+                    source           TEXT NOT NULL,
+                    country_code     TEXT NOT NULL,
+                    alias_original   TEXT NOT NULL DEFAULT '',
+                    created_at       TEXT NOT NULL,
+                    PRIMARY KEY (alias_normalized, source, country_code)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_alias_indicator "
+                "ON calendar_indicator_alias(indicator_id)"
+            )
+            self._ensure_table_columns(
+                connection,
+                table_name="calendar_events",
+                columns={"indicator_id": "TEXT DEFAULT NULL"},
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_calendar_events_indicator_id "
+                "ON calendar_events(indicator_id)"
+            )
+
     def _ensure_table_columns(
         self,
         connection: sqlite3.Connection,
@@ -1452,8 +1805,9 @@ class SQLiteEngineStore:
                     currency,
                     unit,
                     raw_json,
+                    indicator_id,
                     scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.source,
@@ -1471,6 +1825,7 @@ class SQLiteEngineStore:
                     event.currency,
                     event.unit,
                     json.dumps(event.raw_json, ensure_ascii=True, sort_keys=True),
+                    event.indicator_id,
                     utc_now().isoformat(),
                 ),
             )
@@ -2581,6 +2936,7 @@ class SQLiteEngineStore:
             currency=row["currency"],
             unit=row["unit"],
             raw_json=json.loads(row["raw_json"]),
+            indicator_id=row["indicator_id"],
         )
 
     def _row_to_market_price(self, row: sqlite3.Row) -> MarketPriceRecord:
@@ -2936,6 +3292,70 @@ class SQLiteEngineStore:
                 (url_hash,),
             ).fetchone()
         return row is not None
+
+    # -- Article fingerprint dedup methods --------------------------------
+
+    def fingerprint_exists(self, *, url_hash: str | None = None, title_hash: str | None = None) -> bool:
+        """Return True if a fingerprint with the given url_hash OR title_hash exists."""
+        if not url_hash and not title_hash:
+            return False
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT 1 FROM article_fingerprint WHERE url_hash = ? OR title_hash = ? LIMIT 1",
+                (url_hash or "", title_hash or ""),
+            ).fetchone()
+        return row is not None
+
+    def insert_fingerprint(
+        self,
+        url_hash: str,
+        title_hash: str,
+        canonical_url: str,
+        raw_url: str,
+        title: str = "",
+        source_feed: str = "",
+    ) -> None:
+        """Insert a fingerprint record. Silently ignores duplicates."""
+        now_iso = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO article_fingerprint
+                    (url_hash, title_hash, canonical_url, raw_url, title, source_feed, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (url_hash, title_hash, canonical_url, raw_url, title, source_feed, now_iso),
+            )
+
+    def backfill_fingerprints(self) -> int:
+        """One-time migration: compute fingerprints for all existing news_articles."""
+        from analyst.ingestion.url_canon import canonicalize_url, content_hash
+
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT url_hash, url, title, timestamp FROM news_articles"
+            ).fetchall()
+
+        count = 0
+        now_iso = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            for row in rows:
+                canonical = canonicalize_url(row["url"])
+                u_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+                t_hash = content_hash(row["title"], int(row["timestamp"]))
+                try:
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO article_fingerprint
+                            (url_hash, title_hash, canonical_url, raw_url, title, source_feed, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (u_hash, t_hash, canonical, row["url"], row["title"], "", now_iso),
+                    )
+                    count += 1
+                except sqlite3.IntegrityError:
+                    pass
+        return count
 
     def _row_to_news_article(self, row: sqlite3.Row) -> NewsArticleRecord:
         return NewsArticleRecord(
@@ -4147,7 +4567,21 @@ class SQLiteEngineStore:
         )
 
     def upsert_document(self, record: DocumentRecord) -> None:
-        published_at = record.published_at or _safe_utc_iso(record.published_date)
+        published_precision = record.published_precision or _infer_timestamp_precision(
+            record.published_at or record.published_date
+        )
+        if record.published_at:
+            if published_precision == "exact":
+                published_at = _safe_utc_iso(record.published_at)
+            else:
+                published_at = record.published_at[:10]
+        elif record.published_date:
+            if published_precision == "exact":
+                published_at = _safe_utc_iso(record.published_date)
+            else:
+                published_at = record.published_date
+        else:
+            published_at = ""
         published_epoch_ms = record.published_epoch_ms or _safe_epoch_ms(published_at or record.published_date)
         created_epoch_ms = record.created_epoch_ms or _safe_epoch_ms(record.created_at)
         updated_epoch_ms = record.updated_epoch_ms or _safe_epoch_ms(record.updated_at)
@@ -4158,10 +4592,10 @@ class SQLiteEngineStore:
                     document_id, release_family_id, source_id, canonical_url,
                     title, subtitle, document_type, mime_type,
                     language_code, country_code, topic_code,
-                    published_date, published_at, published_epoch_ms, status, version_no,
+                    published_date, published_at, published_precision, published_epoch_ms, status, version_no,
                     parent_document_id, hash_sha256,
                     created_at, updated_at, created_epoch_ms, updated_epoch_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.document_id,
@@ -4177,6 +4611,7 @@ class SQLiteEngineStore:
                     record.topic_code,
                     record.published_date,
                     published_at or None,
+                    published_precision,
                     published_epoch_ms,
                     record.status,
                     record.version_no,
@@ -4270,6 +4705,12 @@ class SQLiteEngineStore:
         return [self._row_to_document(row) for row in rows]
 
     def _row_to_document(self, row: sqlite3.Row) -> DocumentRecord:
+        published_precision = row["published_precision"] or _infer_timestamp_precision(
+            row["published_at"] or row["published_date"]
+        )
+        published_at = row["published_at"] or (
+            _safe_utc_iso(row["published_date"]) if published_precision == "exact" else row["published_date"]
+        )
         return DocumentRecord(
             document_id=row["document_id"],
             release_family_id=row["release_family_id"] or "",
@@ -4283,7 +4724,8 @@ class SQLiteEngineStore:
             country_code=row["country_code"],
             topic_code=row["topic_code"],
             published_date=row["published_date"],
-            published_at=row["published_at"] or _safe_utc_iso(row["published_date"]),
+            published_at=published_at,
+            published_precision=published_precision,
             status=row["status"],
             version_no=int(row["version_no"]),
             parent_document_id=row["parent_document_id"] or "",
@@ -4796,3 +5238,192 @@ class SQLiteEngineStore:
         """Build a lookup dict mapping (source_id, provider_series_id) -> family_id."""
         families = self.list_obs_families(active_only=False)
         return {(f.source_id, f.provider_series_id): f.family_id for f in families}
+
+    # ── Calendar indicator normalization ──────────────────────────────
+
+    def upsert_calendar_indicator(self, record: CalendarIndicatorRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO calendar_indicator (
+                    indicator_id, canonical_name, topic, country_code,
+                    frequency, unit, obs_family_id, is_active,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.indicator_id,
+                    record.canonical_name,
+                    record.topic,
+                    record.country_code,
+                    record.frequency,
+                    record.unit,
+                    record.obs_family_id,
+                    int(record.is_active),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_calendar_indicator(self, indicator_id: str) -> CalendarIndicatorRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM calendar_indicator WHERE indicator_id = ?",
+                (indicator_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_calendar_indicator(row)
+
+    def list_calendar_indicators(
+        self,
+        *,
+        country_code: str | None = None,
+        topic: str | None = None,
+        active_only: bool = True,
+    ) -> list[CalendarIndicatorRecord]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if active_only:
+            conditions.append("is_active = 1")
+        if country_code:
+            conditions.append("country_code = ?")
+            params.append(country_code)
+        if topic:
+            conditions.append("topic = ?")
+            params.append(topic)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"SELECT * FROM calendar_indicator {where} ORDER BY indicator_id",
+                params,
+            ).fetchall()
+        return [self._row_to_calendar_indicator(row) for row in rows]
+
+    def upsert_calendar_indicator_alias(self, record: CalendarIndicatorAliasRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO calendar_indicator_alias (
+                    alias_normalized, indicator_id, source, country_code,
+                    alias_original, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.alias_normalized,
+                    record.indicator_id,
+                    record.source,
+                    record.country_code,
+                    record.alias_original,
+                    record.created_at,
+                ),
+            )
+
+    def resolve_calendar_alias(
+        self, alias_text: str, source: str, country: str,
+    ) -> str | None:
+        from analyst.ingestion.scrapers._common import normalize_indicator_name
+        normalized = normalize_indicator_name(alias_text)
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                """
+                SELECT indicator_id FROM calendar_indicator_alias
+                WHERE alias_normalized = ? AND source = ? AND country_code = ?
+                """,
+                (normalized, source, country),
+            ).fetchone()
+        return row["indicator_id"] if row else None
+
+    def list_aliases_for_indicator(self, indicator_id: str) -> list[CalendarIndicatorAliasRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT * FROM calendar_indicator_alias WHERE indicator_id = ? ORDER BY source, alias_normalized",
+                (indicator_id,),
+            ).fetchall()
+        return [
+            CalendarIndicatorAliasRecord(
+                alias_normalized=row["alias_normalized"],
+                indicator_id=row["indicator_id"],
+                source=row["source"],
+                country_code=row["country_code"],
+                alias_original=row["alias_original"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    def seed_calendar_indicators(self) -> None:
+        """Populate calendar_indicator and calendar_indicator_alias tables
+        from the module-level seed data constants."""
+        from analyst.ingestion.scrapers._common import normalize_indicator_name
+        now = utc_now().isoformat()
+
+        for ind_id, canon, topic, cc, freq, unit, obs_fam in _CALENDAR_INDICATOR_DEFS:
+            self.upsert_calendar_indicator(CalendarIndicatorRecord(
+                indicator_id=ind_id,
+                canonical_name=canon,
+                topic=topic,
+                country_code=cc,
+                frequency=freq,
+                unit=unit,
+                obs_family_id=obs_fam or None,
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            ))
+
+        for alias_orig, ind_id, source, cc in _CALENDAR_ALIAS_DEFS:
+            self.upsert_calendar_indicator_alias(CalendarIndicatorAliasRecord(
+                alias_normalized=normalize_indicator_name(alias_orig),
+                indicator_id=ind_id,
+                source=source,
+                country_code=cc,
+                alias_original=alias_orig,
+                created_at=now,
+            ))
+
+    def backfill_calendar_indicator_ids(self) -> int:
+        """Set indicator_id on existing calendar_events rows from the alias table.
+        Returns the number of rows updated."""
+        from analyst.ingestion.scrapers._common import normalize_indicator_name  # noqa: F811
+        with self._connection(commit=True) as connection:
+            cur = connection.execute(
+                """
+                UPDATE calendar_events SET indicator_id = (
+                    SELECT a.indicator_id FROM calendar_indicator_alias a
+                    WHERE a.alias_normalized = LOWER(TRIM(calendar_events.indicator))
+                      AND a.source = calendar_events.source
+                      AND a.country_code = calendar_events.country
+                ) WHERE indicator_id IS NULL
+                """
+            )
+        return cur.rowcount or 0
+
+    def list_indicator_releases_by_id(
+        self, indicator_id: str, *, limit: int = 12,
+    ) -> list[StoredEventRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM calendar_events
+                WHERE indicator_id = ? AND actual IS NOT NULL
+                ORDER BY timestamp DESC, id DESC
+                LIMIT ?
+                """,
+                (indicator_id, limit),
+            ).fetchall()
+        return [self._row_to_event(row) for row in rows]
+
+    def _row_to_calendar_indicator(self, row: sqlite3.Row) -> CalendarIndicatorRecord:
+        return CalendarIndicatorRecord(
+            indicator_id=row["indicator_id"],
+            canonical_name=row["canonical_name"],
+            topic=row["topic"],
+            country_code=row["country_code"],
+            frequency=row["frequency"],
+            unit=row["unit"],
+            obs_family_id=row["obs_family_id"],
+            is_active=bool(row["is_active"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )

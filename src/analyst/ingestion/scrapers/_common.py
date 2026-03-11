@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re as _re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
@@ -147,3 +148,15 @@ def to_epoch(
     except ValueError:
         fallback = datetime.now(source_timezone).replace(hour=0, minute=0, second=0, microsecond=0)
         return int(fallback.astimezone(UTC).timestamp())
+
+
+def normalize_indicator_name(name: str) -> str:
+    """Lowercase, strip, collapse whitespace, remove trailing month parentheticals."""
+    text = name.lower().strip()
+    text = _re.sub(r'\s+', ' ', text)
+    # Strip trailing month parentheticals like "(Mar)" that TradingEconomics appends
+    text = _re.sub(
+        r'\s*\((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\)\s*$',
+        '', text, flags=_re.IGNORECASE,
+    )
+    return text

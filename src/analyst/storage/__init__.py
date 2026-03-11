@@ -1,5 +1,7 @@
 from .sqlite import (
     AnalyticalObservationRecord,
+    CalendarIndicatorAliasRecord,
+    CalendarIndicatorRecord,
     CentralBankCommunicationRecord,
     ClientProfileRecord,
     ConversationMessageRecord,
@@ -34,6 +36,8 @@ from .sqlite import (
 
 __all__ = [
     "AnalyticalObservationRecord",
+    "CalendarIndicatorAliasRecord",
+    "CalendarIndicatorRecord",
     "CentralBankCommunicationRecord",
     "ClientProfileRecord",
     "ConversationMessageRecord",
