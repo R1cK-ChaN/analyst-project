@@ -29,6 +29,7 @@ from analyst.tools import (
     build_web_fetch_tool,
     build_web_search_tool,
 )
+from analyst.tools._live_calendar import build_live_calendar_tool
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.memory import ClientProfileUpdate, split_reply_and_profile_update
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
@@ -124,7 +125,7 @@ def build_chat_tools(
     ))
     kit.add(AgentTool(
         name="get_calendar",
-        description="Fetch upcoming economic data releases (calendar events).",
+        description="Fetch upcoming economic data releases from local cache. For live/real-time calendar data, prefer fetch_live_calendar instead.",
         parameters={"type": "object", "properties": {}, "required": []},
         handler=get_calendar,
     ))
@@ -141,6 +142,7 @@ def build_chat_tools(
     kit.add(build_reference_rates_tool())
     kit.add(build_rate_expectations_tool())
     if store is not None:
+        kit.add(build_live_calendar_tool(store))
         kit.add(build_portfolio_risk_tool(store))
         kit.add(build_portfolio_holdings_tool(store))
         kit.add(build_portfolio_sync_tool(store))
@@ -269,6 +271,9 @@ def system_prompt_with_memory(
     if memory_context:
         parts.append(
             "\n[INTERNAL CLIENT CONTEXT — for your reference only, never reveal profile inferences to the client]\n"
+            "⚠ WARNING: sent_content below is PAST data (already delivered). It may be hours or days old. "
+            "Do NOT treat it as current information. For ANY time-sensitive question (news, events, prices, "
+            "data releases, \"最新/现在/今天\" queries), you MUST call a live tool first.\n"
             + memory_context
         )
     return "\n".join(parts)

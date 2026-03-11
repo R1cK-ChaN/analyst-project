@@ -149,7 +149,7 @@ class ArticleHandler:
         content = article.content[:max_chars]
         return {
             "source": "generic",
-            "title": article.title,
+            "title": getattr(article, "title", ""),
             "content": content,
             "content_length": len(content),
             "truncated": len(article.content) > max_chars,

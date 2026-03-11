@@ -2575,6 +2575,18 @@ class SQLiteEngineStore:
             for row in rows
         ]
 
+    @staticmethod
+    def _recency_decay(created_at: str, *, half_life_hours: float = 24.0) -> float:
+        """Exponential decay factor: 1.0 for now, 0.5 at half_life_hours ago, etc."""
+        try:
+            created = datetime.fromisoformat(created_at)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            age_hours = max((utc_now() - created).total_seconds() / 3600.0, 0.0)
+            return math.pow(0.5, age_hours / half_life_hours)
+        except (ValueError, TypeError):
+            return 0.5
+
     def search_delivery_queue(
         self,
         *,
@@ -2596,6 +2608,7 @@ class SQLiteEngineStore:
             score = self._score_text_match(item.content_rendered, terms)
             if score <= 0:
                 continue
+            score *= self._recency_decay(item.created_at)
             scored.append((score, item))
         scored.sort(key=lambda pair: (pair[0], pair[1].created_at), reverse=True)
         return [record for _, record in scored[:limit]]

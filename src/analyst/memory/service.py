@@ -440,10 +440,36 @@ def _companion_only_update(update: ClientProfileUpdate) -> ClientProfileUpdate:
     )
 
 
+def _format_age(created_at: str) -> str:
+    """Convert an ISO timestamp to a human-readable relative age (e.g. '2h ago')."""
+    try:
+        created = datetime.fromisoformat(created_at)
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - created
+        total_seconds = int(delta.total_seconds())
+        if total_seconds < 0:
+            return "just now"
+        if total_seconds < 3600:
+            minutes = max(total_seconds // 60, 1)
+            return f"{minutes}m ago"
+        if total_seconds < 86400:
+            hours = total_seconds // 3600
+            return f"{hours}h ago"
+        days = delta.days
+        if days == 1:
+            return "yesterday"
+        return f"{days}d ago"
+    except (ValueError, TypeError):
+        return ""
+
+
 def _render_delivery_history(deliveries: list[DeliveryQueueRecord], *, limits: RenderBudget) -> list[str]:
     lines: list[str] = []
     for delivery in deliveries[: limits.max_delivery_items]:
-        headline = f"{delivery.source_type} [{delivery.status}]"
+        age = _format_age(delivery.created_at)
+        age_prefix = f"[{age}] " if age else ""
+        headline = f"{age_prefix}{delivery.source_type} [{delivery.status}]"
         body = trim_text(delivery.content_rendered, max_chars=limits.max_item_chars)
         lines.append(f"- {headline}: {body}")
     return lines

@@ -77,7 +77,11 @@ def fetch_vix_history(lookback_years: int = 5) -> list[tuple[str, float]]:
     if data.empty:
         return []
 
-    close = data["Close"].dropna()
+    close = data["Close"]
+    # yfinance >=1.2 returns a DataFrame even for a single ticker; squeeze to Series
+    if hasattr(close, "columns"):
+        close = close.iloc[:, 0]
+    close = close.dropna()
     return [(idx.strftime("%Y-%m-%d"), float(val)) for idx, val in close.items()]
 
 
