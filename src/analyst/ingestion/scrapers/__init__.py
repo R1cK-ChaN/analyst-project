@@ -2,16 +2,19 @@
 
 from ._common import ScrapedIndicator, ScrapedMarketQuote, ScrapedNewsItem
 from .bis import BISClient, BISObservation
+from .ecb import ECBClient, ECBObservation
 from .eia import EIAClient, EIAObservation
 from .eurostat import EurostatClient, EurostatObservation
 from .forexfactory import ForexFactoryCalendarClient, ForexFactoryNewsClient
 from .fred import FredClient, FredObservation, FredVintageObservation
 from .imf import IMFClient, IMFObservation, IMFVintageObservation
 from .investing import InvestingCalendarClient, InvestingNewsClient
+from .oecd import OECDClient, OECDObservation
 from .bloomberg import BloombergArticle, BloombergArticleClient, BloombergNewsClient
 from .ft import FTArticle, FTArticleClient, FTNewsClient
 from .reuters import ReutersArticle, ReutersArticleClient, ReutersNewsClient
 from .treasury_fiscal import TreasuryFiscalClient, TreasuryFiscalObservation
+from .worldbank import WorldBankClient, WorldBankObservation
 from .wsj import WSJArticle, WSJArticleClient, WSJNewsClient
 from .gov_report import GovReportClient, GovReportItem
 from .nyfed import NYFedRate, NYFedRatesClient
@@ -31,6 +34,7 @@ __all__ = [
     # Data classes
     "BISObservation",
     "BloombergArticle",
+    "ECBObservation",
     "EIAObservation",
     "EurostatObservation",
     "FTArticle",
@@ -43,12 +47,14 @@ __all__ = [
     "IMFObservation",
     "IMFVintageObservation",
     "NYFedRate",
+    "OECDObservation",
     "ReutersArticle",
     "ScrapedIndicator",
     "ScrapedMarketQuote",
     "ScrapedNewsItem",
     "TreasuryFiscalObservation",
     "WSJArticle",
+    "WorldBankObservation",
     # Calendar
     "ForexFactoryCalendarClient",
     "InvestingCalendarClient",
@@ -68,11 +74,14 @@ __all__ = [
     "WSJArticleClient",
     # Structured Data APIs
     "BISClient",
+    "ECBClient",
     "EIAClient",
     "EurostatClient",
     "FredClient",
     "IMFClient",
+    "OECDClient",
     "TreasuryFiscalClient",
+    "WorldBankClient",
     # Indicators & Markets
     "TradingEconomicsIndicatorsClient",
     "TradingEconomicsMarketsClient",

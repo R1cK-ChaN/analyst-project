@@ -25,10 +25,13 @@ from analyst.ingestion.scrapers import (
 )
 from analyst.ingestion.scrapers.gov_report import GovReportClient, GovReportItem
 from analyst.ingestion.scrapers.bis import BISClient
+from analyst.ingestion.scrapers.ecb import ECBClient
 from analyst.ingestion.scrapers.eia import EIAClient
 from analyst.ingestion.scrapers.eurostat import EurostatClient
 from analyst.ingestion.scrapers.fred import FredClient
 from analyst.ingestion.scrapers.imf import IMFClient
+from analyst.ingestion.scrapers.oecd import OECDClient
+from analyst.ingestion.scrapers.worldbank import WorldBankClient
 from analyst.ingestion.scrapers.nyfed import NYFedRatesClient
 from analyst.ingestion.scrapers.rateprobability import RateProbabilityClient
 from analyst.ingestion.scrapers.treasury_fiscal import TreasuryFiscalClient
@@ -287,6 +290,31 @@ BIS_SERIES = {
     "credit_gap_cn": {"dataflow": "WS_CREDIT_GAP", "key": "Q.CN.P", "series_id": "BIS_CREDIT_GAP_CN", "category": "credit"},
     "property_us":   {"dataflow": "WS_SPP",  "key": "Q.US.R", "series_id": "BIS_PROPERTY_US", "category": "property"},
     "property_cn":   {"dataflow": "WS_SPP",  "key": "Q.CN.R", "series_id": "BIS_PROPERTY_CN", "category": "property"},
+}
+
+ECB_SERIES = {
+    "m1":            {"dataflow": "BSI", "key": "M.U2.Y.V.M10.X.I.U2.2300.Z01.E", "series_id": "ECB_EA_M1",           "category": "liquidity"},
+    "m2":            {"dataflow": "BSI", "key": "M.U2.Y.V.M20.X.I.U2.2300.Z01.E", "series_id": "ECB_EA_M2",           "category": "liquidity"},
+    "m3":            {"dataflow": "BSI", "key": "M.U2.Y.V.M30.X.I.U2.2300.Z01.E", "series_id": "ECB_EA_M3",           "category": "liquidity"},
+    "m3_growth":     {"dataflow": "BSI", "key": "M.U2.N.V.M30.X.I.U2.2300.Z01.A", "series_id": "ECB_EA_M3_GROWTH",     "category": "liquidity"},
+    "deposit_rate":  {"dataflow": "FM",  "key": "B.U2.EUR.4F.KR.DFR.LEV",        "series_id": "ECB_EA_DEPOSIT_RATE",  "category": "rates"},
+    "eurusd":        {"dataflow": "EXR", "key": "M.USD.EUR.SP00.A",              "series_id": "ECB_EURUSD",           "category": "fx"},
+}
+
+OECD_SERIES = {
+    "cli_us":        {"dataflow": "DSD_STES@DF_CLI", "version": "4.1", "key": "USA.M.LI.IX._Z.NOR.IX._Z.H", "series_id": "OECD_CLI_US",           "category": "leading"},
+    "cli_cn":        {"dataflow": "DSD_STES@DF_CLI", "version": "4.1", "key": "CHN.M.LI.IX._Z.NOR.IX._Z.H", "series_id": "OECD_CLI_CN",           "category": "leading"},
+    "cli_jp":        {"dataflow": "DSD_STES@DF_CLI", "version": "4.1", "key": "JPN.M.LI.IX._Z.NOR.IX._Z.H", "series_id": "OECD_CLI_JP",           "category": "leading"},
+    "cli_eu":        {"dataflow": "DSD_STES@DF_CLI", "version": "4.1", "key": "G4E.M.LI.IX._Z.NOR.IX._Z.H", "series_id": "OECD_CLI_EU",           "category": "leading"},
+    "consumer_conf": {"dataflow": "DSD_STES@DF_CS",  "version": "4.0", "key": "USA.M.CCICP.*.*.*.*.*.*",     "series_id": "OECD_CONSUMER_CONF_US", "category": "sentiment"},
+    "business_conf": {"dataflow": "DSD_STES@DF_BTS", "version": "4.0", "key": "USA.M.BCICP.*.*.*.*.*.*",     "series_id": "OECD_BUSINESS_CONF_US", "category": "sentiment"},
+}
+
+WORLDBANK_SERIES = {
+    "gdp_pcap_us":   {"indicator": "NY.GDP.PCAP.PP.CD",  "country": "USA", "series_id": "WB_GDP_PCAP_US",   "category": "development"},
+    "gdp_pcap_cn":   {"indicator": "NY.GDP.PCAP.PP.CD",  "country": "CHN", "series_id": "WB_GDP_PCAP_CN",   "category": "development"},
+    "gdp_growth_us": {"indicator": "NY.GDP.MKTP.KD.ZG",  "country": "USA", "series_id": "WB_GDP_GROWTH_US", "category": "growth"},
+    "ca_gdp_us":     {"indicator": "BN.CAB.XOKA.GD.ZS",  "country": "USA", "series_id": "WB_CA_GDP_US",     "category": "trade"},
 }
 
 
@@ -617,6 +645,121 @@ class BISIngestionClient:
                 logger.warning("BIS refresh failed for %s", key, exc_info=True)
             time.sleep(0.5)
         return RefreshStats(source="bis", count=count)
+
+
+class ECBIngestionClient:
+    def __init__(self) -> None:
+        self.client = ECBClient()
+
+    def refresh(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        count = 0
+        for key, cfg in ECB_SERIES.items():
+            try:
+                observations = self.client.get_data(
+                    cfg["dataflow"],
+                    cfg["key"],
+                    series_id=cfg["series_id"],
+                    limit=30,
+                )
+                fam_id = family_lookup.get(("ecb", cfg["series_id"])) if family_lookup else None
+                for obs in observations:
+                    store.upsert_indicator_observation(
+                        IndicatorObservationRecord(
+                            series_id=obs.series_id,
+                            source="ecb",
+                            date=obs.date,
+                            value=obs.value,
+                            metadata={"category": cfg["category"], "dataflow": obs.dataflow},
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("ECB refresh failed for %s", key, exc_info=True)
+            time.sleep(0.5)
+        return RefreshStats(source="ecb", count=count)
+
+
+class OECDIngestionClient:
+    def __init__(self) -> None:
+        self.client = OECDClient()
+
+    def refresh(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        count = 0
+        for key, cfg in OECD_SERIES.items():
+            try:
+                observations = self.client.get_data(
+                    cfg["dataflow"],
+                    cfg["version"],
+                    cfg["key"],
+                    series_id=cfg["series_id"],
+                    limit=30,
+                )
+                fam_id = family_lookup.get(("oecd", cfg["series_id"])) if family_lookup else None
+                for obs in observations:
+                    store.upsert_indicator_observation(
+                        IndicatorObservationRecord(
+                            series_id=obs.series_id,
+                            source="oecd",
+                            date=obs.date,
+                            value=obs.value,
+                            metadata={"category": cfg["category"], "dataflow": obs.dataflow},
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("OECD refresh failed for %s", key, exc_info=True)
+            time.sleep(1.0)
+        return RefreshStats(source="oecd", count=count)
+
+
+class WorldBankIngestionClient:
+    def __init__(self) -> None:
+        self.client = WorldBankClient()
+
+    def refresh(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        count = 0
+        for key, cfg in WORLDBANK_SERIES.items():
+            try:
+                observations = self.client.get_indicator(
+                    cfg["indicator"],
+                    cfg["country"],
+                    series_id=cfg["series_id"],
+                    limit=30,
+                )
+                fam_id = family_lookup.get(("worldbank", cfg["series_id"])) if family_lookup else None
+                for obs in observations:
+                    store.upsert_indicator_observation(
+                        IndicatorObservationRecord(
+                            series_id=obs.series_id,
+                            source="worldbank",
+                            date=obs.date,
+                            value=obs.value,
+                            metadata={"category": cfg["category"], "indicator": obs.indicator},
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("World Bank refresh failed for %s", key, exc_info=True)
+            time.sleep(0.5)
+        return RefreshStats(source="worldbank", count=count)
 
 
 class FedIngestionClient:
@@ -1015,6 +1158,9 @@ class IngestionOrchestrator:
         imf: IMFIngestionClient | None = None,
         eurostat: EurostatIngestionClient | None = None,
         bis: BISIngestionClient | None = None,
+        ecb: ECBIngestionClient | None = None,
+        oecd: OECDIngestionClient | None = None,
+        worldbank: WorldBankIngestionClient | None = None,
     ) -> None:
         self.store = store
         self.fred = fred or FREDIngestionClient()
@@ -1032,6 +1178,9 @@ class IngestionOrchestrator:
         self.imf = imf or IMFIngestionClient()
         self.eurostat = eurostat or EurostatIngestionClient()
         self.bis = bis or BISIngestionClient()
+        self.ecb = ecb or ECBIngestionClient()
+        self.oecd = oecd or OECDIngestionClient()
+        self.worldbank = worldbank or WorldBankIngestionClient()
         self._obs_seeded = False
         self._family_lookup: dict[tuple[str, str], str] = {}
 
@@ -1140,6 +1289,18 @@ class IngestionOrchestrator:
         stats = self.bis.refresh(self.store, family_lookup=self._family_lookup or None)
         return {stats.source: stats.count}
 
+    def refresh_ecb(self) -> dict[str, int]:
+        stats = self.ecb.refresh(self.store, family_lookup=self._family_lookup or None)
+        return {stats.source: stats.count}
+
+    def refresh_oecd(self) -> dict[str, int]:
+        stats = self.oecd.refresh(self.store, family_lookup=self._family_lookup or None)
+        return {stats.source: stats.count}
+
+    def refresh_worldbank(self) -> dict[str, int]:
+        stats = self.worldbank.refresh(self.store, family_lookup=self._family_lookup or None)
+        return {stats.source: stats.count}
+
     def refresh_gov_reports(self) -> dict[str, int]:
         try:
             stats = self.gov_report.refresh(self.store)
@@ -1200,6 +1361,9 @@ class IngestionOrchestrator:
             self.refresh_imf_vintages(),
             self.refresh_eurostat(),
             self.refresh_bis(),
+            self.refresh_ecb(),
+            self.refresh_oecd(),
+            self.refresh_worldbank(),
         ):
             results.update(batch)
         return results
@@ -1221,6 +1385,9 @@ class IngestionOrchestrator:
             "imf_vintages": {"interval": 86_400, "handler": self.refresh_imf_vintages},
             "eurostat": {"interval": 86_400, "handler": self.refresh_eurostat},
             "bis": {"interval": 86_400, "handler": self.refresh_bis},
+            "ecb": {"interval": 86_400, "handler": self.refresh_ecb},
+            "oecd": {"interval": 86_400, "handler": self.refresh_oecd},
+            "worldbank": {"interval": 86_400, "handler": self.refresh_worldbank},
         }
         next_run = {name: 0.0 for name in jobs}
         self.refresh_all()

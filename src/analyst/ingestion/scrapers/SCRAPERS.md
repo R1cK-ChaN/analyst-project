@@ -1040,6 +1040,131 @@ JP, CN, and GB.
 
 ---
 
+## 17. ECB — SDMX 2.1 API (`ecb.py`)
+
+> **Transport:** Plain `requests.Session` — official public API, no key required.
+
+### ECBClient
+
+Fetches **Euro Area monetary data** from the ECB Data Portal SDMX API —
+money supply (M1/M2/M3), deposit facility rate, and EUR/USD exchange rate.
+
+**Base URL:** `https://data-api.ecb.europa.eu/service/data`
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_data(dataflow_id, key, *, series_id, start_period, limit)` | `list[ECBObservation]` | Observations from any SDMX dataflow |
+
+**`ECBObservation` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `series_id` | `str` | `"ECB_EA_M1"` |
+| `date` | `str` | `"2024-12-01"` |
+| `value` | `float` | `16700000.0` |
+| `dataflow` | `str` | `"BSI"` |
+
+**Key series configured in `sources.py`:**
+
+| Series ID | Dataflow | Key | Description |
+|-----------|----------|-----|-------------|
+| `ECB_EA_M1` | BSI | M.U2.Y.V.M10.X.I.U2.2300.Z01.E | EA M1 Money Supply |
+| `ECB_EA_M2` | BSI | M.U2.Y.V.M20.X.I.U2.2300.Z01.E | EA M2 Money Supply |
+| `ECB_EA_M3` | BSI | M.U2.Y.V.M30.X.I.U2.2300.Z01.E | EA M3 Money Supply |
+| `ECB_EA_M3_GROWTH` | BSI | M.U2.Y.V.M30.X.R.A.2300.Z01.E | EA M3 Annual Growth Rate |
+| `ECB_EA_DEPOSIT_RATE` | FM | B.U2.EUR.4F.KR.DFR.LEV | ECB Deposit Facility Rate |
+| `ECB_EURUSD` | EXR | M.USD.EUR.SP00.A | EUR/USD Exchange Rate |
+
+**Auth:** None — fully open.
+**Rate limit:** 0.5 s delay between requests.
+**Storage:** `indicators` table (source `ecb`).
+
+---
+
+## 18. OECD — SDMX REST v2 API (`oecd.py`)
+
+> **Transport:** Plain `requests.Session` — official public API, no key required.
+
+### OECDClient
+
+Fetches **composite leading indicators and confidence data** from the OECD
+SDMX REST v2 API — CLI for US, CN, JP, EA, plus US consumer and business
+confidence.
+
+**Base URL:** `https://sdmx.oecd.org/public/rest/v2/data/dataflow`
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_data(dataflow_id, version, key, *, series_id, start_period, limit)` | `list[OECDObservation]` | Observations from an SDMX dataflow with dimension key filter in URL path |
+
+**`OECDObservation` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `series_id` | `str` | `"OECD_CLI_US"` |
+| `date` | `str` | `"2024-12-01"` |
+| `value` | `float` | `100.1` |
+| `dataflow` | `str` | `"DSD_STES@DF_CLI"` |
+
+**Key series configured in `sources.py`:**
+
+| Series ID | Dataflow | Version | Key | Description |
+|-----------|----------|---------|-----|-------------|
+| `OECD_CLI_US` | DSD_STES@DF_CLI | 4.1 | USA.M.LI.IX._Z.NOR.IX._Z.H | US Composite Leading Indicator |
+| `OECD_CLI_CN` | DSD_STES@DF_CLI | 4.1 | CHN.M.LI.IX._Z.NOR.IX._Z.H | CN Composite Leading Indicator |
+| `OECD_CLI_JP` | DSD_STES@DF_CLI | 4.1 | JPN.M.LI.IX._Z.NOR.IX._Z.H | JP Composite Leading Indicator |
+| `OECD_CLI_EU` | DSD_STES@DF_CLI | 4.1 | G4E.M.LI.IX._Z.NOR.IX._Z.H | Major 4 EU CLI |
+| `OECD_CONSUMER_CONF_US` | DSD_STES@DF_CS | 4.0 | USA.M.CCICP.\*.\*.\*.\*.\*.\* | US Consumer Confidence (OECD) |
+| `OECD_BUSINESS_CONF_US` | DSD_STES@DF_BTS | 4.0 | USA.M.BCICP.\*.\*.\*.\*.\*.\* | US Business Confidence (OECD) |
+
+**Auth:** None — fully open.
+**Rate limit:** 1.0 s delay between requests.
+**Storage:** `indicators` table (source `oecd`).
+
+---
+
+## 19. World Bank — REST API (`worldbank.py`)
+
+> **Transport:** Plain `requests.Session` — official public API, no key required.
+
+### WorldBankClient
+
+Fetches **development indicators** from the World Bank Indicators API v2 —
+GDP per capita (PPP), GDP growth, and current account balance as % of GDP.
+
+**Base URL:** `https://api.worldbank.org/v2`
+
+**Response format:** `[{page_info}, [{record}, ...]]` — page metadata in
+first element, data array in second element.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_indicator(indicator_code, country, *, series_id, start_year, limit)` | `list[WorldBankObservation]` | Observations for a country indicator |
+
+**`WorldBankObservation` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `series_id` | `str` | `"WB_GDP_PCAP_US"` |
+| `date` | `str` | `"2023-01-01"` |
+| `value` | `float` | `85000.5` |
+| `indicator` | `str` | `"NY.GDP.PCAP.PP.CD"` |
+
+**Key series configured in `sources.py`:**
+
+| Series ID | Indicator | Country | Description |
+|-----------|-----------|---------|-------------|
+| `WB_GDP_PCAP_US` | NY.GDP.PCAP.PP.CD | USA | US GDP per Capita PPP |
+| `WB_GDP_PCAP_CN` | NY.GDP.PCAP.PP.CD | CHN | CN GDP per Capita PPP |
+| `WB_GDP_GROWTH_US` | NY.GDP.MKTP.KD.ZG | USA | US GDP Growth % |
+| `WB_CA_GDP_US` | BN.CAB.XOKA.GD.ZS | USA | US Current Account % GDP |
+
+**Auth:** None — fully open.
+**Rate limit:** 0.5 s delay between requests.
+**Storage:** `indicators` table (source `worldbank`).
+
+---
+
 ## Summary Matrix
 
 | Site | Calendar | News | Articles | Indicators | Markets | Gov Reports |
@@ -1060,6 +1185,9 @@ JP, CN, and GB.
 | **IMF** | — | — | — | `IMFClient` | — | — |
 | **Eurostat** | — | — | — | `EurostatClient` | — | — |
 | **BIS** | — | — | — | `BISClient` | — | — |
+| **ECB** | — | — | — | `ECBClient` | — | — |
+| **OECD** | — | — | — | `OECDClient` | — | — |
+| **World Bank** | — | — | — | `WorldBankClient` | — | — |
 
 ## Running Tests
 
@@ -1077,5 +1205,5 @@ pytest tests/test_scrapers.py -v
 pytest tests/test_gov_report.py -x -q
 
 # Structured data API tests (FRED, EIA, Treasury, IMF, Eurostat, BIS)
-pytest tests/test_fred.py tests/test_eia.py tests/test_treasury_fiscal.py tests/test_imf.py tests/test_eurostat.py tests/test_bis.py -x -q
+pytest tests/test_fred.py tests/test_eia.py tests/test_treasury_fiscal.py tests/test_imf.py tests/test_eurostat.py tests/test_bis.py tests/test_ecb.py tests/test_oecd.py tests/test_worldbank.py -x -q
 ```

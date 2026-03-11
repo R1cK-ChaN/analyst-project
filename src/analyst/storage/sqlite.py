@@ -516,6 +516,34 @@ _BIS_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "BIS_PROPERTY_CN":   ("cn.property.real",     "CN Real Property Prices",        "index",   "quarterly", "none"),
 }
 
+_ECB_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "ECB_EA_M1":           ("eu.liquidity.m1",        "EA M1 Money Supply",        "millions_eur", "monthly", "sa"),
+    "ECB_EA_M2":           ("eu.liquidity.m2",        "EA M2 Money Supply",        "millions_eur", "monthly", "sa"),
+    "ECB_EA_M3":           ("eu.liquidity.m3",        "EA M3 Money Supply",        "millions_eur", "monthly", "sa"),
+    "ECB_EA_M3_GROWTH":    ("eu.liquidity.m3_growth", "EA M3 Annual Growth Rate",  "percent",      "monthly", "none"),
+    "ECB_EA_DEPOSIT_RATE": ("eu.rates.deposit_ecb",   "ECB Deposit Facility Rate", "percent",      "daily",   "none"),
+    "ECB_EURUSD":          ("eu.fx.eurusd",           "EUR/USD Exchange Rate",     "ratio",        "monthly", "none"),
+}
+
+_OECD_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "OECD_CLI_US":           ("us.leading.cli",             "US Composite Leading Indicator",  "index",   "monthly", "none"),
+    "OECD_CLI_CN":           ("cn.leading.cli",             "CN Composite Leading Indicator",  "index",   "monthly", "none"),
+    "OECD_CLI_JP":           ("jp.leading.cli",             "JP Composite Leading Indicator",  "index",   "monthly", "none"),
+    "OECD_CLI_EU":           ("eu.leading.cli",             "EA Composite Leading Indicator",  "index",   "monthly", "none"),
+    "OECD_CONSUMER_CONF_US": ("us.sentiment.consumer_conf", "US Consumer Confidence (OECD)",   "index",   "monthly", "sa"),
+    "OECD_BUSINESS_CONF_US": ("us.sentiment.business_conf", "US Business Confidence (OECD)",   "index",   "monthly", "sa"),
+}
+
+_WORLDBANK_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "WB_GDP_PCAP_US":   ("us.development.gdp_per_capita", "US GDP per Capita PPP",    "usd",     "annual", "none"),
+    "WB_GDP_PCAP_CN":   ("cn.development.gdp_per_capita", "CN GDP per Capita PPP",    "usd",     "annual", "none"),
+    "WB_GDP_GROWTH_US": ("us.growth.gdp_growth_wb",       "US GDP Growth % (WB)",     "percent", "annual", "none"),
+    "WB_CA_GDP_US":     ("us.trade.current_account_gdp",   "US Current Account % GDP", "percent", "annual", "none"),
+}
+
 _VINTAGE_FAMILY_IDS = {"GDP", "GDPC1", "CPIAUCSL", "PAYEMS", "UNRATE", "INDPRO", "RSAFS", "IMF_CN_GDP", "IMF_JP_GDP"}
 
 _OBS_DOC_LINKS: list[tuple[str, str, str]] = [
@@ -545,6 +573,9 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("imf",             "imf",             "International Monetary Fund",      "data_aggregator",   "US", "https://www.imf.org",                                           "https://api.imf.org/external/sdmx/3.0"),
     ("eurostat",        "eurostat",        "Eurostat",                         "government_agency", "EU", "https://ec.europa.eu/eurostat",                                  "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"),
     ("bis",             "bis",             "Bank for International Settlements","data_aggregator",  "CH", "https://www.bis.org",                                           "https://stats.bis.org/api/v2"),
+    ("ecb",             "ecb",             "European Central Bank",             "central_bank",     "EU", "https://www.ecb.europa.eu",                                      "https://data-api.ecb.europa.eu/service/data"),
+    ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
+    ("worldbank",       "worldbank",       "World Bank",                        "data_aggregator",  "XX", "https://www.worldbank.org",                                      "https://api.worldbank.org/v2"),
 ]
 
 
@@ -4620,6 +4651,9 @@ class SQLiteEngineStore:
             ("imf", _IMF_FAMILY_MAP),
             ("eurostat", _EUROSTAT_FAMILY_MAP),
             ("bis", _BIS_FAMILY_MAP),
+            ("ecb", _ECB_FAMILY_MAP),
+            ("oecd", _OECD_FAMILY_MAP),
+            ("worldbank", _WORLDBANK_FAMILY_MAP),
         ]
         for source_id, family_map in source_maps:
             for series_id, (fam_id, canon_name, unit, freq, sa) in family_map.items():
