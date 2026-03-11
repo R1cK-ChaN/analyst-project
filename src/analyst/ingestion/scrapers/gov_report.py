@@ -97,8 +97,9 @@ _US_SOURCES: dict[str, dict] = {
     # -- BEA: listing + keywords -----------------------------------------
     "us_bea_gdp": {
         "strategy": "listing_keywords",
-        "url": "https://www.bea.gov/news/schedule",
+        "url": "https://www.bea.gov/news/current-releases",
         "base_url": "https://www.bea.gov",
+        "link_must_contain": "/news/",
         "keywords": ["gross domestic product", "gdp"],
         "institution": "BEA",
         "country": "US",
@@ -114,8 +115,9 @@ _US_SOURCES: dict[str, dict] = {
     },
     "us_bea_pce": {
         "strategy": "listing_keywords",
-        "url": "https://www.bea.gov/news/schedule",
+        "url": "https://www.bea.gov/news/current-releases",
         "base_url": "https://www.bea.gov",
+        "link_must_contain": "/news/",
         "keywords": ["personal consumption", "personal income", "pce"],
         "institution": "BEA",
         "country": "US",
@@ -131,8 +133,9 @@ _US_SOURCES: dict[str, dict] = {
     },
     "us_bea_trade": {
         "strategy": "listing_keywords",
-        "url": "https://www.bea.gov/news/schedule",
+        "url": "https://www.bea.gov/news/current-releases",
         "base_url": "https://www.bea.gov",
+        "link_must_contain": "/news/",
         "keywords": ["trade", "international trade", "goods and services"],
         "institution": "BEA",
         "country": "US",
@@ -287,47 +290,10 @@ _US_SOURCES: dict[str, dict] = {
             r"(\d{4}-\d{2}-\d{2})",
         ],
     },
-    # -- ISM: listing + keywords -----------------------------------------
-    "us_ism_mfg": {
-        "strategy": "listing_keywords",
-        "url": "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/pmi/pmi-archive/",
-        "base_url": "https://www.ismworld.org",
-        "keywords": ["manufacturing", "pmi"],
-        "institution": "ISM",
-        "country": "US",
-        "language": "en",
-        "data_category": "manufacturing",
-        "importance": "high",
-        "content_selectors": [".content-area", "article", ".main-content", "#content"],
-        "title_selectors": ["h1", "h2", "title"],
-        "date_patterns": [
-            r"(\w+ \d{1,2},?\s*\d{4})",
-            r"(\d{4}-\d{2}-\d{2})",
-        ],
-    },
-    "us_ism_svc": {
-        "strategy": "listing_keywords",
-        "url": "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/services/services-pmi-archive/",
-        "base_url": "https://www.ismworld.org",
-        "keywords": ["services", "non-manufacturing"],
-        "institution": "ISM",
-        "country": "US",
-        "language": "en",
-        "data_category": "services",
-        "importance": "high",
-        "content_selectors": [".content-area", "article", ".main-content", "#content"],
-        "title_selectors": ["h1", "h2", "title"],
-        "date_patterns": [
-            r"(\w+ \d{1,2},?\s*\d{4})",
-            r"(\d{4}-\d{2}-\d{2})",
-        ],
-    },
-    # -- UMich: listing + keywords ---------------------------------------
+    # -- UMich: fixed URL ------------------------------------------------
     "us_umich_sentiment": {
-        "strategy": "listing_keywords",
-        "url": "http://www.sca.isr.umich.edu/",
-        "base_url": "http://www.sca.isr.umich.edu",
-        "keywords": ["survey", "sentiment", "consumer"],
+        "strategy": "fixed_url",
+        "url": "https://data.sca.isr.umich.edu/",
         "institution": "UMich",
         "country": "US",
         "language": "en",
@@ -347,7 +313,7 @@ _CN_SOURCES: dict[str, dict] = {
     "cn_nbs_cpi": {
         "strategy": "listing_keywords",
         "url": "https://www.stats.gov.cn/sj/zxfb/",
-        "base_url": "https://www.stats.gov.cn",
+        "base_url": "https://www.stats.gov.cn/sj/zxfb",
         "keywords": ["居民消费价格", "CPI"],
         "institution": "国家统计局",
         "country": "CN",
@@ -366,7 +332,7 @@ _CN_SOURCES: dict[str, dict] = {
     "cn_nbs_ppi": {
         "strategy": "listing_keywords",
         "url": "https://www.stats.gov.cn/sj/zxfb/",
-        "base_url": "https://www.stats.gov.cn",
+        "base_url": "https://www.stats.gov.cn/sj/zxfb",
         "keywords": ["工业生产者出厂价格", "PPI"],
         "institution": "国家统计局",
         "country": "CN",
@@ -385,7 +351,7 @@ _CN_SOURCES: dict[str, dict] = {
     "cn_nbs_gdp": {
         "strategy": "listing_keywords",
         "url": "https://www.stats.gov.cn/sj/zxfb/",
-        "base_url": "https://www.stats.gov.cn",
+        "base_url": "https://www.stats.gov.cn/sj/zxfb",
         "keywords": ["国内生产总值", "GDP", "国民经济"],
         "institution": "国家统计局",
         "country": "CN",
@@ -404,7 +370,7 @@ _CN_SOURCES: dict[str, dict] = {
     "cn_nbs_pmi": {
         "strategy": "listing_keywords",
         "url": "https://www.stats.gov.cn/sj/zxfb/",
-        "base_url": "https://www.stats.gov.cn",
+        "base_url": "https://www.stats.gov.cn/sj/zxfb",
         "keywords": ["采购经理指数", "PMI"],
         "institution": "国家统计局",
         "country": "CN",
@@ -423,7 +389,7 @@ _CN_SOURCES: dict[str, dict] = {
     "cn_nbs_industrial": {
         "strategy": "listing_keywords",
         "url": "https://www.stats.gov.cn/sj/zxfb/",
-        "base_url": "https://www.stats.gov.cn",
+        "base_url": "https://www.stats.gov.cn/sj/zxfb",
         "keywords": ["规模以上工业增加值", "工业增加值"],
         "institution": "国家统计局",
         "country": "CN",
@@ -442,7 +408,7 @@ _CN_SOURCES: dict[str, dict] = {
     "cn_nbs_retail": {
         "strategy": "listing_keywords",
         "url": "https://www.stats.gov.cn/sj/zxfb/",
-        "base_url": "https://www.stats.gov.cn",
+        "base_url": "https://www.stats.gov.cn/sj/zxfb",
         "keywords": ["社会消费品零售总额", "消费品零售"],
         "institution": "国家统计局",
         "country": "CN",
@@ -461,7 +427,7 @@ _CN_SOURCES: dict[str, dict] = {
     "cn_nbs_fai": {
         "strategy": "listing_keywords",
         "url": "https://www.stats.gov.cn/sj/zxfb/",
-        "base_url": "https://www.stats.gov.cn",
+        "base_url": "https://www.stats.gov.cn/sj/zxfb",
         "keywords": ["固定资产投资", "投资"],
         "institution": "国家统计局",
         "country": "CN",
@@ -517,7 +483,7 @@ _CN_SOURCES: dict[str, dict] = {
     # -- Customs: listing + keywords -------------------------------------
     "cn_customs_trade": {
         "strategy": "listing_keywords",
-        "url": "http://www.customs.gov.cn/customs/302249/zfxxgk/2799825/302274/index.html",
+        "url": "http://www.customs.gov.cn/customs/302249/zfxxgk/2799825/302274/302275/index.html",
         "base_url": "http://www.customs.gov.cn",
         "keywords": ["进出口", "外贸", "贸易"],
         "institution": "海关总署",
@@ -554,8 +520,8 @@ _CN_SOURCES: dict[str, dict] = {
     },
     "cn_mof_bonds": {
         "strategy": "listing_keywords",
-        "url": "https://www.mof.gov.cn/zhengwuxinxi/zhengfuzhaiquan/",
-        "base_url": "https://www.mof.gov.cn",
+        "url": "https://gks.mof.gov.cn/ztztz/guozaiguanli/",
+        "base_url": "https://gks.mof.gov.cn/ztztz/guozaiguanli",
         "keywords": ["国债", "地方政府债", "债券", "发行"],
         "institution": "财政部",
         "country": "CN",
@@ -573,8 +539,8 @@ _CN_SOURCES: dict[str, dict] = {
     # -- SAFE: listing + keywords ----------------------------------------
     "cn_safe_fx": {
         "strategy": "listing_keywords",
-        "url": "https://www.safe.gov.cn/safe/whcbzb/index.html",
-        "base_url": "https://www.safe.gov.cn",
+        "url": "https://www.safe.gov.cn/safe/whcb/index.html",
+        "base_url": "https://www.safe.gov.cn/safe/whcb",
         "keywords": ["外汇储备", "储备规模"],
         "institution": "国家外汇管理局",
         "country": "CN",
@@ -649,7 +615,7 @@ _JP_SOURCES: dict[str, dict] = {
     },
     "jp_boj_minutes": {
         "strategy": "listing_regex",
-        "url": "https://www.boj.or.jp/en/mopo/mpmsche_minu/opinion_",
+        "url": "https://www.boj.or.jp/en/mopo/mpmsche_minu/index.htm",
         "base_url": "https://www.boj.or.jp",
         "link_pattern": r"/en/mopo/mpmsche_minu/opinion_\d+/",
         "institution": "Bank of Japan",
@@ -667,9 +633,9 @@ _JP_SOURCES: dict[str, dict] = {
     },
     "jp_cao_gdp": {
         "strategy": "listing_regex",
-        "url": "https://www.esri.cao.go.jp/en/stat/di/di-e.html",
+        "url": "https://www.esri.cao.go.jp/en/sna/sokuhou/sokuhou_top.html",
         "base_url": "https://www.esri.cao.go.jp",
-        "link_pattern": r"/en/stat/di/",
+        "link_pattern": r"/en/sna/data/sokuhou/.*qe\d+",
         "institution": "Cabinet Office",
         "country": "JP",
         "language": "en",
@@ -689,7 +655,7 @@ _EU_SOURCES: dict[str, dict] = {
     # -- ECB: listing + regex --------------------------------------------
     "eu_ecb_statement": {
         "strategy": "listing_regex",
-        "url": "https://www.ecb.europa.eu/press/pressreleases/html/index.en.html",
+        "url": "https://www.ecb.europa.eu/press/pr/html/index.en.html",
         "base_url": "https://www.ecb.europa.eu",
         "link_pattern": r"/press/pr/date/\d{4}/html/.*\.en\.html",
         "institution": "ECB",
@@ -796,7 +762,7 @@ _EU_SOURCES: dict[str, dict] = {
     # -- Eurostat: listing + keywords ------------------------------------
     "eu_eurostat_cpi": {
         "strategy": "listing_keywords",
-        "url": "https://ec.europa.eu/eurostat/news/news-releases",
+        "url": "https://ec.europa.eu/eurostat/web/products-eurostat-news",
         "base_url": "https://ec.europa.eu",
         "keywords": ["HICP", "inflation", "consumer price"],
         "institution": "Eurostat",
@@ -817,7 +783,7 @@ _EU_SOURCES: dict[str, dict] = {
     },
     "eu_eurostat_gdp": {
         "strategy": "listing_keywords",
-        "url": "https://ec.europa.eu/eurostat/news/news-releases",
+        "url": "https://ec.europa.eu/eurostat/web/products-eurostat-news",
         "base_url": "https://ec.europa.eu",
         "keywords": ["GDP", "gross domestic product", "economic growth"],
         "institution": "Eurostat",
@@ -838,7 +804,7 @@ _EU_SOURCES: dict[str, dict] = {
     },
     "eu_eurostat_employment": {
         "strategy": "listing_keywords",
-        "url": "https://ec.europa.eu/eurostat/news/news-releases",
+        "url": "https://ec.europa.eu/eurostat/web/products-eurostat-news",
         "base_url": "https://ec.europa.eu",
         "keywords": ["unemployment", "employment", "labour market"],
         "institution": "Eurostat",
@@ -1070,10 +1036,13 @@ class USGovReportClient:
         base_url = cfg.get("base_url", cfg["url"])
         keywords = cfg["keywords"]
         extra_keywords = cfg.get("extra_keywords")
+        link_must_contain = cfg.get("link_must_contain")
 
         for a_tag in soup.find_all("a", href=True):
+            href = a_tag["href"]
+            if link_must_contain and link_must_contain not in href:
+                continue
             if _link_matches_keywords(a_tag, keywords, extra_keywords):
-                href = a_tag["href"]
                 if href.endswith(".pdf"):
                     continue
                 detail_url = _resolve_url(href, base_url)
@@ -1149,9 +1118,13 @@ class CNGovReportClient:
         keywords = cfg["keywords"]
         extra_keywords = cfg.get("extra_keywords")
 
+        link_must_contain = cfg.get("link_must_contain")
+
         for a_tag in soup.find_all("a", href=True):
+            href = a_tag["href"]
+            if link_must_contain and link_must_contain not in href:
+                continue
             if _link_matches_keywords(a_tag, keywords, extra_keywords):
-                href = a_tag["href"]
                 if href.endswith(".pdf"):
                     continue
                 detail_url = _resolve_url(href, base_url)

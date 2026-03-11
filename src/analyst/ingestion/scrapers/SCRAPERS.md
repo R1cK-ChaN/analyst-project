@@ -657,19 +657,142 @@ content.
 
 ---
 
+## 10. Government Reports (`gov_report.py`)
+
+> **Transport:** Plain `requests.Session` with browser User-Agent — no
+> Cloudflare or TLS fingerprint impersonation needed.
+
+Scrapes **official government statistical releases** from US, CN, JP, and EU
+institutions. Each source is defined as a declarative config dict with a
+scraping strategy. The scraper fetches listing pages, finds the most recent
+matching release, then extracts the full article content as Markdown.
+
+### Data Type
+
+`GovReportItem` (frozen dataclass):
+
+| Field | Type | Example |
+|-------|------|---------|
+| `source` | `str` | `"gov_bls"`, `"gov_国家统计局"` |
+| `source_id` | `str` | `"us_bls_cpi"`, `"cn_nbs_gdp"` |
+| `title` | `str` | `"Consumer Price Index News Release"` |
+| `url` | `str` | Detail page URL |
+| `published_at` | `str` | `"2026-03-09"` (ISO date) |
+| `institution` | `str` | `"BLS"`, `"国家统计局"`, `"ECB"` |
+| `country` | `str` | `"US"`, `"CN"`, `"JP"`, `"EU"` |
+| `language` | `str` | `"en"`, `"zh"` |
+| `data_category` | `str` | `"inflation"`, `"gdp"`, `"monetary_policy"` |
+| `importance` | `str` | `"high"`, `"medium"` |
+| `content_markdown` | `str` | Full article body as Markdown (up to 15 000 chars) |
+
+### Scraping Strategies
+
+| Strategy | How it works |
+|----------|-------------|
+| `fixed_url` | Fetch a single known URL directly (e.g. BLS press releases) |
+| `listing_keywords` | Fetch listing page, find first `<a>` matching keywords (+ optional `link_must_contain` URL filter), follow to detail page |
+| `listing_regex` | Fetch listing page, find first `<a>` whose `href` matches a regex pattern, follow to detail page |
+| `rss` | Parse RSS/Atom feed, fetch the most recent entry's detail page |
+
+### GovReportClient (unified facade)
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fetch_all()` | `list[GovReportItem]` | All regions sequentially |
+| `fetch_us()` | `list[GovReportItem]` | US sources only |
+| `fetch_cn()` | `list[GovReportItem]` | CN sources only |
+| `fetch_jp()` | `list[GovReportItem]` | JP sources only |
+| `fetch_eu()` | `list[GovReportItem]` | EU sources only |
+
+Each region also has a standalone client (`USGovReportClient`,
+`CNGovReportClient`, `JPGovReportClient`, `EUGovReportClient`) with a
+single `fetch_all()` method.
+
+### Sources by Region
+
+**US (11 sources):**
+
+| Source ID | Institution | Category | Strategy |
+|-----------|-------------|----------|----------|
+| `us_bls_cpi` | BLS | inflation | `fixed_url` |
+| `us_bls_ppi` | BLS | inflation | `fixed_url` |
+| `us_bls_nfp` | BLS | employment | `fixed_url` |
+| `us_bea_gdp` | BEA | gdp | `listing_keywords` |
+| `us_bea_pce` | BEA | inflation | `listing_keywords` |
+| `us_bea_trade` | BEA | trade | `listing_keywords` |
+| `us_fed_fomc_minutes` | Federal Reserve | monetary_policy | `listing_regex` |
+| `us_fed_ip` | Federal Reserve | industrial_production | `listing_regex` |
+| `us_census_retail` | Census Bureau | consumption | `fixed_url` |
+| `us_census_housing` | Census Bureau | housing | `listing_keywords` |
+| `us_treasury_tic` | Treasury | capital_flows | `listing_keywords` |
+| `us_treasury_debt` | Treasury | fiscal_policy | `listing_keywords` |
+| `us_umich_sentiment` | UMich | consumer_sentiment | `fixed_url` |
+
+**CN (12 sources):**
+
+| Source ID | Institution | Category | Strategy |
+|-----------|-------------|----------|----------|
+| `cn_nbs_cpi` | 国家统计局 | inflation | `listing_keywords` |
+| `cn_nbs_ppi` | 国家统计局 | inflation | `listing_keywords` |
+| `cn_nbs_gdp` | 国家统计局 | gdp | `listing_keywords` |
+| `cn_nbs_pmi` | 国家统计局 | manufacturing | `listing_keywords` |
+| `cn_nbs_industrial` | 国家统计局 | industrial_production | `listing_keywords` |
+| `cn_nbs_retail` | 国家统计局 | consumption | `listing_keywords` |
+| `cn_nbs_fai` | 国家统计局 | investment | `listing_keywords` |
+| `cn_pboc_monetary` | 中国人民银行 | money_supply | `listing_keywords` |
+| `cn_pboc_lpr` | 中国人民银行 | interest_rate | `listing_keywords` |
+| `cn_customs_trade` | 海关总署 | trade | `listing_keywords` |
+| `cn_mof_fiscal` | 财政部 | fiscal_policy | `listing_keywords` |
+| `cn_mof_bonds` | 财政部 | bond_issuance | `listing_keywords` |
+| `cn_safe_fx` | 国家外汇管理局 | fx_reserves | `listing_keywords` |
+| `cn_caixin_pmi` | Caixin/S&P Global | manufacturing | `listing_keywords` |
+
+**JP (4 sources):**
+
+| Source ID | Institution | Category | Strategy |
+|-----------|-------------|----------|----------|
+| `jp_boj_statement` | Bank of Japan | monetary_policy | `listing_regex` |
+| `jp_boj_outlook` | Bank of Japan | monetary_policy | `listing_regex` |
+| `jp_boj_minutes` | Bank of Japan | monetary_policy | `listing_regex` |
+| `jp_cao_gdp` | Cabinet Office | gdp | `listing_regex` |
+
+**EU (8 sources):**
+
+| Source ID | Institution | Category | Strategy |
+|-----------|-------------|----------|----------|
+| `eu_ecb_statement` | ECB | monetary_policy | `listing_regex` |
+| `eu_ecb_minutes` | ECB | monetary_policy | `listing_regex` |
+| `eu_ecb_bulletin` | ECB | economic_conditions | `listing_regex` |
+| `eu_ecb_press` | ECB | press_releases | `rss` |
+| `eu_ecb_speeches` | ECB | speeches | `rss` |
+| `eu_eurostat_cpi` | Eurostat | inflation | `listing_keywords` |
+| `eu_eurostat_gdp` | Eurostat | gdp | `listing_keywords` |
+| `eu_eurostat_employment` | Eurostat | employment | `listing_keywords` |
+
+**Typical yield:** ~28 items total (US 13, CN 7, JP 3, EU 5). Some sources
+return `None` when no recent matching release is found or when the detail page
+is a PDF. Failed fetches are logged as warnings and skipped.
+
+**Anti-bot notes:** Chinese Customs (`cn_customs_trade`) returns 412
+Precondition Failed due to server-side bot detection. This source may
+intermittently fail; errors are caught and logged gracefully.
+
+---
+
 ## Summary Matrix
 
-| Site | Calendar | News | Articles | Indicators | Markets |
-|------|:--------:|:----:|:--------:|:----------:|:-------:|
-| **Investing.com** | `InvestingCalendarClient` | `InvestingNewsClient` | — | — | — |
-| **ForexFactory** | `ForexFactoryCalendarClient` | `ForexFactoryNewsClient` | — | — | — |
-| **TradingEconomics** | `TradingEconomicsCalendarClient` | `TradingEconomicsNewsClient` | — | `TradingEconomicsIndicatorsClient` | `TradingEconomicsMarketsClient` |
-| **Reuters** | — | `ReutersNewsClient` | `ReutersArticleClient` | — | — |
-| **Bloomberg** | — | `BloombergNewsClient` | `BloombergArticleClient` | — | — |
-| **FT** | — | `FTNewsClient` | `FTArticleClient` | — | — |
-| **WSJ** | — | `WSJNewsClient` | `WSJArticleClient` | — | — |
-| **rateprobability.com** | — | — | — | `RateProbabilityClient` | — |
-| **NY Fed** | — | — | — | `NYFedRatesClient` | — |
+| Site | Calendar | News | Articles | Indicators | Markets | Gov Reports |
+|------|:--------:|:----:|:--------:|:----------:|:-------:|:-----------:|
+| **Investing.com** | `InvestingCalendarClient` | `InvestingNewsClient` | — | — | — | — |
+| **ForexFactory** | `ForexFactoryCalendarClient` | `ForexFactoryNewsClient` | — | — | — | — |
+| **TradingEconomics** | `TradingEconomicsCalendarClient` | `TradingEconomicsNewsClient` | — | `TradingEconomicsIndicatorsClient` | `TradingEconomicsMarketsClient` | — |
+| **Reuters** | — | `ReutersNewsClient` | `ReutersArticleClient` | — | — | — |
+| **Bloomberg** | — | `BloombergNewsClient` | `BloombergArticleClient` | — | — | — |
+| **FT** | — | `FTNewsClient` | `FTArticleClient` | — | — | — |
+| **WSJ** | — | `WSJNewsClient` | `WSJArticleClient` | — | — | — |
+| **rateprobability.com** | — | — | — | `RateProbabilityClient` | — | — |
+| **NY Fed** | — | — | — | `NYFedRatesClient` | — | — |
+| **Gov (US/CN/JP/EU)** | — | — | — | — | — | `GovReportClient` |
 
 ## Running Tests
 
@@ -682,4 +805,7 @@ pytest tests/test_scrapers.py -m live -v
 
 # All scraper tests
 pytest tests/test_scrapers.py -v
+
+# Government report scraper tests
+pytest tests/test_gov_report.py -x -q
 ```
