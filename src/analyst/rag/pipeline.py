@@ -11,7 +11,7 @@ import logging
 import math
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from .bm25 import BM25Stats, bm25_sparse_vector, load_stats
@@ -281,6 +281,15 @@ def retrieve_with_policy(
     filters = dict(policy.get("route", {}).get("filters") or {})
     if request_filters:
         _merge_request_filters(filters, request_filters)
+
+    # Apply default_days as a hard time boundary (if no explicit updated_after)
+    if "updated_after" not in filters:
+        default_days = filters.pop("default_days", None)
+        if default_days:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=int(default_days))
+            filters["updated_after"] = cutoff.isoformat()
+    else:
+        filters.pop("default_days", None)
 
     rrf_k = policy.get("route", {}).get("fusion", {}).get("rrf_k", 60)
 

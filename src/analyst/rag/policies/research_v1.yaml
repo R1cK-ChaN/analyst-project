@@ -1,5 +1,5 @@
 id: research_v1
-version: "1.0.0"
+version: "1.1.0"
 mode: RESEARCH
 track: stable
 description: Flash commentary, regime refresh, deep-dive research.
@@ -24,12 +24,11 @@ route:
     enabled: true
     top_n: 15
   filters:
+    default_days: 60
     source_type:
       weights:
         news_article: 1.0
         central_bank_comm: 1.2
-        indicator: 0.9
-        calendar_event: 0.8
         research_artifact: 1.1
 
 selection:
@@ -44,18 +43,10 @@ selection:
       min: 1
       max: 3
       priority: 1
-    indicator:
-      min: 0
-      max: 3
-      priority: 3
-    calendar_event:
-      min: 0
-      max: 2
-      priority: 4
     research_artifact:
       min: 0
       max: 2
-      priority: 5
+      priority: 3
   neighbor_expansion:
     enabled: true
     before: 1

@@ -1,5 +1,5 @@
 id: qa_v1
-version: "1.0.0"
+version: "1.1.0"
 mode: QA
 track: stable
 description: Free-form user questions. Balanced dense + BM25.
@@ -23,7 +23,8 @@ route:
   rerank:
     enabled: true
     top_n: 10
-  filters: {}
+  filters:
+    default_days: 30
 
 selection:
   dedup:
@@ -37,18 +38,10 @@ selection:
       min: 0
       max: 3
       priority: 1
-    indicator:
-      min: 0
-      max: 3
-      priority: 3
-    calendar_event:
-      min: 0
-      max: 2
-      priority: 4
     research_artifact:
       min: 0
       max: 3
-      priority: 5
+      priority: 3
   neighbor_expansion:
     enabled: true
     before: 1

@@ -1,5 +1,5 @@
 id: briefing_v1
-version: "1.0.0"
+version: "1.1.0"
 mode: BRIEFING
 track: stable
 description: Morning/after-market briefings. BM25-heavy for keyword-dense headlines.
@@ -23,7 +23,8 @@ route:
   rerank:
     enabled: true
     top_n: 12
-  filters: {}
+  filters:
+    default_days: 7
 
 selection:
   dedup:
@@ -37,18 +38,10 @@ selection:
       min: 0
       max: 3
       priority: 2
-    calendar_event:
-      min: 1
-      max: 3
-      priority: 3
-    indicator:
-      min: 0
-      max: 2
-      priority: 4
     research_artifact:
       min: 0
       max: 2
-      priority: 5
+      priority: 3
   neighbor_expansion:
     enabled: false
 

@@ -1,8 +1,8 @@
 id: regime_v1
-version: "1.0.0"
+version: "1.1.0"
 mode: REGIME
 track: stable
-description: Regime state assessment. Balanced retrieval across all source types.
+description: Regime state assessment. Balanced retrieval across text sources.
 
 route:
   collections:
@@ -24,12 +24,11 @@ route:
     enabled: true
     top_n: 10
   filters:
+    default_days: 14
     source_type:
       weights:
         central_bank_comm: 1.3
-        indicator: 1.2
         news_article: 1.0
-        calendar_event: 1.0
         research_artifact: 0.9
 
 selection:
@@ -40,22 +39,14 @@ selection:
       min: 1
       max: 3
       priority: 1
-    indicator:
-      min: 1
-      max: 3
-      priority: 2
     news_article:
       min: 1
-      max: 3
-      priority: 3
-    calendar_event:
-      min: 0
-      max: 2
-      priority: 4
+      max: 4
+      priority: 2
     research_artifact:
       min: 0
       max: 2
-      priority: 5
+      priority: 3
   neighbor_expansion:
     enabled: false
 

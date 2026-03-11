@@ -82,8 +82,8 @@ def build_rag_search_tool(retriever: MacroRetriever) -> AgentTool:
         description=(
             "Search the macro-economic knowledge base using hybrid dense+sparse retrieval. "
             "Returns semantically relevant evidence from news articles, Fed communications, "
-            "economic indicators, calendar events, and research notes. Use this for any "
-            "question requiring deep context beyond what live data tools provide."
+            "and research notes. Use this for any question requiring narrative context or "
+            "analysis beyond what structured data tools (indicators, calendar) provide."
         ),
         parameters={
             "type": "object",
@@ -112,7 +112,7 @@ def build_rag_search_tool(retriever: MacroRetriever) -> AgentTool:
                 },
                 "content_type": {
                     "type": "string",
-                    "description": "Filter by content type (article, speech, statement, minutes, data_release, etc.).",
+                    "description": "Filter by content type (article, speech, statement, minutes, research_note, etc.).",
                 },
                 "days": {
                     "type": "integer",

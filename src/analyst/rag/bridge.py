@@ -14,9 +14,7 @@ from typing import Any, Dict, List
 from .bm25 import BM25Stats, bm25_sparse_vector, save_stats
 from .chunker import (
     RawChunk,
-    chunk_calendar_event,
     chunk_central_bank_comm,
-    chunk_indicator_observations,
     chunk_news_article,
     chunk_research_artifact,
 )
@@ -75,9 +73,6 @@ class MacroIngestionBridge:
             all_chunks.extend(news_chunks)
             fed_chunks, _ = self._read_fed_comms(conn)
             all_chunks.extend(fed_chunks)
-            cal_chunks, _ = self._read_calendar_events(conn)
-            all_chunks.extend(cal_chunks)
-            all_chunks.extend(self._read_indicators(conn))
             res_chunks, _ = self._read_research(conn)
             all_chunks.extend(res_chunks)
 
@@ -125,13 +120,6 @@ class MacroIngestionBridge:
             all_chunks.extend(fed_chunks)
             if fed_max_id > fed_wm:
                 new_watermarks["central_bank_comm"] = fed_max_id
-
-            # Calendar events
-            cal_wm = watermarks.get("calendar_event", 0)
-            cal_chunks, cal_max_id = self._read_calendar_events(conn, min_id=cal_wm)
-            all_chunks.extend(cal_chunks)
-            if cal_max_id > cal_wm:
-                new_watermarks["calendar_event"] = cal_max_id
 
             # Research
             res_wm = watermarks.get("research_artifact", 0)
@@ -222,36 +210,6 @@ class MacroIngestionBridge:
                 max_id = rid
             chunks.extend(chunk_central_bank_comm(row_dict))
         return chunks, max_id
-
-    def _read_calendar_events(
-        self, conn, min_id: int = 0
-    ) -> tuple[list[RawChunk], int]:
-        cursor = conn.execute(
-            "SELECT rowid, * FROM calendar_events WHERE rowid > ? ORDER BY rowid",
-            (min_id,),
-        )
-        chunks: list[RawChunk] = []
-        max_id = min_id
-        for row in cursor:
-            row_dict = dict(row)
-            rid = row_dict.get("rowid", 0)
-            if rid > max_id:
-                max_id = rid
-            chunks.extend(chunk_calendar_event(row_dict))
-        return chunks, max_id
-
-    def _read_indicators(self, conn) -> list[RawChunk]:
-        cursor = conn.execute(
-            "SELECT series_id, source, date, value FROM indicators ORDER BY series_id, date DESC"
-        )
-        from itertools import groupby
-
-        chunks: list[RawChunk] = []
-        rows_all = [dict(row) for row in cursor]
-        for series_id, group in groupby(rows_all, key=lambda r: r["series_id"]):
-            obs = list(group)[:24]
-            chunks.extend(chunk_indicator_observations(series_id, obs))
-        return chunks
 
     def _read_research(
         self, conn, min_id: int = 0
