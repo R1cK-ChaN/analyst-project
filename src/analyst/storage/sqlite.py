@@ -299,6 +299,78 @@ class GroupMessageRecord:
     created_at: str
 
 
+@dataclass(frozen=True)
+class DocSourceRecord:
+    source_id: str
+    source_code: str
+    source_name: str
+    source_type: str
+    country_code: str
+    default_language_code: str
+    homepage_url: str
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class DocReleaseFamilyRecord:
+    release_family_id: str
+    source_id: str
+    release_code: str
+    release_name: str
+    topic_code: str
+    country_code: str
+    frequency: str
+    default_language_code: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class DocumentRecord:
+    document_id: str
+    release_family_id: str
+    source_id: str
+    canonical_url: str
+    title: str
+    subtitle: str
+    document_type: str
+    mime_type: str
+    language_code: str
+    country_code: str
+    topic_code: str
+    published_date: str
+    published_at: str
+    status: str
+    version_no: int
+    parent_document_id: str
+    hash_sha256: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class DocumentBlobRecord:
+    document_blob_id: str
+    document_id: str
+    blob_role: str
+    storage_path: str
+    content_text: str
+    content_bytes: bytes | None
+    byte_size: int
+    encoding: str
+    parser_name: str
+    parser_version: str
+    extracted_at: str
+
+
+@dataclass(frozen=True)
+class DocumentExtraRecord:
+    document_id: str
+    extra_json: dict[str, Any]
+
+
 class SQLiteEngineStore:
     def __init__(self, db_path: Path | None = None) -> None:
         self.db_path = db_path or default_engine_db_path()
@@ -834,6 +906,134 @@ class SQLiteEngineStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_group_members_group "
                 "ON group_members(group_id, last_seen_at DESC)"
+            )
+            # -- Document storage: 5-table normalized schema --------------------
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS doc_source (
+                    source_id TEXT PRIMARY KEY,
+                    source_code TEXT NOT NULL,
+                    source_name TEXT NOT NULL,
+                    source_type TEXT NOT NULL
+                        CHECK (source_type IN (
+                            'government_agency', 'central_bank', 'intl_org',
+                            'statistics_bureau', 'news_agency'
+                        )),
+                    country_code TEXT NOT NULL CHECK (length(country_code) = 2),
+                    default_language_code TEXT CHECK (length(default_language_code) IN (2, 5)),
+                    homepage_url TEXT,
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS doc_release_family (
+                    release_family_id TEXT PRIMARY KEY,
+                    source_id TEXT NOT NULL,
+                    release_code TEXT NOT NULL,
+                    release_name TEXT NOT NULL,
+                    topic_code TEXT NOT NULL,
+                    country_code TEXT NOT NULL CHECK (length(country_code) = 2),
+                    frequency TEXT,
+                    default_language_code TEXT CHECK (default_language_code IS NULL OR length(default_language_code) IN (2, 5)),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (source_id) REFERENCES doc_source(source_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS document (
+                    document_id TEXT PRIMARY KEY,
+                    release_family_id TEXT,
+                    source_id TEXT NOT NULL,
+                    canonical_url TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    subtitle TEXT NOT NULL DEFAULT '',
+                    document_type TEXT NOT NULL
+                        CHECK (document_type IN (
+                            'release', 'bulletin', 'speech', 'methodology',
+                            'revision_notice', 'minutes', 'statement',
+                            'press_release', 'report', 'outlook'
+                        )),
+                    mime_type TEXT NOT NULL DEFAULT 'text/html',
+                    language_code TEXT NOT NULL CHECK (length(language_code) IN (2, 5)),
+                    country_code TEXT NOT NULL CHECK (length(country_code) = 2),
+                    topic_code TEXT NOT NULL,
+                    published_date TEXT NOT NULL,
+                    published_at TEXT,
+                    status TEXT NOT NULL DEFAULT 'published'
+                        CHECK (status IN ('published', 'revised', 'superseded', 'withdrawn')),
+                    version_no INTEGER NOT NULL DEFAULT 1,
+                    parent_document_id TEXT,
+                    hash_sha256 TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (release_family_id) REFERENCES doc_release_family(release_family_id),
+                    FOREIGN KEY (source_id) REFERENCES doc_source(source_id),
+                    FOREIGN KEY (parent_document_id) REFERENCES document(document_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS document_blob (
+                    document_blob_id TEXT PRIMARY KEY,
+                    document_id TEXT NOT NULL,
+                    blob_role TEXT NOT NULL
+                        CHECK (blob_role IN (
+                            'raw_pdf', 'raw_html', 'clean_html',
+                            'plain_text', 'markdown'
+                        )),
+                    storage_path TEXT,
+                    content_text TEXT,
+                    content_bytes BLOB,
+                    byte_size INTEGER,
+                    encoding TEXT,
+                    parser_name TEXT,
+                    parser_version TEXT,
+                    extracted_at TEXT,
+                    FOREIGN KEY (document_id) REFERENCES document(document_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS document_extra (
+                    document_id TEXT PRIMARY KEY,
+                    extra_json TEXT NOT NULL DEFAULT '{}',
+                    FOREIGN KEY (document_id) REFERENCES document(document_id)
+                )
+                """
+            )
+            # -- Document storage indexes ----------------------------------------
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_document_url "
+                "ON document(canonical_url)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_source_date "
+                "ON document(source_id, published_date)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_release_date "
+                "ON document(release_family_id, published_date)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_country_topic_date "
+                "ON document(country_code, topic_code, published_date)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_status "
+                "ON document(status)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_blob_document_role "
+                "ON document_blob(document_id, blob_role)"
             )
 
     def _ensure_table_columns(
@@ -3348,3 +3548,454 @@ class SQLiteEngineStore:
         ]
         records.reverse()  # chronological order
         return records
+
+    # ── Document storage CRUD ──────────────────────────────────────────
+
+    def upsert_doc_source(self, record: DocSourceRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO doc_source (
+                    source_id, source_code, source_name, source_type,
+                    country_code, default_language_code, homepage_url,
+                    is_active, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.source_id,
+                    record.source_code,
+                    record.source_name,
+                    record.source_type,
+                    record.country_code,
+                    record.default_language_code,
+                    record.homepage_url,
+                    int(record.is_active),
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_doc_source(self, source_id: str) -> DocSourceRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM doc_source WHERE source_id = ?",
+                (source_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_doc_source(row)
+
+    def list_doc_sources(self, *, active_only: bool = True) -> list[DocSourceRecord]:
+        query = "SELECT * FROM doc_source"
+        params: list[Any] = []
+        if active_only:
+            query += " WHERE is_active = 1"
+        query += " ORDER BY source_id"
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._row_to_doc_source(row) for row in rows]
+
+    def _row_to_doc_source(self, row: sqlite3.Row) -> DocSourceRecord:
+        return DocSourceRecord(
+            source_id=row["source_id"],
+            source_code=row["source_code"],
+            source_name=row["source_name"],
+            source_type=row["source_type"],
+            country_code=row["country_code"],
+            default_language_code=row["default_language_code"] or "",
+            homepage_url=row["homepage_url"] or "",
+            is_active=bool(row["is_active"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def upsert_doc_release_family(self, record: DocReleaseFamilyRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO doc_release_family (
+                    release_family_id, source_id, release_code, release_name,
+                    topic_code, country_code, frequency, default_language_code,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.release_family_id,
+                    record.source_id,
+                    record.release_code,
+                    record.release_name,
+                    record.topic_code,
+                    record.country_code,
+                    record.frequency,
+                    record.default_language_code,
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_doc_release_family(self, release_family_id: str) -> DocReleaseFamilyRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM doc_release_family WHERE release_family_id = ?",
+                (release_family_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_doc_release_family(row)
+
+    def list_doc_release_families(
+        self,
+        *,
+        source_id: str | None = None,
+        country_code: str | None = None,
+        topic_code: str | None = None,
+    ) -> list[DocReleaseFamilyRecord]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if source_id:
+            conditions.append("source_id = ?")
+            params.append(source_id)
+        if country_code:
+            conditions.append("country_code = ?")
+            params.append(country_code)
+        if topic_code:
+            conditions.append("topic_code = ?")
+            params.append(topic_code)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"SELECT * FROM doc_release_family {where} ORDER BY release_family_id",
+                params,
+            ).fetchall()
+        return [self._row_to_doc_release_family(row) for row in rows]
+
+    def _row_to_doc_release_family(self, row: sqlite3.Row) -> DocReleaseFamilyRecord:
+        return DocReleaseFamilyRecord(
+            release_family_id=row["release_family_id"],
+            source_id=row["source_id"],
+            release_code=row["release_code"],
+            release_name=row["release_name"],
+            topic_code=row["topic_code"],
+            country_code=row["country_code"],
+            frequency=row["frequency"] or "",
+            default_language_code=row["default_language_code"] or "",
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def upsert_document(self, record: DocumentRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO document (
+                    document_id, release_family_id, source_id, canonical_url,
+                    title, subtitle, document_type, mime_type,
+                    language_code, country_code, topic_code,
+                    published_date, published_at, status, version_no,
+                    parent_document_id, hash_sha256,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.document_id,
+                    record.release_family_id or None,
+                    record.source_id,
+                    record.canonical_url,
+                    record.title,
+                    record.subtitle,
+                    record.document_type,
+                    record.mime_type,
+                    record.language_code,
+                    record.country_code,
+                    record.topic_code,
+                    record.published_date,
+                    record.published_at or None,
+                    record.status,
+                    record.version_no,
+                    record.parent_document_id or None,
+                    record.hash_sha256 or None,
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_document(self, document_id: str) -> DocumentRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM document WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_document(row)
+
+    def get_document_by_url(self, canonical_url: str) -> DocumentRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM document WHERE canonical_url = ?",
+                (canonical_url,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_document(row)
+
+    def document_exists(self, canonical_url: str) -> bool:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT 1 FROM document WHERE canonical_url = ? LIMIT 1",
+                (canonical_url,),
+            ).fetchone()
+        return row is not None
+
+    def list_documents(
+        self,
+        *,
+        source_id: str | None = None,
+        release_family_id: str | None = None,
+        country_code: str | None = None,
+        topic_code: str | None = None,
+        status: str | None = None,
+        document_type: str | None = None,
+        limit: int = 50,
+        days: int | None = None,
+    ) -> list[DocumentRecord]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if source_id:
+            conditions.append("source_id = ?")
+            params.append(source_id)
+        if release_family_id:
+            conditions.append("release_family_id = ?")
+            params.append(release_family_id)
+        if country_code:
+            conditions.append("country_code = ?")
+            params.append(country_code)
+        if topic_code:
+            conditions.append("topic_code = ?")
+            params.append(topic_code)
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        if document_type:
+            conditions.append("document_type = ?")
+            params.append(document_type)
+        if days is not None:
+            cutoff = (date.today() - timedelta(days=days)).isoformat()
+            conditions.append("published_date >= ?")
+            params.append(cutoff)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.append(limit)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM document
+                {where}
+                ORDER BY published_date DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._row_to_document(row) for row in rows]
+
+    def _row_to_document(self, row: sqlite3.Row) -> DocumentRecord:
+        return DocumentRecord(
+            document_id=row["document_id"],
+            release_family_id=row["release_family_id"] or "",
+            source_id=row["source_id"],
+            canonical_url=row["canonical_url"],
+            title=row["title"],
+            subtitle=row["subtitle"] or "",
+            document_type=row["document_type"],
+            mime_type=row["mime_type"],
+            language_code=row["language_code"],
+            country_code=row["country_code"],
+            topic_code=row["topic_code"],
+            published_date=row["published_date"],
+            published_at=row["published_at"] or "",
+            status=row["status"],
+            version_no=int(row["version_no"]),
+            parent_document_id=row["parent_document_id"] or "",
+            hash_sha256=row["hash_sha256"] or "",
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def upsert_document_blob(self, record: DocumentBlobRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO document_blob (
+                    document_blob_id, document_id, blob_role,
+                    storage_path, content_text, content_bytes,
+                    byte_size, encoding, parser_name, parser_version,
+                    extracted_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.document_blob_id,
+                    record.document_id,
+                    record.blob_role,
+                    record.storage_path or None,
+                    record.content_text or None,
+                    record.content_bytes,
+                    record.byte_size,
+                    record.encoding or None,
+                    record.parser_name or None,
+                    record.parser_version or None,
+                    record.extracted_at or None,
+                ),
+            )
+
+    def get_document_blob(
+        self,
+        document_id: str,
+        blob_role: str,
+    ) -> DocumentBlobRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM document_blob WHERE document_id = ? AND blob_role = ?",
+                (document_id, blob_role),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_document_blob(row)
+
+    def list_document_blobs(self, document_id: str) -> list[DocumentBlobRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT * FROM document_blob WHERE document_id = ? ORDER BY blob_role",
+                (document_id,),
+            ).fetchall()
+        return [self._row_to_document_blob(row) for row in rows]
+
+    def _row_to_document_blob(self, row: sqlite3.Row) -> DocumentBlobRecord:
+        return DocumentBlobRecord(
+            document_blob_id=row["document_blob_id"],
+            document_id=row["document_id"],
+            blob_role=row["blob_role"],
+            storage_path=row["storage_path"] or "",
+            content_text=row["content_text"] or "",
+            content_bytes=row["content_bytes"],
+            byte_size=int(row["byte_size"]) if row["byte_size"] is not None else 0,
+            encoding=row["encoding"] or "",
+            parser_name=row["parser_name"] or "",
+            parser_version=row["parser_version"] or "",
+            extracted_at=row["extracted_at"] or "",
+        )
+
+    def upsert_document_extra(self, record: DocumentExtraRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO document_extra (
+                    document_id, extra_json
+                ) VALUES (?, ?)
+                """,
+                (
+                    record.document_id,
+                    json.dumps(record.extra_json, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+
+    def get_document_extra(self, document_id: str) -> DocumentExtraRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM document_extra WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return DocumentExtraRecord(
+            document_id=row["document_id"],
+            extra_json=json.loads(row["extra_json"]),
+        )
+
+    def seed_doc_sources_and_families(self, source_configs: dict[str, dict[str, dict[str, Any]]]) -> None:
+        """Populate doc_source and doc_release_family from scraper config dicts.
+
+        Args:
+            source_configs: Mapping of region label to source_id→config dicts,
+                e.g. {"us": {"us_bls_cpi": {...}, ...}, "cn": {...}}.
+        """
+        now = utc_now().isoformat()
+        seen_sources: dict[str, DocSourceRecord] = {}
+
+        for _region, sources in source_configs.items():
+            for source_id, cfg in sources.items():
+                institution = cfg.get("institution", "")
+                country = cfg.get("country", "")
+                language = cfg.get("language", "en")
+
+                # Derive source-level key: e.g. "us.bls" from "us_bls_cpi"
+                parts = source_id.split("_")
+                source_key = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else source_id
+
+                if source_key not in seen_sources:
+                    source_type = self._infer_source_type(institution)
+                    homepage = cfg.get("url", "")
+                    seen_sources[source_key] = DocSourceRecord(
+                        source_id=source_key,
+                        source_code=parts[1] if len(parts) >= 2 else source_id,
+                        source_name=institution,
+                        source_type=source_type,
+                        country_code=country,
+                        default_language_code=language,
+                        homepage_url=homepage,
+                        is_active=True,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    self.upsert_doc_source(seen_sources[source_key])
+
+                # Release family
+                release_code = "_".join(parts[2:]) if len(parts) > 2 else parts[-1]
+                data_category = cfg.get("data_category", "")
+                frequency = self._infer_frequency(data_category)
+
+                family = DocReleaseFamilyRecord(
+                    release_family_id=source_id.replace("_", "."),
+                    source_id=source_key,
+                    release_code=release_code,
+                    release_name=cfg.get("data_category", release_code).replace("_", " ").title(),
+                    topic_code=data_category,
+                    country_code=country,
+                    frequency=frequency,
+                    default_language_code=language,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.upsert_doc_release_family(family)
+
+    @staticmethod
+    def _infer_source_type(institution: str) -> str:
+        lower = institution.lower()
+        central_banks = [
+            "federal reserve", "pboc", "人民银行", "bank of japan", "boj",
+            "ecb", "bank of england",
+        ]
+        if any(cb in lower for cb in central_banks):
+            return "central_bank"
+        stats = ["统计局", "eurostat", "census", "cabinet office"]
+        if any(s in lower for s in stats):
+            return "statistics_bureau"
+        intl = ["imf", "world bank", "oecd", "s&p global", "caixin"]
+        if any(i in lower for i in intl):
+            return "intl_org"
+        return "government_agency"
+
+    @staticmethod
+    def _infer_frequency(data_category: str) -> str:
+        monthly = [
+            "inflation", "employment", "consumption", "trade",
+            "industrial_production", "monetary", "interest_rate",
+            "money_supply", "fx_reserves", "fiscal_policy",
+            "bond_issuance", "capital_flows", "housing",
+            "consumer_sentiment", "manufacturing",
+        ]
+        if data_category in monthly:
+            return "monthly"
+        if data_category in ("gdp", "investment"):
+            return "quarterly"
+        if data_category in ("monetary_policy", "economic_conditions"):
+            return "irregular"
+        return "irregular"

@@ -30,6 +30,9 @@ from analyst.ingestion.scrapers.rateprobability import RateProbabilityClient
 logger = logging.getLogger(__name__)
 from analyst.storage import (
     CentralBankCommunicationRecord,
+    DocumentBlobRecord,
+    DocumentExtraRecord,
+    DocumentRecord,
     IndicatorObservationRecord,
     MarketPriceRecord,
     NewsArticleRecord,
@@ -457,24 +460,116 @@ class NewsIngestionClient:
 
 
 class GovReportIngestionClient:
-    """Fetches government reports and stores them as news articles."""
+    """Fetches government reports and stores them into the normalized
+    document tables (doc_source / doc_release_family / document /
+    document_blob / document_extra) **and** the legacy news_articles
+    table so existing consumers keep working."""
 
     def __init__(self) -> None:
         self._client = GovReportClient()
+        self._seeded = False
+
+    def _ensure_seed(self, store: SQLiteEngineStore) -> None:
+        if self._seeded:
+            return
+        from analyst.ingestion.scrapers.gov_report import (
+            _US_SOURCES,
+            _CN_SOURCES,
+            _JP_SOURCES,
+            _EU_SOURCES,
+        )
+        store.seed_doc_sources_and_families({
+            "us": _US_SOURCES,
+            "cn": _CN_SOURCES,
+            "jp": _JP_SOURCES,
+            "eu": _EU_SOURCES,
+        })
+        self._seeded = True
+
+    @staticmethod
+    def _gov_document_type(data_category: str) -> str:
+        """Map data_category to a valid document.document_type value."""
+        mapping = {
+            "monetary_policy": "statement",
+            "economic_conditions": "bulletin",
+            "speeches": "speech",
+            "press_releases": "press_release",
+        }
+        return mapping.get(data_category, "release")
 
     def refresh(self, store: SQLiteEngineStore) -> RefreshStats:
+        self._ensure_seed(store)
         items = self._client.fetch_all()
         count = 0
+        now_iso = datetime.now(UTC).isoformat()
         for item in items:
             try:
                 url_hash = hashlib.sha256(item.url.encode("utf-8")).hexdigest()
+
+                # --- Normalized document storage ---
+                if not store.document_exists(item.url):
+                    doc_id = url_hash[:16]
+                    release_family_id = item.source_id.replace("_", ".")
+                    parts = item.source_id.split("_")
+                    source_key = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else item.source_id
+                    published_date = item.published_at or datetime.now(UTC).strftime("%Y-%m-%d")
+
+                    doc = DocumentRecord(
+                        document_id=doc_id,
+                        release_family_id=release_family_id,
+                        source_id=source_key,
+                        canonical_url=item.url,
+                        title=item.title,
+                        subtitle="",
+                        document_type=self._gov_document_type(item.data_category),
+                        mime_type="text/html",
+                        language_code=item.language,
+                        country_code=item.country,
+                        topic_code=item.data_category,
+                        published_date=published_date,
+                        published_at=now_iso,
+                        status="published",
+                        version_no=1,
+                        parent_document_id="",
+                        hash_sha256=url_hash,
+                        created_at=now_iso,
+                        updated_at=now_iso,
+                    )
+                    store.upsert_document(doc)
+
+                    if item.content_markdown:
+                        blob = DocumentBlobRecord(
+                            document_blob_id=f"{doc_id}_md",
+                            document_id=doc_id,
+                            blob_role="markdown",
+                            storage_path="",
+                            content_text=item.content_markdown,
+                            content_bytes=None,
+                            byte_size=len(item.content_markdown.encode("utf-8")),
+                            encoding="utf-8",
+                            parser_name="markdownify",
+                            parser_version="",
+                            extracted_at=now_iso,
+                        )
+                        store.upsert_document_blob(blob)
+
+                    if item.raw_json or item.importance:
+                        extra_data = dict(item.raw_json) if item.raw_json else {}
+                        extra_data["importance"] = item.importance
+                        extra_data["institution"] = item.institution
+                        extra_data["description"] = item.description
+                        store.upsert_document_extra(DocumentExtraRecord(
+                            document_id=doc_id,
+                            extra_json=extra_data,
+                        ))
+
+                # --- Legacy news_articles storage ---
                 if store.news_article_exists(url_hash):
                     continue
                 ts = 0
                 if item.published_at:
                     try:
-                        from datetime import datetime as _dt
-                        dt = _dt.strptime(item.published_at, "%Y-%m-%d")
+                        dt = datetime.strptime(item.published_at, "%Y-%m-%d")
                         ts = int(dt.replace(tzinfo=UTC).timestamp())
                     except ValueError:
                         ts = int(datetime.now(UTC).timestamp())
