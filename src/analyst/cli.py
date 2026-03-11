@@ -139,6 +139,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the final saved-artifact manifest as JSON.",
     )
 
+    # -- RAG subcommands ----------------------------------------
+    rag_parser = subparsers.add_parser("rag")
+    rag_sub = rag_parser.add_subparsers(dest="rag_command", required=True)
+    rag_sub.add_parser("calibrate", help="Full rebuild of Milvus from SQLite")
+    rag_sub.add_parser("sync", help="Incremental sync of new SQLite records to Milvus")
+    rag_sub.add_parser("status", help="Show Milvus collection stats and watermarks")
+
     return parser
 
 
@@ -539,6 +546,33 @@ def _run_sales_chat(args: argparse.Namespace) -> int:
         handle_turn(user_text)
 
 
+def _run_rag(args: argparse.Namespace) -> int:
+    from analyst.rag.config import RAGConfig
+    from analyst.rag.embeddings import Embedder
+    from analyst.rag.vector_store import VectorStore
+    from analyst.rag.bridge import MacroIngestionBridge
+
+    cfg = RAGConfig.from_env()
+    store = VectorStore(cfg)
+    store.init_collection()
+    embedder = Embedder(cfg)
+    bridge = MacroIngestionBridge(store, embedder, cfg)
+
+    if args.rag_command == "calibrate":
+        result = bridge.calibrate()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.rag_command == "sync":
+        result = bridge.sync()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.rag_command == "status":
+        result = bridge.status()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -658,6 +692,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_sales_chat(args)
     if args.command == "media-gen":
         return _run_media_gen(args)
+    if args.command == "rag":
+        return _run_rag(args)
 
     parser.error("unknown command")
     return 2

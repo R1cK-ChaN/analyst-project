@@ -480,6 +480,42 @@ _NYFED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "NYFED_OBFR": ("us.rates.obfr", "Overnight Bank Funding Rate",     "percent", "daily", "none"),
 }
 
+_IMF_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "IMF_CN_CPI":         ("cn.inflation.cpi",          "China CPI Index",              "index",        "monthly",    "none"),
+    "IMF_CN_GDP":         ("cn.growth.gdp_real",         "China Real GDP (LCU)",         "lcu",          "quarterly",  "none"),
+    "IMF_CN_FX_RESERVES": ("cn.reserves.fx",             "China FX Reserves (USD)",      "millions_usd", "monthly",    "none"),
+    "IMF_JP_CPI":         ("jp.inflation.cpi",           "Japan CPI Index",              "index",        "monthly",    "none"),
+    "IMF_JP_GDP":         ("jp.growth.gdp_real",          "Japan Real GDP (LCU)",         "lcu",          "quarterly",  "none"),
+    "IMF_EU_CPI":         ("eu.inflation.cpi_imf",        "Euro Area CPI Index (IMF)",   "index",        "monthly",    "none"),
+    "IMF_GLOBAL_TRADE":   ("us.trade.exports_fob",        "US Exports FOB (USD)",        "millions_usd", "monthly",    "none"),
+}
+
+_EUROSTAT_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "ESTAT_HICP":          ("eu.inflation.hicp",            "EA HICP YoY %",                     "percent",  "monthly",    "none"),
+    "ESTAT_GDP":           ("eu.growth.gdp_qoq",            "EA GDP QoQ %",                      "percent",  "quarterly",  "sa"),
+    "ESTAT_UNEMPLOYMENT":  ("eu.employment.unemployment",    "EA Unemployment Rate",              "percent",  "monthly",    "sa"),
+    "ESTAT_INDPRO":        ("eu.growth.industrial_production", "EA Industrial Production MoM",    "percent",  "monthly",    "sa"),
+    "ESTAT_TRADE_BALANCE": ("eu.trade.balance",              "EA Trade Balance",                  "millions_eur", "monthly", "none"),
+}
+
+_BIS_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "BIS_POLICY_US": ("us.rates.policy_bis",     "US Policy Rate (BIS)",          "percent", "monthly",    "none"),
+    "BIS_POLICY_EU": ("eu.rates.policy_bis",     "ECB Policy Rate (BIS)",         "percent", "monthly",    "none"),
+    "BIS_POLICY_JP": ("jp.rates.policy_bis",     "BOJ Policy Rate (BIS)",         "percent", "monthly",    "none"),
+    "BIS_POLICY_CN": ("cn.rates.policy_bis",     "PBOC Policy Rate (BIS)",        "percent", "monthly",    "none"),
+    "BIS_POLICY_GB": ("gb.rates.policy_bis",     "BOE Policy Rate (BIS)",         "percent", "monthly",    "none"),
+    "BIS_EER_US":    ("us.fx.eer_real",          "US Real Effective Exchange Rate",  "index", "monthly",    "none"),
+    "BIS_EER_CN":    ("cn.fx.eer_real",          "CN Real Effective Exchange Rate",  "index", "monthly",    "none"),
+    "BIS_EER_EU":    ("eu.fx.eer_real",          "EU Real Effective Exchange Rate",  "index", "monthly",    "none"),
+    "BIS_CREDIT_GAP_US": ("us.credit.gap",       "US Credit-to-GDP Gap",           "percent", "quarterly", "none"),
+    "BIS_CREDIT_GAP_CN": ("cn.credit.gap",       "CN Credit-to-GDP Gap",           "percent", "quarterly", "none"),
+    "BIS_PROPERTY_US":   ("us.property.real",     "US Real Property Prices",        "index",   "quarterly", "none"),
+    "BIS_PROPERTY_CN":   ("cn.property.real",     "CN Real Property Prices",        "index",   "quarterly", "none"),
+}
+
 _VINTAGE_FAMILY_IDS = {"GDP", "GDPC1", "CPIAUCSL", "PAYEMS", "UNRATE", "INDPRO", "RSAFS"}
 
 _OBS_DOC_LINKS: list[tuple[str, str, str]] = [
@@ -493,6 +529,10 @@ _OBS_DOC_LINKS: list[tuple[str, str, str]] = [
     ("us.growth.retail_sales",         "us.census.retail",  "produced_by"),
     ("us.growth.industrial_production","us.fed.ip",         "produced_by"),
     ("us.fiscal.debt_outstanding",     "us.treasury.debt",  "produced_by"),
+    # Eurostat numeric ↔ Eurostat publications
+    ("eu.inflation.hicp",             "eu.eurostat.cpi",        "produced_by"),
+    ("eu.growth.gdp_qoq",            "eu.eurostat.gdp",        "produced_by"),
+    ("eu.employment.unemployment",    "eu.eurostat.employment",  "produced_by"),
 ]
 
 _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
@@ -502,6 +542,9 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("treasury_fiscal", "treasury_fiscal", "Treasury Fiscal Data",             "government_agency", "US", "https://fiscaldata.treasury.gov",                                "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"),
     ("nyfed",           "nyfed",           "Federal Reserve Bank of New York", "central_bank",      "US", "https://www.newyorkfed.org",                                     "https://markets.newyorkfed.org/api"),
     ("rateprobability", "rateprobability", "rateprobability.com",              "market_data",       "US", "https://rateprobability.com",                                    "https://rateprobability.com/api"),
+    ("imf",             "imf",             "International Monetary Fund",      "data_aggregator",   "US", "https://www.imf.org",                                           "https://dataservices.imf.org/REST/SDMX_JSON.svc"),
+    ("eurostat",        "eurostat",        "Eurostat",                         "government_agency", "EU", "https://ec.europa.eu/eurostat",                                  "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"),
+    ("bis",             "bis",             "Bank for International Settlements","data_aggregator",  "CH", "https://www.bis.org",                                           "https://data.bis.org/api/v2"),
 ]
 
 
@@ -4574,6 +4617,9 @@ class SQLiteEngineStore:
             ("eia", _EIA_FAMILY_MAP),
             ("treasury_fiscal", _TREASURY_FAMILY_MAP),
             ("nyfed", _NYFED_FAMILY_MAP),
+            ("imf", _IMF_FAMILY_MAP),
+            ("eurostat", _EUROSTAT_FAMILY_MAP),
+            ("bis", _BIS_FAMILY_MAP),
         ]
         for source_id, family_map in source_maps:
             for series_id, (fam_id, canon_name, unit, freq, sa) in family_map.items():

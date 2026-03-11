@@ -25,6 +25,7 @@ from analyst.tools import (
     build_portfolio_holdings_tool,
     build_portfolio_risk_tool,
     build_portfolio_sync_tool,
+    build_rag_search_tool,
     build_rate_expectations_tool,
     build_reference_rates_tool,
     build_vix_regime_tool,
@@ -77,11 +78,13 @@ class LiveAnalystEngine:
         provider: LLMProvider | None = None,
         ingestion: IngestionOrchestrator | None = None,
         config: LiveEngineConfig | None = None,
+        retriever: Any = None,
     ) -> None:
         self.store = store
         self.provider = provider
         self.ingestion = ingestion or IngestionOrchestrator(store)
         self.config = config or LiveEngineConfig()
+        self.retriever = retriever
         self._last_calendar_refresh: float = 0.0
 
     def _ensure_calendar_fresh(self, *, max_age_seconds: int = 3600) -> None:
@@ -358,6 +361,8 @@ class LiveAnalystEngine:
             },
             handler=self._tool_search_news,
         ))
+        if self.retriever is not None:
+            kit.add(build_rag_search_tool(self.retriever))
         kit.add(build_live_calendar_tool(self.store))
         kit.add(build_live_news_tool())
         kit.add(build_article_tool())

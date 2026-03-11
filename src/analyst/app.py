@@ -120,5 +120,17 @@ def build_live_engine_app(
 ) -> LiveAnalystApplication:
     store = SQLiteEngineStore(db_path=db_path)
     ingestion = IngestionOrchestrator(store)
-    engine = LiveAnalystEngine(store=store, provider=provider, ingestion=ingestion)
+
+    # Graceful RAG init — if Milvus unavailable, engine works without it.
+    retriever = None
+    try:
+        from analyst.rag import MacroRetriever
+
+        retriever = MacroRetriever.from_env()
+    except Exception:
+        pass
+
+    engine = LiveAnalystEngine(
+        store=store, provider=provider, ingestion=ingestion, retriever=retriever
+    )
     return LiveAnalystApplication(engine=engine)
