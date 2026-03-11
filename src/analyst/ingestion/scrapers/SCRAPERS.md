@@ -1087,14 +1087,23 @@ money supply (M1/M2/M3), deposit facility rate, and EUR/USD exchange rate.
 
 ### OECDClient
 
-Fetches **composite leading indicators and confidence data** from the OECD
-SDMX REST v2 API — CLI for US, CN, JP, EA, plus US consumer and business
-confidence.
+Fetches OECD Data Explorer data through the SDMX REST API. The client now
+supports both the original curated macro series and catalogue-driven discovery
+across OECD Data Explorer dataflows.
 
-**Base URL:** `https://sdmx.oecd.org/public/rest/v2/data/dataflow`
+**Base URL:** `https://sdmx.oecd.org/public/rest`
 
 | Method | Returns | Description |
 |--------|---------|-------------|
+| `list_dataflows(*, agency_id, version)` | `list[OECDDataflow]` | Enumerate OECD/Data Explorer dataflows from the live catalogue |
+| `search_dataflows(query, *, agency_id, limit)` | `list[OECDDataflow]` | Search the live OECD catalogue by id/name/description |
+| `get_dataflow(dataflow_id, *, agency_id, version)` | `OECDDataflow` | Resolve one dataflow and its live version metadata |
+| `get_structure(dataflow_id, *, agency_id, version)` | `OECDDataStructure` | Resolve datastructure and codelists for a dataflow |
+| `summarize_structure(dataflow_id, *, agency_id, version)` | `OECDStructureSummary` | Compact summary for inspection / config generation |
+| `build_key(dataflow_id, filters, *, agency_id, version, use_defaults)` | `str` | Build an exact SDMX series key from dimension filters |
+| `enumerate_series(dataflow_id, *, agency_id, version, key, filters, observation_limit, max_series)` | `list[OECDSeries]` | Sample concrete series from a dataflow |
+| `series_to_filters(dataflow_id, series, *, agency_id, version)` | `dict[str, str]` | Convert a sampled series back into exact dimension filters |
+| `fetch_data(dataflow_id, *, agency_id, version, key, filters, series_id, start_period, end_period, limit)` | `list[OECDObservation]` | Fetch observations from a dataflow |
 | `get_data(dataflow_id, version, key, *, series_id, start_period, limit)` | `list[OECDObservation]` | Observations from an SDMX dataflow with dimension key filter in URL path |
 
 **`OECDObservation` fields:**
@@ -1105,6 +1114,7 @@ confidence.
 | `date` | `str` | `"2024-12-01"` |
 | `value` | `float` | `100.1` |
 | `dataflow` | `str` | `"DSD_STES@DF_CLI"` |
+| `series_key` | `str` | `"USA.M.LI.IX._Z.NOR.IX._Z.H"` |
 
 **Key series configured in `sources.py`:**
 
@@ -1116,10 +1126,17 @@ confidence.
 | `OECD_CLI_EU` | DSD_STES@DF_CLI | 4.1 | G4E.M.LI.IX._Z.NOR.IX._Z.H | Major 4 EU CLI |
 | `OECD_CONSUMER_CONF_US` | DSD_STES@DF_CS | 4.0 | USA.M.CCICP.\*.\*.\*.\*.\*.\* | US Consumer Confidence (OECD) |
 | `OECD_BUSINESS_CONF_US` | DSD_STES@DF_BTS | 4.0 | USA.M.BCICP.\*.\*.\*.\*.\*.\* | US Business Confidence (OECD) |
+| `OECD_UNEMP_US` | DSD_KEI@DF_KEI | 4.0 | USA.M.UNEMP.PT_LF._T.Y._Z | US Unemployment Rate |
 
 **Auth:** None — fully open.
 **Rate limit:** 1.0 s delay between requests.
 **Storage:** `indicators` table (source `oecd`).
+
+**Catalogue support:** `OECDIngestionClient` can now:
+- list OECD dataflows across Data Explorer
+- summarize live datastructures
+- generate reviewable `OECDSeriesConfig` snippets from sampled series
+- dynamically ingest latest observations from arbitrary OECD dataflows with non-hardcoded series ids
 
 ---
 

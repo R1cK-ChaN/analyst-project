@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -301,13 +301,146 @@ ECB_SERIES = {
     "eurusd":        {"dataflow": "EXR", "key": "M.USD.EUR.SP00.A",              "series_id": "ECB_EURUSD",           "category": "fx"},
 }
 
+@dataclass(frozen=True)
+class OECDSeriesConfig:
+    dataflow: str
+    series_id: str
+    category: str
+    agency_id: str = OECDClient.DEFAULT_AGENCY_ID
+    version: str = "latest"
+    key: str | None = None
+    filters: dict[str, str] = field(default_factory=dict)
+
+
+def _slugify_oecd_token(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return slug or "oecd"
+
+
+def _generated_oecd_series_id(agency_id: str, dataflow_id: str, key: str) -> str:
+    slug = _slugify_oecd_token(dataflow_id)[:48]
+    digest = hashlib.sha1(f"{agency_id}|{dataflow_id}|{key}".encode("utf-8")).hexdigest()[:12].upper()
+    return f"OECD_AUTO_{slug.upper()}_{digest}"
+
+
+def _generated_oecd_config_key(dataflow_id: str, key: str) -> str:
+    slug = _slugify_oecd_token(dataflow_id)[:48]
+    digest = hashlib.sha1(f"{dataflow_id}|{key}".encode("utf-8")).hexdigest()[:10]
+    return f"auto_{slug}_{digest}"
+
+
+def render_oecd_series_configs(series_configs: dict[str, OECDSeriesConfig]) -> str:
+    lines = ["generated_oecd_series = {"]
+    for config_key, cfg in sorted(series_configs.items()):
+        lines.append(f'    "{config_key}": OECDSeriesConfig(')
+        lines.append(f'        dataflow="{cfg.dataflow}",')
+        lines.append(f'        series_id="{cfg.series_id}",')
+        lines.append(f'        category="{cfg.category}",')
+        lines.append(f'        agency_id="{cfg.agency_id}",')
+        lines.append(f'        version="{cfg.version}",')
+        if cfg.key is not None:
+            lines.append(f'        key="{cfg.key}",')
+        if cfg.filters:
+            lines.append("        filters={")
+            for dim_id, dim_value in sorted(cfg.filters.items()):
+                lines.append(f'            "{dim_id}": "{dim_value}",')
+            lines.append("        },")
+        lines.append("    ),")
+    lines.append("}")
+    return "\n".join(lines)
+
+
 OECD_SERIES = {
-    "cli_us":        {"dataflow": "DSD_STES@DF_CLI", "version": "4.1", "key": "USA.M.LI.IX._Z.NOR.IX._Z.H", "series_id": "OECD_CLI_US",           "category": "leading"},
-    "cli_cn":        {"dataflow": "DSD_STES@DF_CLI", "version": "4.1", "key": "CHN.M.LI.IX._Z.NOR.IX._Z.H", "series_id": "OECD_CLI_CN",           "category": "leading"},
-    "cli_jp":        {"dataflow": "DSD_STES@DF_CLI", "version": "4.1", "key": "JPN.M.LI.IX._Z.NOR.IX._Z.H", "series_id": "OECD_CLI_JP",           "category": "leading"},
-    "cli_eu":        {"dataflow": "DSD_STES@DF_CLI", "version": "4.1", "key": "G4E.M.LI.IX._Z.NOR.IX._Z.H", "series_id": "OECD_CLI_EU",           "category": "leading"},
-    "consumer_conf": {"dataflow": "DSD_STES@DF_CS",  "version": "4.0", "key": "USA.M.CCICP.*.*.*.*.*.*",     "series_id": "OECD_CONSUMER_CONF_US", "category": "sentiment"},
-    "business_conf": {"dataflow": "DSD_STES@DF_BTS", "version": "4.0", "key": "USA.M.BCICP.*.*.*.*.*.*",     "series_id": "OECD_BUSINESS_CONF_US", "category": "sentiment"},
+    "cli_us": OECDSeriesConfig(
+        dataflow="DSD_STES@DF_CLI",
+        series_id="OECD_CLI_US",
+        category="leading",
+        filters={
+            "REF_AREA": "USA",
+            "FREQ": "M",
+            "MEASURE": "LI",
+            "UNIT_MEASURE": "IX",
+            "ACTIVITY": "_Z",
+            "ADJUSTMENT": "NOR",
+            "TRANSFORMATION": "IX",
+            "TIME_HORIZ": "_Z",
+            "METHODOLOGY": "H",
+        },
+    ),
+    "cli_cn": OECDSeriesConfig(
+        dataflow="DSD_STES@DF_CLI",
+        series_id="OECD_CLI_CN",
+        category="leading",
+        filters={
+            "REF_AREA": "CHN",
+            "FREQ": "M",
+            "MEASURE": "LI",
+            "UNIT_MEASURE": "IX",
+            "ACTIVITY": "_Z",
+            "ADJUSTMENT": "NOR",
+            "TRANSFORMATION": "IX",
+            "TIME_HORIZ": "_Z",
+            "METHODOLOGY": "H",
+        },
+    ),
+    "cli_jp": OECDSeriesConfig(
+        dataflow="DSD_STES@DF_CLI",
+        series_id="OECD_CLI_JP",
+        category="leading",
+        filters={
+            "REF_AREA": "JPN",
+            "FREQ": "M",
+            "MEASURE": "LI",
+            "UNIT_MEASURE": "IX",
+            "ACTIVITY": "_Z",
+            "ADJUSTMENT": "NOR",
+            "TRANSFORMATION": "IX",
+            "TIME_HORIZ": "_Z",
+            "METHODOLOGY": "H",
+        },
+    ),
+    "cli_eu": OECDSeriesConfig(
+        dataflow="DSD_STES@DF_CLI",
+        series_id="OECD_CLI_EU",
+        category="leading",
+        filters={
+            "REF_AREA": "G4E",
+            "FREQ": "M",
+            "MEASURE": "LI",
+            "UNIT_MEASURE": "IX",
+            "ACTIVITY": "_Z",
+            "ADJUSTMENT": "NOR",
+            "TRANSFORMATION": "IX",
+            "TIME_HORIZ": "_Z",
+            "METHODOLOGY": "H",
+        },
+    ),
+    "consumer_conf": OECDSeriesConfig(
+        dataflow="DSD_STES@DF_CS",
+        series_id="OECD_CONSUMER_CONF_US",
+        category="sentiment",
+        key="USA.M.CCICP.*.*.*.*.*.*",
+    ),
+    "business_conf": OECDSeriesConfig(
+        dataflow="DSD_STES@DF_BTS",
+        series_id="OECD_BUSINESS_CONF_US",
+        category="sentiment",
+        key="USA.M.BCICP.*.*.*.*.*.*",
+    ),
+    "unemployment_us": OECDSeriesConfig(
+        dataflow="DSD_KEI@DF_KEI",
+        series_id="OECD_UNEMP_US",
+        category="employment",
+        filters={
+            "REF_AREA": "USA",
+            "FREQ": "M",
+            "MEASURE": "UNEMP",
+            "UNIT_MEASURE": "PT_LF",
+            "ACTIVITY": "_T",
+            "ADJUSTMENT": "Y",
+            "TRANSFORMATION": "_Z",
+        },
+    ),
 }
 
 WORLDBANK_SERIES = {
@@ -686,8 +819,40 @@ class ECBIngestionClient:
 
 
 class OECDIngestionClient:
-    def __init__(self) -> None:
-        self.client = OECDClient()
+    def __init__(
+        self,
+        client: OECDClient | None = None,
+        *,
+        series_configs: dict[str, OECDSeriesConfig] | None = None,
+    ) -> None:
+        self.client = client or OECDClient()
+        self.series_configs = series_configs or OECD_SERIES
+        self._resolved_configs: dict[str, tuple[str, str]] = {}
+
+    def _resolve_request(self, cfg: OECDSeriesConfig) -> tuple[str, str]:
+        cached = self._resolved_configs.get(cfg.series_id)
+        if cached is not None:
+            return cached
+
+        dataflow = self.client.get_dataflow(
+            cfg.dataflow,
+            agency_id=cfg.agency_id,
+            version=cfg.version,
+        )
+        if cfg.key:
+            resolved = (dataflow.version, cfg.key)
+        else:
+            resolved = (
+                dataflow.version,
+                self.client.build_key(
+                    cfg.dataflow,
+                    cfg.filters,
+                    agency_id=cfg.agency_id,
+                    version=dataflow.version,
+                ),
+            )
+        self._resolved_configs[cfg.series_id] = resolved
+        return resolved
 
     def refresh(
         self,
@@ -696,16 +861,18 @@ class OECDIngestionClient:
         family_lookup: dict[tuple[str, str], str] | None = None,
     ) -> RefreshStats:
         count = 0
-        for key, cfg in OECD_SERIES.items():
+        for key, cfg in self.series_configs.items():
             try:
-                observations = self.client.get_data(
-                    cfg["dataflow"],
-                    cfg["version"],
-                    cfg["key"],
-                    series_id=cfg["series_id"],
+                resolved_version, resolved_key = self._resolve_request(cfg)
+                observations = self.client.fetch_data(
+                    cfg.dataflow,
+                    agency_id=cfg.agency_id,
+                    version=resolved_version,
+                    key=resolved_key,
+                    series_id=cfg.series_id,
                     limit=30,
                 )
-                fam_id = family_lookup.get(("oecd", cfg["series_id"])) if family_lookup else None
+                fam_id = family_lookup.get(("oecd", cfg.series_id)) if family_lookup else None
                 for obs in observations:
                     store.upsert_indicator_observation(
                         IndicatorObservationRecord(
@@ -713,7 +880,13 @@ class OECDIngestionClient:
                             source="oecd",
                             date=obs.date,
                             value=obs.value,
-                            metadata={"category": cfg["category"], "dataflow": obs.dataflow},
+                            metadata={
+                                "category": cfg.category,
+                                "dataflow": obs.dataflow,
+                                "agency_id": obs.agency_id,
+                                "series_key": obs.series_key or resolved_key,
+                                "dimensions": obs.dimensions,
+                            },
                             obs_family_id=fam_id,
                         )
                     )
@@ -722,6 +895,182 @@ class OECDIngestionClient:
                 logger.warning("OECD refresh failed for %s", key, exc_info=True)
             time.sleep(1.0)
         return RefreshStats(source="oecd", count=count)
+
+    def list_catalog_dataflows(
+        self,
+        *,
+        query: str | None = None,
+        agency_prefix: str = "OECD",
+        limit: int | None = None,
+    ) -> list[Any]:
+        dataflows = self.client.list_dataflows(agency_id="all")
+        if agency_prefix:
+            dataflows = [dataflow for dataflow in dataflows if dataflow.agency_id.startswith(agency_prefix)]
+        if query:
+            needle = query.lower().strip()
+            dataflows = [
+                dataflow for dataflow in dataflows
+                if needle in dataflow.id.lower()
+                or needle in dataflow.name.lower()
+                or needle in dataflow.description.lower()
+            ]
+        dataflows.sort(key=lambda item: (item.agency_id, item.id, item.version))
+        if limit is not None:
+            return dataflows[:limit]
+        return dataflows
+
+    def resolve_catalog_dataflows(
+        self,
+        *,
+        dataflow_ids: list[str] | None = None,
+        agency_id: str | None = None,
+        query: str | None = None,
+        agency_prefix: str = "OECD",
+        limit: int | None = None,
+    ) -> list[Any]:
+        if dataflow_ids:
+            if agency_id:
+                return [
+                    self.client.get_dataflow(dataflow_id, agency_id=agency_id, version="latest")
+                    for dataflow_id in dataflow_ids
+                ]
+            allowed = set(dataflow_ids)
+            matches = [
+                dataflow for dataflow in self.list_catalog_dataflows(
+                    agency_prefix=agency_prefix,
+                    limit=None,
+                )
+                if dataflow.id in allowed
+            ]
+            ordered: list[Any] = []
+            seen: set[tuple[str, str]] = set()
+            for dataflow_id in dataflow_ids:
+                for dataflow in matches:
+                    marker = (dataflow.agency_id, dataflow.id)
+                    if dataflow.id == dataflow_id and marker not in seen:
+                        ordered.append(dataflow)
+                        seen.add(marker)
+            return ordered[:limit] if limit is not None else ordered
+        return self.list_catalog_dataflows(query=query, agency_prefix=agency_prefix, limit=limit)
+
+    def get_structure_summary(
+        self,
+        dataflow_id: str,
+        *,
+        agency_id: str = OECDClient.DEFAULT_AGENCY_ID,
+        version: str = "latest",
+    ) -> Any:
+        return self.client.summarize_structure(dataflow_id, agency_id=agency_id, version=version)
+
+    def generate_catalog_series_configs(
+        self,
+        *,
+        dataflow_ids: list[str] | None = None,
+        agency_id: str | None = None,
+        query: str | None = None,
+        agency_prefix: str = "OECD",
+        dataflow_limit: int | None = 5,
+        series_per_dataflow: int = 3,
+        category: str = "catalog",
+    ) -> dict[str, OECDSeriesConfig]:
+        generated: dict[str, OECDSeriesConfig] = {}
+        for dataflow in self.resolve_catalog_dataflows(
+            dataflow_ids=dataflow_ids,
+            agency_id=agency_id,
+            query=query,
+            agency_prefix=agency_prefix,
+            limit=dataflow_limit,
+        ):
+            series_list = self.client.enumerate_series(
+                dataflow.id,
+                agency_id=dataflow.agency_id,
+                version=dataflow.version,
+                key="all",
+                observation_limit=1,
+                max_series=series_per_dataflow,
+            )
+            for series in series_list:
+                filters = self.client.series_to_filters(
+                    dataflow.id,
+                    series,
+                    agency_id=dataflow.agency_id,
+                    version=dataflow.version,
+                )
+                if not filters:
+                    continue
+                series_key = self.client.build_key(
+                    dataflow.id,
+                    filters,
+                    agency_id=dataflow.agency_id,
+                    version=dataflow.version,
+                )
+                config = OECDSeriesConfig(
+                    dataflow=dataflow.id,
+                    series_id=_generated_oecd_series_id(dataflow.agency_id, dataflow.id, series_key),
+                    category=category,
+                    agency_id=dataflow.agency_id,
+                    version=dataflow.version,
+                    filters=filters,
+                )
+                generated[_generated_oecd_config_key(dataflow.id, series_key)] = config
+        return generated
+
+    def refresh_catalog(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        dataflow_ids: list[str] | None = None,
+        agency_id: str | None = None,
+        query: str | None = None,
+        agency_prefix: str = "OECD",
+        dataflow_limit: int | None = 5,
+        latest_observations: int = 1,
+        sleep_seconds: float = 1.2,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        count = 0
+        for dataflow in self.resolve_catalog_dataflows(
+            dataflow_ids=dataflow_ids,
+            agency_id=agency_id,
+            query=query,
+            agency_prefix=agency_prefix,
+            limit=dataflow_limit,
+        ):
+            try:
+                observations = self.client.fetch_data(
+                    dataflow.id,
+                    agency_id=dataflow.agency_id,
+                    version=dataflow.version,
+                    key="all",
+                    series_id=None,
+                    limit=latest_observations,
+                )
+                for obs in observations:
+                    fam_id = family_lookup.get(("oecd", obs.series_id)) if family_lookup else None
+                    store.upsert_indicator_observation(
+                        IndicatorObservationRecord(
+                            series_id=obs.series_id,
+                            source="oecd",
+                            date=obs.date,
+                            value=obs.value,
+                            metadata={
+                                "category": "catalog",
+                                "dataflow": obs.dataflow,
+                                "dataflow_name": dataflow.name,
+                                "dataflow_description": dataflow.description,
+                                "agency_id": obs.agency_id or dataflow.agency_id,
+                                "series_key": obs.series_key,
+                                "raw_series_key": obs.raw_series_key,
+                                "dimensions": obs.dimensions,
+                            },
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("OECD catalog refresh failed for %s/%s", dataflow.agency_id, dataflow.id, exc_info=True)
+            time.sleep(max(sleep_seconds, 0.0))
+        return RefreshStats(source="oecd_catalog", count=count)
 
 
 class WorldBankIngestionClient:

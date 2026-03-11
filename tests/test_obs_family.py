@@ -177,8 +177,8 @@ class TestObsFamilySchema(unittest.TestCase):
         self.assertEqual(len(sources), 11)  # fred, eia, treasury_fiscal, nyfed, rateprobability, imf, eurostat, bis, ecb, oecd, worldbank
 
         families = self.store.list_obs_families(active_only=False)
-        # 26 FRED + 5 EIA + 3 Treasury + 3 NY Fed + 7 IMF + 5 Eurostat + 12 BIS + 6 ECB + 6 OECD + 4 WB = 77
-        self.assertEqual(len(families), 77)
+        # 26 FRED + 5 EIA + 3 Treasury + 3 NY Fed + 7 IMF + 5 Eurostat + 12 BIS + 6 ECB + 7 OECD + 4 WB = 78
+        self.assertEqual(len(families), 78)
 
         # Spot-check a FRED family
         cpi = self.store.get_obs_family("us.inflation.cpi_all")
@@ -199,12 +199,18 @@ class TestObsFamilySchema(unittest.TestCase):
         self.assertIsNotNone(sofr)
         self.assertEqual(sofr.provider_series_id, "NYFED_SOFR")
 
+        # Spot-check a new OECD family
+        oecd_unemp = self.store.get_obs_family("us.employment.unemployment_oecd")
+        self.assertIsNotNone(oecd_unemp)
+        self.assertEqual(oecd_unemp.provider_series_id, "OECD_UNEMP_US")
+        self.assertEqual(oecd_unemp.source_id, "oecd")
+
     def test_seed_idempotent(self) -> None:
         """Calling seed twice should not duplicate records."""
         self.store.seed_obs_sources_and_families()
         self.store.seed_obs_sources_and_families()
         families = self.store.list_obs_families(active_only=False)
-        self.assertEqual(len(families), 77)
+        self.assertEqual(len(families), 78)
 
     # ── obs_family_id on indicators ────────────────────────────────────
 

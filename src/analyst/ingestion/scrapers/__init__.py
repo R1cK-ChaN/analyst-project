@@ -9,7 +9,19 @@ from .forexfactory import ForexFactoryCalendarClient, ForexFactoryNewsClient
 from .fred import FredClient, FredObservation, FredVintageObservation
 from .imf import IMFClient, IMFObservation, IMFVintageObservation
 from .investing import InvestingCalendarClient, InvestingNewsClient
-from .oecd import OECDClient, OECDObservation
+from .oecd import (
+    OECDAPIError,
+    OECDClient,
+    OECDCode,
+    OECDDataStructure,
+    OECDDataflow,
+    OECDDimension,
+    OECDObservation,
+    OECDRateLimitError,
+    OECDResponseFormatError,
+    OECDSeries,
+    OECDStructureSummary,
+)
 from .bloomberg import BloombergArticle, BloombergArticleClient, BloombergNewsClient
 from .ft import FTArticle, FTArticleClient, FTNewsClient
 from .reuters import ReutersArticle, ReutersArticleClient, ReutersNewsClient
@@ -47,7 +59,16 @@ __all__ = [
     "IMFObservation",
     "IMFVintageObservation",
     "NYFedRate",
+    "OECDAPIError",
+    "OECDCode",
+    "OECDDataStructure",
+    "OECDDataflow",
+    "OECDDimension",
     "OECDObservation",
+    "OECDRateLimitError",
+    "OECDResponseFormatError",
+    "OECDSeries",
+    "OECDStructureSummary",
     "ReutersArticle",
     "ScrapedIndicator",
     "ScrapedMarketQuote",

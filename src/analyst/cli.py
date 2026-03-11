@@ -20,6 +20,8 @@ from analyst.delivery.sales_chat import (
     split_into_bubbles,
 )
 from analyst.memory import build_chat_context, build_sales_context, record_chat_interaction, record_sales_interaction
+from analyst.ingestion.scrapers.oecd import OECDClient
+from analyst.ingestion.sources import OECDIngestionClient, render_oecd_series_configs
 from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
 from analyst.tools import build_image_gen_tool, build_live_photo_tool
 from analyst.tools._image_gen import GeneratedImage, ImageGenConfig, SeedreamImageClient
@@ -86,6 +88,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     news_feeds_parser = subparsers.add_parser("news-feeds")
     news_feeds_parser.add_argument("--category", default=None)
+
+    oecd_dataflows = subparsers.add_parser("oecd-dataflows")
+    oecd_dataflows.add_argument("--query", default=None)
+    oecd_dataflows.add_argument("--limit", type=int, default=20)
+    oecd_dataflows.add_argument("--agency-prefix", default="OECD")
+
+    oecd_structure = subparsers.add_parser("oecd-structure")
+    oecd_structure.add_argument("--dataflow", required=True)
+    oecd_structure.add_argument("--agency-id", default=OECDClient.DEFAULT_AGENCY_ID)
+    oecd_structure.add_argument("--version", default="latest")
+
+    oecd_generate = subparsers.add_parser("oecd-generate-configs")
+    oecd_generate.add_argument("--dataflow", action="append", dest="dataflows", default=None)
+    oecd_generate.add_argument("--agency-id", default=None)
+    oecd_generate.add_argument("--query", default=None)
+    oecd_generate.add_argument("--agency-prefix", default="OECD")
+    oecd_generate.add_argument("--dataflow-limit", type=int, default=3)
+    oecd_generate.add_argument("--series-per-dataflow", type=int, default=3)
+
+    oecd_refresh = subparsers.add_parser("oecd-refresh-catalog")
+    oecd_refresh.add_argument("--dataflow", action="append", dest="dataflows", default=None)
+    oecd_refresh.add_argument("--agency-id", default=None)
+    oecd_refresh.add_argument("--query", default=None)
+    oecd_refresh.add_argument("--agency-prefix", default="OECD")
+    oecd_refresh.add_argument("--dataflow-limit", type=int, default=3)
+    oecd_refresh.add_argument("--latest-observations", type=int, default=1)
+    oecd_refresh.add_argument("--sleep-seconds", type=float, default=1.2)
+    oecd_refresh.add_argument("--db-path", default=None)
 
     portfolio_import = subparsers.add_parser("portfolio-import")
     portfolio_import.add_argument("csv_path", help="Path to CSV file with holdings")
@@ -573,6 +603,68 @@ def _run_rag(args: argparse.Namespace) -> int:
     return 2
 
 
+def _run_oecd_dataflows(args: argparse.Namespace) -> int:
+    ingestion = OECDIngestionClient()
+    dataflows = ingestion.list_catalog_dataflows(
+        query=args.query,
+        agency_prefix=args.agency_prefix,
+        limit=args.limit,
+    )
+    if not dataflows:
+        print("No OECD dataflows found.")
+        return 0
+    for dataflow in dataflows:
+        print(f"{dataflow.agency_id}\t{dataflow.id}\t{dataflow.version}\t{dataflow.name}")
+    return 0
+
+
+def _run_oecd_structure(args: argparse.Namespace) -> int:
+    ingestion = OECDIngestionClient()
+    summary = ingestion.get_structure_summary(
+        args.dataflow,
+        agency_id=args.agency_id,
+        version=args.version,
+    )
+    print(json.dumps(asdict(summary), ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+def _run_oecd_generate_configs(args: argparse.Namespace) -> int:
+    ingestion = OECDIngestionClient()
+    configs = ingestion.generate_catalog_series_configs(
+        dataflow_ids=args.dataflows,
+        agency_id=args.agency_id,
+        query=args.query,
+        agency_prefix=args.agency_prefix,
+        dataflow_limit=args.dataflow_limit,
+        series_per_dataflow=args.series_per_dataflow,
+    )
+    if not configs:
+        print("generated_oecd_series = {}")
+        return 0
+    print(render_oecd_series_configs(configs))
+    return 0
+
+
+def _run_oecd_refresh_catalog(args: argparse.Namespace) -> int:
+    from analyst.storage import SQLiteEngineStore
+
+    store = SQLiteEngineStore(db_path=Path(args.db_path) if args.db_path else None)
+    ingestion = OECDIngestionClient()
+    stats = ingestion.refresh_catalog(
+        store,
+        dataflow_ids=args.dataflows,
+        agency_id=args.agency_id,
+        query=args.query,
+        agency_prefix=args.agency_prefix,
+        dataflow_limit=args.dataflow_limit,
+        latest_observations=args.latest_observations,
+        sleep_seconds=args.sleep_seconds,
+    )
+    print(json.dumps({stats.source: stats.count}, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -682,6 +774,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{feed.category:<16}] {feed.name}")
         print(f"\nTotal: {len(feeds)} feeds")
         return 0
+    if args.command == "oecd-dataflows":
+        return _run_oecd_dataflows(args)
+    if args.command == "oecd-structure":
+        return _run_oecd_structure(args)
+    if args.command == "oecd-generate-configs":
+        return _run_oecd_generate_configs(args)
+    if args.command == "oecd-refresh-catalog":
+        return _run_oecd_refresh_catalog(args)
     if args.command == "portfolio-sync":
         return _run_portfolio_sync(args)
     if args.command == "portfolio-import":

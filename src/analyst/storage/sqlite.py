@@ -534,6 +534,7 @@ _OECD_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "OECD_CLI_EU":           ("eu.leading.cli",             "EA Composite Leading Indicator",  "index",   "monthly", "none"),
     "OECD_CONSUMER_CONF_US": ("us.sentiment.consumer_conf", "US Consumer Confidence (OECD)",   "index",   "monthly", "sa"),
     "OECD_BUSINESS_CONF_US": ("us.sentiment.business_conf", "US Business Confidence (OECD)",   "index",   "monthly", "sa"),
+    "OECD_UNEMP_US":         ("us.employment.unemployment_oecd", "US Unemployment Rate (OECD)", "percent", "monthly", "sa"),
 }
 
 _WORLDBANK_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
