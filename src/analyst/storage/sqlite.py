@@ -1907,17 +1907,27 @@ class SQLiteEngineStore:
         source: str = "fed",
         limit: int = 5,
         days: int = 14,
+        speaker: str | None = None,
+        content_type: str | None = None,
     ) -> list[CentralBankCommunicationRecord]:
         cutoff = int((utc_now() - timedelta(days=days)).timestamp())
+        conditions = ["source = ?", "timestamp >= ?"]
+        params: list[Any] = [source, cutoff]
+        if speaker:
+            conditions.append("LOWER(speaker) LIKE ?")
+            params.append(f"%{speaker.lower()}%")
+        if content_type:
+            conditions.append("content_type = ?")
+            params.append(content_type)
         with self._connection(commit=False) as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT * FROM central_bank_comms
-                WHERE source = ? AND timestamp >= ?
+                WHERE {' AND '.join(conditions)}
                 ORDER BY timestamp DESC, id DESC
                 LIMIT ?
                 """,
-                (source, cutoff, limit),
+                [*params, limit],
             ).fetchall()
         return [self._row_to_comm(row) for row in rows]
 

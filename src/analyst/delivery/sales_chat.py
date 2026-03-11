@@ -16,7 +16,9 @@ from analyst.tools import (
     ToolKit,
     build_article_tool,
     build_country_indicators_tool,
+    build_fed_comms_tool,
     build_image_gen_tool,
+    build_indicator_history_tool,
     build_optional_live_photo_tool,
     build_live_markets_tool,
     build_live_news_tool,
@@ -25,6 +27,8 @@ from analyst.tools import (
     build_portfolio_sync_tool,
     build_rate_expectations_tool,
     build_reference_rates_tool,
+    build_research_search_tool,
+    build_stored_news_tool,
     build_vix_regime_tool,
     build_web_fetch_tool,
     build_web_search_tool,
@@ -146,6 +150,10 @@ def build_chat_tools(
         kit.add(build_portfolio_risk_tool(store))
         kit.add(build_portfolio_holdings_tool(store))
         kit.add(build_portfolio_sync_tool(store))
+        kit.add(build_stored_news_tool(store))
+        kit.add(build_fed_comms_tool(store))
+        kit.add(build_indicator_history_tool(store))
+        kit.add(build_research_search_tool(store))
     kit.add(build_vix_regime_tool())
     if provider is not None:
         from analyst.engine.sub_agent_specs import build_sales_sub_agents

@@ -9,6 +9,10 @@ from ._live_portfolio import build_portfolio_holdings_tool, build_portfolio_risk
 from ._live_rate_expectations import build_rate_expectations_tool
 from ._live_rates import build_reference_rates_tool
 from ._registry import ToolKit
+from ._stored_fed_comms import build_fed_comms_tool
+from ._stored_indicators import build_indicator_history_tool
+from ._stored_news import build_stored_news_tool
+from ._stored_research import build_research_search_tool
 from ._web_fetch import FetchPageConfig, build_web_fetch_tool
 from ._web_search import WebSearchConfig, build_web_search_tool
 
@@ -19,7 +23,9 @@ __all__ = [
     "ToolKit",
     "WebSearchConfig",
     "build_article_tool",
+    "build_fed_comms_tool",
     "build_image_gen_tool",
+    "build_indicator_history_tool",
     "build_country_indicators_tool",
     "build_live_calendar_tool",
     "build_live_photo_tool",
@@ -31,6 +37,8 @@ __all__ = [
     "build_portfolio_sync_tool",
     "build_rate_expectations_tool",
     "build_reference_rates_tool",
+    "build_research_search_tool",
+    "build_stored_news_tool",
     "build_vix_regime_tool",
     "build_web_fetch_tool",
     "build_web_search_tool",
