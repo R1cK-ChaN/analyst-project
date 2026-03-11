@@ -110,8 +110,28 @@ class TestDocumentStorageSchema(unittest.TestCase):
         self.assertEqual(fetched.title, "CPI March 2026")
         expected_published_ms = int(datetime(2026, 3, 11, tzinfo=timezone.utc).timestamp() * 1000)
         self.assertEqual(fetched.published_epoch_ms, expected_published_ms)
+        self.assertEqual(fetched.published_precision, "exact")
         self.assertGreater(fetched.created_epoch_ms, 0)
         self.assertGreater(fetched.updated_epoch_ms, 0)
+
+    def test_date_only_document_round_trip_preserves_date(self) -> None:
+        self._seed_source("us.bls")
+        self._seed_family("us.bls.cpi")
+        doc = self._make_document("doc002", "https://bls.gov/cpi/date-only")
+        doc = DocumentRecord(
+            **{
+                **doc.__dict__,
+                "published_at": "2026-03-11",
+                "published_precision": "date_only",
+            }
+        )
+        self.store.upsert_document(doc)
+        fetched = self.store.get_document("doc002")
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched.published_at, "2026-03-11")
+        self.assertEqual(fetched.published_precision, "date_only")
+        expected_published_ms = int(datetime(2026, 3, 11, tzinfo=timezone.utc).timestamp() * 1000)
+        self.assertEqual(fetched.published_epoch_ms, expected_published_ms)
 
     def test_document_exists(self) -> None:
         self._seed_source("us.bls")

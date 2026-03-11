@@ -59,6 +59,19 @@ class TestExtractDateEn(unittest.TestCase):
             "2026-03-11T12:30:00+00:00",
         )
 
+    def test_embargo_datetime_with_release_code_normalized_to_utc(self):
+        html = (
+            "Transmission of material in this release is embargoed until USDL 26-0289 "
+            "8:30 a.m. (ET) Friday, February 27, 2026"
+        )
+        patterns = [
+            r"embargoed until.*?([0-9]{1,2}:\d{2}\s*[ap]\.?m\.?\s*(?:\([A-Z]{2,4}\)|[A-Z]{2,4})\s*\w+,\s*\w+\s+\d{1,2},\s*\d{4})",
+        ]
+        self.assertEqual(
+            _extract_datetime_en(html, patterns, default_timezone="America/New_York"),
+            "2026-02-27T13:30:00+00:00",
+        )
+
 
 class TestExtractDateCn(unittest.TestCase):
     def test_chinese_date(self):
@@ -243,8 +256,31 @@ class TestUSFetchFixedUrl(unittest.TestCase):
         self.assertEqual(item.source_id, "us_bls_cpi")
         self.assertIn("Consumer Price Index", item.title)
         self.assertEqual(item.published_at, "2026-03-11T12:30:00+00:00")
+        self.assertEqual(item.published_precision, "exact")
         self.assertEqual(item.country, "US")
         self.assertEqual(item.data_category, "inflation")
+
+    @patch("analyst.ingestion.scrapers.gov_report._get_html")
+    def test_fetch_bls_ppi_with_release_code(self, mock_get):
+        mock_get.return_value = """
+        <html>
+        <head><title>BLS PPI</title></head>
+        <body>
+            <div id="news-release">
+                <h2>Producer Price Index News Release</h2>
+                <p>Transmission of material in this release is embargoed until USDL 26-0289
+                8:30 a.m. (ET) Friday, February 27, 2026</p>
+                <p>The Producer Price Index for final demand increased 0.5 percent.</p>
+            </div>
+        </body>
+        </html>
+        """
+        client = USGovReportClient()
+        from analyst.ingestion.scrapers.gov_report import _US_SOURCES
+        item = client._fetch_fixed_url("us_bls_ppi", _US_SOURCES["us_bls_ppi"])
+        self.assertIsNotNone(item)
+        self.assertEqual(item.published_at, "2026-02-27T13:30:00+00:00")
+        self.assertEqual(item.published_precision, "exact")
 
 
 class TestUSFetchListingRegex(unittest.TestCase):
@@ -254,7 +290,12 @@ class TestUSFetchListingRegex(unittest.TestCase):
     def test_fetch_fomc_statement(self, mock_get):
         listing_html = """
         <html><body>
-        <a href="/newsevents/pressreleases/monetary20260130a.htm">Jan 2026 Statement</a>
+        <a href="/newsevents/pressreleases/2026-press-fomc.htm">2026 FOMC</a>
+        </body></html>
+        """
+        archive_html = """
+        <html><body>
+        <a href="/newsevents/pressreleases/monetary20260128a.htm">Federal Reserve issues FOMC statement</a>
         </body></html>
         """
         detail_html = """
@@ -262,19 +303,21 @@ class TestUSFetchListingRegex(unittest.TestCase):
         <body>
         <div id="content">
             <h1>Federal Reserve issues FOMC statement</h1>
-            <p>Released January 30, 2026</p>
+            <p>January 28, 2026</p>
+            <p>For release at 2:00 p.m. EST</p>
             <p>The Federal Open Market Committee decided to maintain the target range.</p>
         </div>
         </body></html>
         """
-        mock_get.side_effect = [listing_html, detail_html]
+        mock_get.side_effect = [listing_html, archive_html, detail_html]
         client = USGovReportClient()
         from analyst.ingestion.scrapers.gov_report import _US_SOURCES
         item = client._fetch_listing_regex("us_fed_fomc_statement", _US_SOURCES["us_fed_fomc_statement"])
         self.assertIsNotNone(item)
         self.assertEqual(item.source_id, "us_fed_fomc_statement")
         self.assertIn("FOMC", item.title)
-        self.assertEqual(item.published_at, "2026-01-30")
+        self.assertEqual(item.published_at, "2026-01-28T19:00:00+00:00")
+        self.assertEqual(item.published_precision, "exact")
 
 
 class TestCNFetchListingKeywords(unittest.TestCase):
@@ -309,8 +352,125 @@ class TestCNFetchListingKeywords(unittest.TestCase):
         self.assertEqual(item.source_id, "cn_nbs_cpi")
         self.assertEqual(item.country, "CN")
         self.assertEqual(item.language, "zh")
-        self.assertEqual(item.published_at, "2026-02-15")
+        self.assertEqual(item.published_at, "2026-02-15T01:30:00+00:00")
+        self.assertEqual(item.published_precision, "exact")
         self.assertIn("居民消费价格", item.title)
+
+
+class TestJPFetchListingRegex(unittest.TestCase):
+    """Test JP regex/archive strategies with mocked HTTP."""
+
+    @patch("analyst.ingestion.scrapers.gov_report._get_html")
+    def test_fetch_boj_statement_pdf_from_archive(self, mock_get):
+        listing_html = """
+        <html><body>
+        <a href="/en/mopo/mpmdeci/state_2026/index.htm">Statements on Monetary Policy</a>
+        </body></html>
+        """
+        archive_html = """
+        <html><body>
+        <table><tr>
+            <td>Jan. 23, 2026</td>
+            <td><a href="/en/mopo/mpmdeci/mpr_2026/k260123a.pdf">Statement on Monetary Policy [PDF 171KB]</a></td>
+        </tr></table>
+        </body></html>
+        """
+        mock_get.side_effect = [listing_html, archive_html]
+        client = JPGovReportClient()
+        from analyst.ingestion.scrapers.gov_report import _JP_SOURCES
+        item = client._fetch_listing_regex("jp_boj_statement", _JP_SOURCES["jp_boj_statement"])
+        self.assertIsNotNone(item)
+        self.assertEqual(item.url, "https://www.boj.or.jp/en/mopo/mpmdeci/mpr_2026/k260123a.pdf")
+        self.assertEqual(item.title, "Statement on Monetary Policy")
+        self.assertEqual(item.published_at, "2026-01-23")
+        self.assertEqual(item.published_precision, "date_only")
+
+    @patch("analyst.ingestion.scrapers.gov_report._get_html")
+    def test_fetch_boj_outlook_pdf_from_top_listing(self, mock_get):
+        listing_html = """
+        <html><body>
+        <table><tr>
+            <td>Jan. 26, 2026</td>
+            <td><a href="/en/mopo/outlook/gor2601b.pdf">January 2026 (full text) [PDF 1117KB]</a></td>
+        </tr></table>
+        </body></html>
+        """
+        mock_get.return_value = listing_html
+        client = JPGovReportClient()
+        from analyst.ingestion.scrapers.gov_report import _JP_SOURCES
+        item = client._fetch_listing_regex("jp_boj_outlook", _JP_SOURCES["jp_boj_outlook"])
+        self.assertIsNotNone(item)
+        self.assertEqual(item.url, "https://www.boj.or.jp/en/mopo/outlook/gor2601b.pdf")
+        self.assertEqual(item.title, "January 2026 (full text)")
+        self.assertEqual(item.published_at, "2026-01-26")
+        self.assertEqual(item.published_precision, "date_only")
+
+    @patch("analyst.ingestion.scrapers.gov_report._get_html")
+    def test_fetch_boj_minutes_pdf_from_table_year(self, mock_get):
+        listing_html = """
+        <html><body>
+        <table>
+            <caption>Table : 2025</caption>
+            <tr>
+                <td>Jan. 23 (Thurs.), 24 (Fri.)</td>
+                <td><a href="/en/mopo/mpmsche_minu/minu_2025/g250124.pdf">Mar. 25 (Tues.) [PDF 481KB]</a></td>
+            </tr>
+        </table>
+        </body></html>
+        """
+        mock_get.return_value = listing_html
+        client = JPGovReportClient()
+        from analyst.ingestion.scrapers.gov_report import _JP_SOURCES
+        item = client._fetch_listing_regex("jp_boj_minutes", _JP_SOURCES["jp_boj_minutes"])
+        self.assertIsNotNone(item)
+        self.assertEqual(item.url, "https://www.boj.or.jp/en/mopo/mpmsche_minu/minu_2025/g250124.pdf")
+        self.assertEqual(item.title, "Minutes of the Monetary Policy Meetings")
+        self.assertEqual(item.published_at, "2025-03-25")
+        self.assertEqual(item.published_precision, "date_only")
+
+    @patch("analyst.ingestion.scrapers.gov_report._get_html")
+    def test_fetch_cao_gdp_from_year_archive(self, mock_get):
+        listing_html = """
+        <html><body>
+        <a href="/en/sna/data/sokuhou/files/toukei_top.html">Release Archive</a>
+        </body></html>
+        """
+        release_archive_html = """
+        <html><body>
+        <a href="/en/sna/data/sokuhou/files/2025/toukei_2025.html">2025</a>
+        </body></html>
+        """
+        year_archive_html = """
+        <html><body>
+        <table><tr>
+            <td>Mar 10, 2026</td>
+            <td><a href="/en/sna/data/sokuhou/files/2025/qe254_2/gdemenuea.html">
+                Quarterly Estimates of GDP for Oct.-Dec.2025 (The Second preliminary Estimates)
+            </a></td>
+        </tr></table>
+        </body></html>
+        """
+        detail_html = """
+        <html><head><title>Oct.-Dec.2025 (The 2nd preliminary)</title></head>
+        <body>
+            <div id="main">
+                <h1>Oct.-Dec.2025 (The 2nd preliminary)</h1>
+                <p>Quarterly Estimates of GDP</p>
+            </div>
+        </body></html>
+        """
+        mock_get.side_effect = [listing_html, release_archive_html, year_archive_html, detail_html]
+        client = JPGovReportClient()
+        from analyst.ingestion.scrapers.gov_report import _JP_SOURCES
+        item = client._fetch_source("jp_cao_gdp", _JP_SOURCES["jp_cao_gdp"])
+        self.assertIsNotNone(item)
+        self.assertIn("Oct.-Dec.2025", item.title)
+        self.assertEqual(
+            item.url,
+            "https://www.esri.cao.go.jp/en/sna/data/sokuhou/files/2025/qe254_2/gdemenuea.html",
+        )
+        self.assertEqual(item.published_at, "2026-03-10")
+        self.assertEqual(item.published_precision, "date_only")
 
 
 class TestEURssFetch(unittest.TestCase):
@@ -350,6 +510,8 @@ class TestEURssFetch(unittest.TestCase):
         self.assertEqual(item.source_id, "eu_ecb_press")
         self.assertEqual(item.country, "EU")
         self.assertIn("ECB", item.title)
+        self.assertEqual(item.published_at, "2026-01-15T10:00:00+00:00")
+        self.assertEqual(item.published_precision, "exact")
 
 
 class TestGovReportIngestionClient(unittest.TestCase):
@@ -389,9 +551,47 @@ class TestGovReportIngestionClient(unittest.TestCase):
         stored_doc = mock_store.upsert_document.call_args.args[0]
         self.assertEqual(stored_doc.published_date, "2025-12-01")
         self.assertEqual(stored_doc.published_at, "2025-12-01T13:30:00+00:00")
+        self.assertEqual(stored_doc.published_precision, "exact")
         self.assertEqual(
             stored_doc.published_epoch_ms,
             int(datetime(2025, 12, 1, 13, 30, tzinfo=timezone.utc).timestamp() * 1000),
+        )
+        stored_extra = mock_store.upsert_document_extra.call_args.args[0]
+        self.assertEqual(stored_extra.extra_json["published_precision"], "exact")
+
+    @patch("analyst.ingestion.sources.GovReportClient")
+    def test_refresh_preserves_date_only_publish_dates(self, mock_client_cls):
+        from analyst.ingestion.sources import GovReportIngestionClient
+
+        mock_instance = MagicMock()
+        mock_client_cls.return_value = mock_instance
+        mock_instance.fetch_all.return_value = [
+            GovReportItem(
+                source="gov_fed",
+                source_id="us_fed_fomc_statement",
+                title="FOMC Statement",
+                url="https://federalreserve.gov/fomc",
+                published_at="2025-12-01",
+                institution="Federal Reserve",
+                country="US",
+                language="en",
+                data_category="monetary_policy",
+            ),
+        ]
+        mock_store = MagicMock()
+        mock_store.document_exists.return_value = False
+        mock_store.news_article_exists.return_value = False
+
+        ingestion = GovReportIngestionClient()
+        stats = ingestion.refresh(mock_store)
+        self.assertEqual(stats.count, 1)
+        stored_doc = mock_store.upsert_document.call_args.args[0]
+        self.assertEqual(stored_doc.published_date, "2025-12-01")
+        self.assertEqual(stored_doc.published_at, "2025-12-01")
+        self.assertEqual(stored_doc.published_precision, "date_only")
+        self.assertEqual(
+            stored_doc.published_epoch_ms,
+            int(datetime(2025, 12, 1, tzinfo=timezone.utc).timestamp() * 1000),
         )
 
     @patch("analyst.ingestion.sources.GovReportClient")

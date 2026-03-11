@@ -7,6 +7,7 @@ GovReportItem records suitable for storage in the news_articles table.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -31,6 +32,36 @@ _TZINFOS = {
     "EDT": ZoneInfo("America/New_York"),
 }
 
+_BLS_EMBARGO_DATETIME_PATTERN = (
+    r"embargoed until.*?([0-9]{1,2}:\d{2}\s*[ap]\.?m\.?\s*"
+    r"(?:\([A-Z]{2,4}\)|[A-Z]{2,4})\s*\w+,\s*\w+\s+\d{1,2},\s*\d{4})"
+)
+
+_RELEASE_AT_DATETIME_PATTERN = (
+    r"(\w+\s+\d{1,2},\s*\d{4}.*?For release at\s+[0-9]{1,2}:\d{2}\s*[ap]\.?m\.?\s*"
+    r"(?:\([A-Z]{2,4}\)|[A-Z]{2,4})?)"
+)
+
+_COMMON_EN_DATE_PATTERNS = [
+    r"([A-Za-z]{3,9}\.?\s+\d{1,2}(?:\s*\([A-Za-z]{3,9}\.?\))?,?\s*\d{4})",
+    r"(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})",
+    r"(\d{4}[/-]\d{1,2}[/-]\d{1,2})",
+]
+
+_STRUCTURED_DATE_KEYS = (
+    "article:published_time",
+    "published_time",
+    "publishdate",
+    "datepublished",
+    "datecreated",
+    "date",
+    "dc.date",
+    "dcterms.issued",
+    "dcterms.created",
+    "citation_publication_date",
+    "citation_online_date",
+)
+
 # ---------------------------------------------------------------------------
 # Data class
 # ---------------------------------------------------------------------------
@@ -51,6 +82,7 @@ class GovReportItem:
     description: str = ""
     content_markdown: str = ""
     raw_json: dict = field(default_factory=dict)
+    published_precision: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +103,7 @@ _US_SOURCES: dict[str, dict] = {
         "content_selectors": ["#news-release", ".news-release-intro", "#bodytext", "div.body-content"],
         "title_selectors": ["#news-release h2", "#news-release h3", "h1", "title"],
         "datetime_patterns": [
-            r"embargoed until\s*([0-9]{1,2}:\d{2}\s*[ap]\.?m\.?\s*(?:\([A-Z]{2,4}\)|[A-Z]{2,4})\s*\w+,\s*\w+\s+\d{1,2},\s*\d{4})",
+            _BLS_EMBARGO_DATETIME_PATTERN,
         ],
         "date_patterns": [
             r"(?:Released|Issued|Published)[:\s]*(\w+ \d{1,2},?\s*\d{4})",
@@ -90,7 +122,7 @@ _US_SOURCES: dict[str, dict] = {
         "content_selectors": ["#news-release", ".news-release-intro", "#bodytext", "div.body-content"],
         "title_selectors": ["#news-release h2", "#news-release h3", "h1", "title"],
         "datetime_patterns": [
-            r"embargoed until\s*([0-9]{1,2}:\d{2}\s*[ap]\.?m\.?\s*(?:\([A-Z]{2,4}\)|[A-Z]{2,4})\s*\w+,\s*\w+\s+\d{1,2},\s*\d{4})",
+            _BLS_EMBARGO_DATETIME_PATTERN,
         ],
         "date_patterns": [
             r"(?:Released|Issued|Published)[:\s]*(\w+ \d{1,2},?\s*\d{4})",
@@ -109,7 +141,7 @@ _US_SOURCES: dict[str, dict] = {
         "content_selectors": ["#news-release", ".news-release-intro", "#bodytext", "div.body-content"],
         "title_selectors": ["#news-release h2", "#news-release h3", "h1", "title"],
         "datetime_patterns": [
-            r"embargoed until\s*([0-9]{1,2}:\d{2}\s*[ap]\.?m\.?\s*(?:\([A-Z]{2,4}\)|[A-Z]{2,4})\s*\w+,\s*\w+\s+\d{1,2},\s*\d{4})",
+            _BLS_EMBARGO_DATETIME_PATTERN,
         ],
         "date_patterns": [
             r"(?:Released|Issued|Published)[:\s]*(\w+ \d{1,2},?\s*\d{4})",
@@ -176,14 +208,19 @@ _US_SOURCES: dict[str, dict] = {
         "strategy": "listing_regex",
         "url": "https://www.federalreserve.gov/newsevents/pressreleases.htm",
         "base_url": "https://www.federalreserve.gov",
+        "archive_link_pattern": r"/newsevents/pressreleases/\d{4}-press-fomc\.htm",
         "link_pattern": r"/newsevents/pressreleases/monetary\d{8}a\.htm",
         "institution": "Federal Reserve",
         "country": "US",
         "language": "en",
         "data_category": "monetary_policy",
         "importance": "high",
+        "default_timezone": "America/New_York",
         "content_selectors": ["#content", "article", "div.col-xs-12", "#article"],
-        "title_selectors": ["h1", "h2", "title"],
+        "title_selectors": ["title", "h3", "h1", "h2"],
+        "datetime_patterns": [
+            _RELEASE_AT_DATETIME_PATTERN,
+        ],
         "date_patterns": [
             r"(?:Released|Issued|Date)[:\s]*(\w+ \d{1,2},?\s*\d{4})",
             r"(\w+ \d{1,2},?\s*\d{4})",
@@ -603,12 +640,14 @@ _JP_SOURCES: dict[str, dict] = {
         "strategy": "listing_regex",
         "url": "https://www.boj.or.jp/en/mopo/mpmdeci/index.htm",
         "base_url": "https://www.boj.or.jp",
-        "link_pattern": r"/en/mopo/mpmdeci/mpr_\d+/",
+        "archive_link_pattern": r"/en/mopo/mpmdeci/state_\d{4}/index\.htm",
+        "link_pattern": r"/en/mopo/mpmdeci/mpr_\d{4}/k\d+[a-z]\.pdf",
         "institution": "Bank of Japan",
         "country": "JP",
         "language": "en",
         "data_category": "monetary_policy",
         "importance": "high",
+        "allow_pdf_links": True,
         "content_selectors": ["div#main", "div.releaseMain", "div.mb20", "article", "main"],
         "title_selectors": ["h1", "h2", "title"],
         "date_patterns": [
@@ -621,12 +660,13 @@ _JP_SOURCES: dict[str, dict] = {
         "strategy": "listing_regex",
         "url": "https://www.boj.or.jp/en/mopo/outlook/index.htm",
         "base_url": "https://www.boj.or.jp",
-        "link_pattern": r"/en/mopo/outlook/aar\d+",
+        "link_pattern": r"/en/mopo/outlook/gor\d+[ab]\.pdf",
         "institution": "Bank of Japan",
         "country": "JP",
         "language": "en",
         "data_category": "monetary_policy",
         "importance": "high",
+        "allow_pdf_links": True,
         "content_selectors": ["div#main", "div.releaseMain", "div.mb20", "article", "main"],
         "title_selectors": ["h1", "h2", "title"],
         "date_patterns": [
@@ -639,12 +679,16 @@ _JP_SOURCES: dict[str, dict] = {
         "strategy": "listing_regex",
         "url": "https://www.boj.or.jp/en/mopo/mpmsche_minu/index.htm",
         "base_url": "https://www.boj.or.jp",
-        "link_pattern": r"/en/mopo/mpmsche_minu/opinion_\d+/",
+        "link_pattern": r"/en/mopo/mpmsche_minu/minu_\d{4}/g\d+\.pdf",
         "institution": "Bank of Japan",
         "country": "JP",
         "language": "en",
         "data_category": "monetary_policy",
         "importance": "high",
+        "allow_pdf_links": True,
+        "asset_title": "Minutes of the Monetary Policy Meetings",
+        "asset_release_year_from_meeting_year": True,
+        "asset_year_pattern": r"minu_(\d{4})/",
         "content_selectors": ["div#main", "div.releaseMain", "div.mb20", "article", "main"],
         "title_selectors": ["h1", "h2", "title"],
         "date_patterns": [
@@ -657,7 +701,8 @@ _JP_SOURCES: dict[str, dict] = {
         "strategy": "listing_regex",
         "url": "https://www.esri.cao.go.jp/en/sna/sokuhou/sokuhou_top.html",
         "base_url": "https://www.esri.cao.go.jp",
-        "link_pattern": r"/en/sna/data/sokuhou/.*qe\d+",
+        "archive_link_pattern": r"/en/sna/data/sokuhou/files/\d{4}/toukei_\d{4}\.html",
+        "link_pattern": r"/en/sna/data/sokuhou/files/\d{4}/qe\d+(?:_2)?/gdemenuea\.html",
         "institution": "Cabinet Office",
         "country": "JP",
         "language": "en",
@@ -914,15 +959,18 @@ def _extract_title(html: str, selectors: list[str]) -> str:
 
 def _extract_date_en(html: str, patterns: list[str]) -> str | None:
     """Extract a publication date via regex patterns, return YYYY-MM-DD or None."""
-    for pattern in patterns:
-        m = re.search(pattern, html)
-        if m:
-            raw = m.group(1) if m.lastindex else m.group(0)
-            try:
-                dt = dateutil_parser.parse(raw, fuzzy=True)
-                return dt.strftime("%Y-%m-%d")
-            except (ValueError, OverflowError):
-                continue
+    text_content = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+    search_spaces = [html, re.sub(r"\s+", " ", html), text_content]
+    for search_text in search_spaces:
+        for pattern in [*patterns, *_COMMON_EN_DATE_PATTERNS]:
+            m = re.search(pattern, search_text, re.I | re.S)
+            if m:
+                raw = m.group(1) if m.lastindex else m.group(0)
+                try:
+                    dt = dateutil_parser.parse(raw, fuzzy=True)
+                    return dt.strftime("%Y-%m-%d")
+                except (ValueError, OverflowError):
+                    continue
     return None
 
 
@@ -933,14 +981,82 @@ def _extract_datetime_en(
     default_timezone: str = "UTC",
 ) -> str | None:
     """Extract an English publication datetime and normalize to UTC ISO."""
-    for pattern in patterns:
-        m = re.search(pattern, html, re.I | re.S)
-        if not m:
+    text_content = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+    for search_text in [html, re.sub(r"\s+", " ", html), text_content]:
+        for pattern in patterns:
+            m = re.search(pattern, search_text, re.I | re.S)
+            if not m:
+                continue
+            raw = m.group(1) if m.lastindex else m.group(0)
+            cleaned = re.sub(r"\(([A-Z]{2,4})\)", r" \1 ", raw)
+            cleaned = re.sub(r"\ba\.m\.\b", "am", cleaned, flags=re.I)
+            cleaned = re.sub(r"\bp\.m\.\b", "pm", cleaned, flags=re.I)
+            try:
+                dt = dateutil_parser.parse(cleaned, fuzzy=True, tzinfos=_TZINFOS)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=ZoneInfo(default_timezone))
+                return dt.astimezone(timezone.utc).isoformat()
+            except (ValueError, OverflowError):
+                continue
+    return None
+
+
+def _extract_structured_datetime(
+    html: str,
+    *,
+    default_timezone: str = "UTC",
+) -> str | None:
+    """Extract exact publication timestamps from common metadata formats."""
+    soup = BeautifulSoup(html, "html.parser")
+    candidates: list[str] = []
+
+    for meta in soup.find_all("meta"):
+        key = " ".join(
+            str(meta.get(attr, ""))
+            for attr in ("property", "name", "itemprop")
+            if meta.get(attr)
+        ).lower()
+        if not any(token in key for token in _STRUCTURED_DATE_KEYS):
             continue
-        raw = m.group(1) if m.lastindex else m.group(0)
+        content = meta.get("content", "").strip()
+        if content:
+            candidates.append(content)
+
+    for time_tag in soup.find_all("time"):
+        raw = time_tag.get("datetime") or time_tag.get_text(" ", strip=True)
+        raw = raw.strip()
+        if raw:
+            candidates.append(raw)
+
+    for script in soup.find_all("script", attrs={"type": re.compile("ld\\+json", re.I)}):
+        if not script.string:
+            continue
+        try:
+            payload = json.loads(script.string)
+        except json.JSONDecodeError:
+            continue
+        stack = payload if isinstance(payload, list) else [payload]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, list):
+                stack.extend(node)
+                continue
+            if not isinstance(node, dict):
+                continue
+            for key in ("datePublished", "dateCreated", "uploadDate"):
+                value = node.get(key)
+                if isinstance(value, str) and value.strip():
+                    candidates.append(value.strip())
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+
+    seen: set[str] = set()
+    for raw in candidates:
+        if raw in seen or not re.search(r"\d{1,2}:\d{2}|T\d{2}:\d{2}", raw):
+            continue
+        seen.add(raw)
         cleaned = re.sub(r"\(([A-Z]{2,4})\)", r" \1 ", raw)
-        cleaned = re.sub(r"\ba\.m\.\b", "am", cleaned, flags=re.I)
-        cleaned = re.sub(r"\bp\.m\.\b", "pm", cleaned, flags=re.I)
         try:
             dt = dateutil_parser.parse(cleaned, fuzzy=True, tzinfos=_TZINFOS)
             if dt.tzinfo is None:
@@ -949,6 +1065,128 @@ def _extract_datetime_en(
         except (ValueError, OverflowError):
             continue
     return None
+
+
+def _clean_link_text(text: str) -> str:
+    return re.sub(r"\s*\[\s*PDF.*?\]\s*", "", text, flags=re.I).strip()
+
+
+def _anchor_context_text(tag: BeautifulSoup) -> str:
+    anchor_text = tag.get_text(" ", strip=True)
+    for ancestor in tag.parents:
+        if getattr(ancestor, "name", "") not in {"tr", "li", "p", "div", "section", "article"}:
+            continue
+        text = ancestor.get_text(" ", strip=True)
+        if text and text != anchor_text:
+            return text
+    return anchor_text
+
+
+def _anchor_context_year(tag: BeautifulSoup) -> str:
+    for ancestor in tag.parents:
+        if getattr(ancestor, "name", "") == "table":
+            caption = ancestor.find("caption")
+            if caption:
+                match = re.search(r"\b(20\d{2})\b", caption.get_text(" ", strip=True))
+                if match:
+                    return match.group(1)
+        text = ancestor.get_text(" ", strip=True)
+        years = re.findall(r"\b(20\d{2})\b", text)
+        if len(set(years)) == 1:
+            return years[0]
+    return ""
+
+
+def _select_latest_matching_anchor(
+    soup: BeautifulSoup,
+    pattern: re.Pattern[str],
+    cfg: dict,
+) -> BeautifulSoup | None:
+    best_tag: BeautifulSoup | None = None
+    best_rank: tuple[str, int] = ("", -1)
+    for a_tag in soup.find_all("a", href=True):
+        href = a_tag["href"]
+        if not pattern.search(href):
+            continue
+        _, published_at, published_precision, _ = _extract_anchor_fallback(a_tag, cfg)
+        rank = (published_at, 1 if published_precision == "exact" else 0)
+        if rank > best_rank:
+            best_tag = a_tag
+            best_rank = rank
+    return best_tag
+
+
+def _extract_datetime_cn(
+    html: str,
+    *,
+    default_timezone: str = "Asia/Shanghai",
+) -> str | None:
+    """Extract a Chinese publication datetime and normalize to UTC ISO."""
+    candidates: list[str] = []
+
+    meta = re.search(r'<meta\s+name=["\']PubDate["\']\s+content=["\']([^"\']+)["\']', html, re.I)
+    if meta:
+        candidates.append(meta.group(1).strip())
+
+    patterns = [
+        r"(\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)",
+        r"(\d{4}年\d{1,2}月\d{1,2}日\s*\d{1,2}:\d{2}(?::\d{2})?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html)
+        if match:
+            candidates.append(match.group(1))
+
+    seen: set[str] = set()
+    for raw in candidates:
+        if raw in seen:
+            continue
+        seen.add(raw)
+        try:
+            dt = dateutil_parser.parse(raw, fuzzy=True)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=ZoneInfo(default_timezone))
+            return dt.astimezone(timezone.utc).isoformat()
+        except (ValueError, OverflowError):
+            continue
+    return None
+
+
+def _parse_rss_published(
+    published: str,
+    *,
+    default_timezone: str = "UTC",
+) -> tuple[str | None, str]:
+    if not published:
+        return None, "estimated"
+    try:
+        dt = dateutil_parser.parse(published, fuzzy=True)
+    except (ValueError, OverflowError):
+        return None, "estimated"
+    has_time = bool(re.search(r"\d{1,2}:\d{2}|[ap]\.?m\.?|T\d{2}:\d{2}", published, re.I))
+    if has_time:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo(default_timezone))
+        return dt.astimezone(timezone.utc).isoformat(), "exact"
+    return dt.strftime("%Y-%m-%d"), "date_only"
+
+
+def _merge_published_values(
+    *,
+    preferred_at: str,
+    preferred_precision: str,
+    fallback_at: str,
+    fallback_precision: str,
+) -> tuple[str, str]:
+    if preferred_precision == "exact" and preferred_at:
+        return preferred_at, preferred_precision
+    if fallback_precision == "exact" and fallback_at:
+        return fallback_at, fallback_precision
+    if preferred_at:
+        return preferred_at, preferred_precision or "date_only"
+    if fallback_at:
+        return fallback_at, fallback_precision or "date_only"
+    return "", "estimated"
 
 
 def _extract_date_cn(html: str) -> str | None:
@@ -1021,6 +1259,87 @@ def _link_matches_keywords(
     return True
 
 
+def _extract_anchor_fallback(
+    tag: BeautifulSoup,
+    cfg: dict,
+) -> tuple[str, str, str, str]:
+    title = _clean_link_text(tag.get_text(" ", strip=True))
+    context_text = _anchor_context_text(tag)
+    exact_published_at = _extract_datetime_en(
+        context_text,
+        cfg.get("datetime_patterns", []),
+        default_timezone=cfg.get("default_timezone", "UTC"),
+    )
+    published_at = exact_published_at or _extract_date_en(context_text, cfg.get("date_patterns", []))
+    if not published_at:
+        year = ""
+        year_pattern = cfg.get("asset_year_pattern")
+        if year_pattern:
+            href_match = re.search(year_pattern, tag.get("href", ""))
+            if href_match:
+                year = href_match.group(1)
+        if not year:
+            year = _anchor_context_year(tag)
+        if year:
+            anchor_text = _clean_link_text(tag.get_text(" ", strip=True))
+            month_day = re.search(
+                r"([A-Za-z]{3,9}\.?\s+\d{1,2}(?:\s*\([A-Za-z]{3,9}\.?\))?)",
+                anchor_text,
+            )
+            if month_day:
+                try:
+                    parsed_year = int(year)
+                    if cfg.get("asset_release_year_from_meeting_year"):
+                        row = tag.find_parent("tr")
+                        first_cell = row.find("td") if row else None
+                        if first_cell:
+                            meeting_month_day = re.search(
+                                r"([A-Za-z]{3,9}\.?\s+\d{1,2}(?:\s*\([A-Za-z]{3,9}\.?\))?)",
+                                first_cell.get_text(" ", strip=True),
+                            )
+                            if meeting_month_day:
+                                release_month = dateutil_parser.parse(
+                                    month_day.group(1), fuzzy=True
+                                ).month
+                                meeting_month = dateutil_parser.parse(
+                                    meeting_month_day.group(1), fuzzy=True
+                                ).month
+                                if release_month < meeting_month:
+                                    parsed_year += 1
+                    published_at = dateutil_parser.parse(
+                        f"{month_day.group(1)}, {parsed_year}",
+                        fuzzy=True,
+                    ).strftime("%Y-%m-%d")
+                except (ValueError, OverflowError):
+                    published_at = ""
+    published_precision = "exact" if exact_published_at else ("date_only" if published_at else "estimated")
+    return title, published_at or "", published_precision, context_text
+
+
+def _build_anchor_asset_item(
+    *,
+    source_id: str,
+    cfg: dict,
+    tag: BeautifulSoup,
+    base_url: str,
+) -> GovReportItem:
+    title, published_at, published_precision, context_text = _extract_anchor_fallback(tag, cfg)
+    return GovReportItem(
+        source=f"gov_{cfg['institution'].lower().replace(' ', '_')}",
+        source_id=source_id,
+        title=cfg.get("asset_title", title),
+        url=_resolve_url(tag["href"], base_url),
+        published_at=published_at,
+        published_precision=published_precision,
+        institution=cfg["institution"],
+        country=cfg["country"],
+        language=cfg["language"],
+        data_category=cfg["data_category"],
+        importance=cfg.get("importance", ""),
+        description=context_text if context_text != title else "",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Region client classes
 # ---------------------------------------------------------------------------
@@ -1058,11 +1377,16 @@ class USGovReportClient:
     def _fetch_fixed_url(self, source_id: str, cfg: dict) -> GovReportItem | None:
         html = _get_html(self.session, cfg["url"])
         title = _extract_title(html, cfg["title_selectors"])
-        published_at = _extract_datetime_en(
+        exact_published_at = _extract_structured_datetime(
+            html,
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        ) or _extract_datetime_en(
             html,
             cfg.get("datetime_patterns", []),
             default_timezone=cfg.get("default_timezone", "UTC"),
-        ) or _extract_date_en(html, cfg["date_patterns"])
+        )
+        published_at = exact_published_at or _extract_date_en(html, cfg["date_patterns"])
+        published_precision = "exact" if exact_published_at else ("date_only" if published_at else "estimated")
         content_html = _extract_content(html, cfg["content_selectors"])
         content_md = _html_to_markdown(content_html)
         if not title:
@@ -1073,6 +1397,7 @@ class USGovReportClient:
             title=title,
             url=cfg["url"],
             published_at=published_at or "",
+            published_precision=published_precision,
             institution=cfg["institution"],
             country=cfg["country"],
             language=cfg["language"],
@@ -1104,23 +1429,69 @@ class USGovReportClient:
         html = _get_html(self.session, cfg["url"])
         soup = BeautifulSoup(html, "html.parser")
         base_url = cfg.get("base_url", cfg["url"])
-        pattern = re.compile(cfg["link_pattern"])
+        archive_pattern = re.compile(cfg.get("archive_link_pattern", cfg["link_pattern"]))
+        detail_pattern = re.compile(cfg["link_pattern"])
+
+        if not cfg.get("archive_link_pattern"):
+            a_tag = _select_latest_matching_anchor(soup, detail_pattern, cfg)
+            if not a_tag:
+                return None
+            return self._fetch_detail_page(source_id, cfg, _resolve_url(a_tag["href"], base_url))
 
         for a_tag in soup.find_all("a", href=True):
             href = a_tag["href"]
-            if pattern.search(href):
-                detail_url = _resolve_url(href, base_url)
-                return self._fetch_detail_page(source_id, cfg, detail_url)
+            if not archive_pattern.search(href):
+                continue
+            detail_url = _resolve_url(href, base_url)
+            if cfg.get("archive_link_pattern"):
+                archive_html = _get_html(self.session, detail_url)
+                archive_soup = BeautifulSoup(archive_html, "html.parser")
+                nested_tag = _select_latest_matching_anchor(archive_soup, detail_pattern, cfg)
+                if nested_tag:
+                    nested_href = nested_tag["href"]
+                    if nested_href.endswith(".pdf"):
+                        continue
+                    nested_url = _resolve_url(nested_href, detail_url)
+                    nested_title, nested_published_at, nested_precision, _ = _extract_anchor_fallback(
+                        nested_tag, cfg
+                    )
+                    item = self._fetch_detail_page(source_id, cfg, nested_url)
+                    if item and (not item.published_at or item.published_precision == "estimated"):
+                        return GovReportItem(
+                            source=item.source,
+                            source_id=item.source_id,
+                            title=item.title or nested_title,
+                            url=item.url,
+                            published_at=nested_published_at,
+                            published_precision=nested_precision,
+                            institution=item.institution,
+                            country=item.country,
+                            language=item.language,
+                            data_category=item.data_category,
+                            importance=item.importance,
+                            description=item.description,
+                            content_markdown=item.content_markdown,
+                            raw_json=item.raw_json,
+                        )
+                    if item:
+                        return item
+                    continue
+            return self._fetch_detail_page(source_id, cfg, detail_url)
         return None
 
     def _fetch_detail_page(self, source_id: str, cfg: dict, url: str) -> GovReportItem | None:
         html = _get_html(self.session, url)
         title = _extract_title(html, cfg["title_selectors"])
-        published_at = _extract_datetime_en(
+        exact_published_at = _extract_structured_datetime(
+            html,
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        ) or _extract_datetime_en(
             html,
             cfg.get("datetime_patterns", []),
             default_timezone=cfg.get("default_timezone", "UTC"),
-        ) or _extract_date_en(html, cfg["date_patterns"])
+        )
+        published_at = exact_published_at or _extract_date_en(html, cfg["date_patterns"])
+        published_precision = "exact" if exact_published_at else ("date_only" if published_at else "estimated")
         content_html = _extract_content(html, cfg["content_selectors"])
         content_md = _html_to_markdown(content_html)
         if not title:
@@ -1131,6 +1502,7 @@ class USGovReportClient:
             title=title,
             url=url,
             published_at=published_at or "",
+            published_precision=published_precision,
             institution=cfg["institution"],
             country=cfg["country"],
             language=cfg["language"],
@@ -1191,9 +1563,11 @@ class CNGovReportClient:
     ) -> GovReportItem | None:
         html = _get_html(self.session, url, encoding=encoding)
         title = _extract_title(html, cfg["title_selectors"])
-        date = _extract_date_cn(html)
-        if not date:
-            date = _extract_date_en(html, cfg["date_patterns"])
+        exact_published_at = _extract_datetime_cn(html)
+        published_at = exact_published_at or _extract_date_cn(html)
+        if not published_at:
+            published_at = _extract_date_en(html, cfg["date_patterns"])
+        published_precision = "exact" if exact_published_at else ("date_only" if published_at else "estimated")
         content_html = _extract_content(html, cfg["content_selectors"])
         content_md = _html_to_markdown(content_html)
         if not title:
@@ -1203,7 +1577,8 @@ class CNGovReportClient:
             source_id=source_id,
             title=title,
             url=url,
-            published_at=date or "",
+            published_at=published_at or "",
+            published_precision=published_precision,
             institution=cfg["institution"],
             country=cfg["country"],
             language=cfg["language"],
@@ -1233,6 +1608,8 @@ class JPGovReportClient:
         return items
 
     def _fetch_source(self, source_id: str, cfg: dict) -> GovReportItem | None:
+        if source_id == "jp_cao_gdp":
+            return self._fetch_cao_gdp(source_id, cfg)
         strategy = cfg["strategy"]
         if strategy == "listing_regex":
             return self._fetch_listing_regex(source_id, cfg)
@@ -1242,21 +1619,86 @@ class JPGovReportClient:
         html = _get_html(self.session, cfg["url"])
         soup = BeautifulSoup(html, "html.parser")
         base_url = cfg.get("base_url", cfg["url"])
-        pattern = re.compile(cfg["link_pattern"])
+        archive_pattern = re.compile(cfg.get("archive_link_pattern", cfg["link_pattern"]))
+        detail_pattern = re.compile(cfg["link_pattern"])
+
+        if not cfg.get("archive_link_pattern"):
+            a_tag = _select_latest_matching_anchor(soup, detail_pattern, cfg)
+            if not a_tag:
+                return None
+            href = a_tag["href"]
+            if href.endswith(".pdf") and cfg.get("allow_pdf_links"):
+                return _build_anchor_asset_item(
+                    source_id=source_id,
+                    cfg=cfg,
+                    tag=a_tag,
+                    base_url=base_url,
+                )
+            if href.endswith(".pdf"):
+                return None
+            return self._fetch_detail_page(source_id, cfg, _resolve_url(href, base_url))
 
         for a_tag in soup.find_all("a", href=True):
             href = a_tag["href"]
-            if pattern.search(href):
-                if href.endswith(".pdf"):
+            if not archive_pattern.search(href):
+                continue
+            detail_url = _resolve_url(href, base_url)
+            if cfg.get("archive_link_pattern"):
+                archive_html = _get_html(self.session, detail_url)
+                archive_soup = BeautifulSoup(archive_html, "html.parser")
+                nested_tag = _select_latest_matching_anchor(archive_soup, detail_pattern, cfg)
+                if nested_tag:
+                    nested_href = nested_tag["href"]
+                    if nested_href.endswith(".pdf") and cfg.get("allow_pdf_links"):
+                        return _build_anchor_asset_item(
+                            source_id=source_id,
+                            cfg=cfg,
+                            tag=nested_tag,
+                            base_url=detail_url,
+                        )
+                    if nested_href.endswith(".pdf"):
+                        continue
+                    nested_url = _resolve_url(nested_href, detail_url)
+                    fallback_title, fallback_published_at, fallback_precision, _ = _extract_anchor_fallback(
+                        nested_tag, cfg
+                    )
+                    item = self._fetch_detail_page(source_id, cfg, nested_url)
+                    if item and (not item.published_at or item.published_precision == "estimated"):
+                        return GovReportItem(
+                            source=item.source,
+                            source_id=item.source_id,
+                            title=item.title or fallback_title,
+                            url=item.url,
+                            published_at=fallback_published_at,
+                            published_precision=fallback_precision,
+                            institution=item.institution,
+                            country=item.country,
+                            language=item.language,
+                            data_category=item.data_category,
+                            importance=item.importance,
+                            description=item.description,
+                            content_markdown=item.content_markdown,
+                            raw_json=item.raw_json,
+                        )
+                    if item:
+                        return item
                     continue
-                detail_url = _resolve_url(href, base_url)
-                return self._fetch_detail_page(source_id, cfg, detail_url)
+                continue
         return None
 
     def _fetch_detail_page(self, source_id: str, cfg: dict, url: str) -> GovReportItem | None:
         html = _get_html(self.session, url)
         title = _extract_title(html, cfg["title_selectors"])
-        date = _extract_date_en(html, cfg["date_patterns"])
+        exact_published_at = _extract_structured_datetime(
+            html,
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        ) or _extract_datetime_en(
+            html,
+            cfg.get("datetime_patterns", []),
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        )
+        date = exact_published_at or _extract_date_en(html, cfg["date_patterns"])
+        published_precision = "exact" if exact_published_at else ("date_only" if date else "estimated")
         content_html = _extract_content(html, cfg["content_selectors"])
         content_md = _html_to_markdown(content_html)
         if not title:
@@ -1267,6 +1709,7 @@ class JPGovReportClient:
             title=title,
             url=url,
             published_at=date or "",
+            published_precision=published_precision,
             institution=cfg["institution"],
             country=cfg["country"],
             language=cfg["language"],
@@ -1274,6 +1717,78 @@ class JPGovReportClient:
             importance=cfg.get("importance", ""),
             content_markdown=content_md,
         )
+
+    def _fetch_cao_gdp(self, source_id: str, cfg: dict) -> GovReportItem | None:
+        html = _get_html(self.session, cfg["url"])
+        soup = BeautifulSoup(html, "html.parser")
+        base_url = cfg.get("base_url", cfg["url"])
+
+        archive_url = ""
+        for a_tag in soup.find_all("a", href=True):
+            href = a_tag["href"]
+            if href.endswith("files/toukei_top.html"):
+                archive_url = _resolve_url(href, base_url)
+                break
+        if not archive_url:
+            return None
+
+        archive_html = _get_html(self.session, archive_url)
+        archive_soup = BeautifulSoup(archive_html, "html.parser")
+        year_url = ""
+        year_pattern = re.compile(cfg.get("archive_link_pattern", ""))
+        for a_tag in archive_soup.find_all("a", href=True):
+            href = a_tag["href"]
+            if year_pattern.search(href):
+                year_url = _resolve_url(href, archive_url)
+                break
+        if not year_url:
+            return None
+
+        year_html = _get_html(self.session, year_url)
+        year_soup = BeautifulSoup(year_html, "html.parser")
+        detail_pattern = re.compile(cfg["link_pattern"])
+        a_tag = _select_latest_matching_anchor(year_soup, detail_pattern, cfg)
+        if a_tag:
+            href = a_tag["href"]
+            detail_url = _resolve_url(href, year_url)
+            fallback_title, fallback_published_at, fallback_precision, _ = _extract_anchor_fallback(a_tag, cfg)
+            item = self._fetch_detail_page(source_id, cfg, detail_url)
+            if item and fallback_published_at:
+                return GovReportItem(
+                    source=item.source,
+                    source_id=item.source_id,
+                    title=item.title or fallback_title,
+                    url=item.url,
+                    published_at=fallback_published_at,
+                    published_precision=fallback_precision,
+                    institution=item.institution,
+                    country=item.country,
+                    language=item.language,
+                    data_category=item.data_category,
+                    importance=item.importance,
+                    description=item.description,
+                    content_markdown=item.content_markdown,
+                    raw_json=item.raw_json,
+                )
+            if item and (not item.published_at or item.published_precision == "estimated"):
+                return GovReportItem(
+                    source=item.source,
+                    source_id=item.source_id,
+                    title=item.title or fallback_title,
+                    url=item.url,
+                    published_at=fallback_published_at,
+                    published_precision=fallback_precision,
+                    institution=item.institution,
+                    country=item.country,
+                    language=item.language,
+                    data_category=item.data_category,
+                    importance=item.importance,
+                    description=item.description,
+                    content_markdown=item.content_markdown,
+                    raw_json=item.raw_json,
+                )
+            return item
+        return None
 
 
 class EUGovReportClient:
@@ -1342,27 +1857,28 @@ class EUGovReportClient:
 
         title = entry.get("title", "")
         published = entry.get("published", "")
-        date = None
-        if published:
-            try:
-                dt = dateutil_parser.parse(published, fuzzy=True)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                date = dt.astimezone(timezone.utc).isoformat()
-            except (ValueError, OverflowError):
-                pass
+        rss_published_at, rss_published_precision = _parse_rss_published(
+            published,
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        )
 
         # Try to scrape the full page
         try:
             detail = self._fetch_detail_page(source_id, cfg, link)
             if detail:
-                # Prefer RSS title and date if detail page extraction was weak
+                merged_at, merged_precision = _merge_published_values(
+                    preferred_at=detail.published_at,
+                    preferred_precision=detail.published_precision,
+                    fallback_at=rss_published_at or "",
+                    fallback_precision=rss_published_precision,
+                )
                 return GovReportItem(
                     source=detail.source,
                     source_id=detail.source_id,
                     title=detail.title or title,
                     url=detail.url,
-                    published_at=detail.published_at or date or "",
+                    published_at=merged_at,
+                    published_precision=merged_precision,
                     institution=detail.institution,
                     country=detail.country,
                     language=detail.language,
@@ -1382,7 +1898,8 @@ class EUGovReportClient:
             source_id=source_id,
             title=title,
             url=link,
-            published_at=date or "",
+            published_at=rss_published_at or "",
+            published_precision=rss_published_precision,
             institution=cfg["institution"],
             country=cfg["country"],
             language=cfg["language"],
@@ -1394,7 +1911,16 @@ class EUGovReportClient:
     def _fetch_detail_page(self, source_id: str, cfg: dict, url: str) -> GovReportItem | None:
         html = _get_html(self.session, url)
         title = _extract_title(html, cfg["title_selectors"])
-        date = _extract_date_en(html, cfg["date_patterns"])
+        exact_published_at = _extract_structured_datetime(
+            html,
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        ) or _extract_datetime_en(
+            html,
+            cfg.get("datetime_patterns", []),
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        )
+        date = exact_published_at or _extract_date_en(html, cfg["date_patterns"])
+        published_precision = "exact" if exact_published_at else ("date_only" if date else "estimated")
         content_html = _extract_content(html, cfg["content_selectors"])
         content_md = _html_to_markdown(content_html)
         if not title:
@@ -1405,6 +1931,7 @@ class EUGovReportClient:
             title=title,
             url=url,
             published_at=date or "",
+            published_precision=published_precision,
             institution=cfg["institution"],
             country=cfg["country"],
             language=cfg["language"],

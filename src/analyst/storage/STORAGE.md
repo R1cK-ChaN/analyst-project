@@ -60,6 +60,8 @@ doc_source              Publisher-level info (BLS, ECB, NBS...)
 | `country_code` | TEXT | 2-letter ISO |
 | `topic_code` | TEXT | Same codes as release_family |
 | `published_date` | TEXT | `YYYY-MM-DD` |
+| `published_at` | TEXT | Exact UTC ISO timestamp when known, otherwise the original `YYYY-MM-DD` date |
+| `published_precision` | TEXT | `exact`, `date_only`, or `estimated` |
 | `published_epoch_ms` | INTEGER | Canonical UTC publish timestamp in milliseconds |
 | `status` | TEXT | CHECK: `published`, `revised`, `superseded`, `withdrawn` |
 | `version_no` | INTEGER | Default 1 |

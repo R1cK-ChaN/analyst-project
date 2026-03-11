@@ -27,6 +27,7 @@ from analyst.ingestion.news_feeds import (
     get_feeds,
 )
 from analyst.ingestion.news_fetcher import ArticleFetcher
+from analyst.ingestion.url_canon import canonicalize_url, content_hash
 from analyst.storage.sqlite import NewsArticleRecord, SQLiteEngineStore
 
 
@@ -576,3 +577,90 @@ class TestNewsIngestionClient:
         assert article.content_fetched is True
         assert article.extraction_provider in ("llm", "keyword")
         assert article.finance_category != ""
+
+
+# ---------------------------------------------------------------------------
+# Fingerprint dedup tests
+# ---------------------------------------------------------------------------
+
+class TestFingerprintStorage:
+    @pytest.fixture()
+    def store(self, tmp_path: Path) -> SQLiteEngineStore:
+        return SQLiteEngineStore(db_path=tmp_path / "test.db")
+
+    def test_fingerprint_insert_and_exists_url(self, store: SQLiteEngineStore):
+        url = "https://example.com/article"
+        url_hash = hashlib.sha256(url.encode()).hexdigest()
+        title_hash = content_hash("Some title", 3600)
+        store.insert_fingerprint(url_hash, title_hash, url, url, title="Some title")
+        assert store.fingerprint_exists(url_hash=url_hash, title_hash=None)
+
+    def test_fingerprint_insert_and_exists_title(self, store: SQLiteEngineStore):
+        url = "https://example.com/article"
+        url_hash = hashlib.sha256(url.encode()).hexdigest()
+        title_hash = content_hash("Some title", 3600)
+        store.insert_fingerprint(url_hash, title_hash, url, url, title="Some title")
+        assert store.fingerprint_exists(url_hash=None, title_hash=title_hash)
+
+    def test_fingerprint_not_exists_unknown(self, store: SQLiteEngineStore):
+        assert not store.fingerprint_exists(url_hash="nonexistent", title_hash="nonexistent")
+
+    def test_fingerprint_or_semantics(self, store: SQLiteEngineStore):
+        """Match on either url_hash or title_hash should return True."""
+        url_hash = hashlib.sha256(b"url1").hexdigest()
+        title_hash = content_hash("Title One", 7200)
+        store.insert_fingerprint(url_hash, title_hash, "url1", "url1")
+        # Match on url_hash only
+        assert store.fingerprint_exists(url_hash=url_hash, title_hash="other")
+        # Match on title_hash only
+        assert store.fingerprint_exists(url_hash="other", title_hash=title_hash)
+        # Match on both
+        assert store.fingerprint_exists(url_hash=url_hash, title_hash=title_hash)
+        # Match on neither
+        assert not store.fingerprint_exists(url_hash="x", title_hash="y")
+
+    def test_backfill_from_existing_articles(self, store: SQLiteEngineStore):
+        url = "https://example.com/backfill-test?utm_source=twitter"
+        url_hash_raw = hashlib.sha256(url.encode()).hexdigest()
+        ts = int(datetime.now(timezone.utc).timestamp())
+        record = NewsArticleRecord(
+            url_hash=url_hash_raw,
+            source_feed="Test",
+            feed_category="markets",
+            title="Backfill Article",
+            url=url,
+            timestamp=ts,
+            description="desc",
+            content_markdown="body",
+            impact_level="high",
+            finance_category="rates",
+            confidence=0.8,
+            content_fetched=True,
+        )
+        store.upsert_news_article(record)
+        count = store.backfill_fingerprints()
+        assert count == 1
+        # Canonical URL should strip utm_source
+        canonical = canonicalize_url(url)
+        canonical_hash = hashlib.sha256(canonical.encode()).hexdigest()
+        assert store.fingerprint_exists(url_hash=canonical_hash, title_hash=None)
+
+    def test_canonical_url_dedup(self, store: SQLiteEngineStore):
+        """Same article with different tracking params → one fingerprint."""
+        url1 = "https://reuters.com/article/fed-rates?utm_source=twitter"
+        url2 = "https://reuters.com/article/fed-rates?utm_source=email"
+        canon1 = canonicalize_url(url1)
+        canon2 = canonicalize_url(url2)
+        assert canon1 == canon2
+        url_hash = hashlib.sha256(canon1.encode()).hexdigest()
+        title_hash = content_hash("Fed holds rates", 3600)
+        store.insert_fingerprint(url_hash, title_hash, canon1, url1)
+        # Second insert with different raw_url is ignored (same url_hash)
+        store.insert_fingerprint(url_hash, title_hash, canon2, url2)
+        assert store.fingerprint_exists(url_hash=url_hash, title_hash=None)
+
+    def test_fuzzy_title_dedup(self, store: SQLiteEngineStore):
+        """Similar titles detected by Deduplicator → second is skipped."""
+        deduplicator = Deduplicator(threshold=0.6)
+        assert not deduplicator.is_duplicate("Fed holds rates steady at meeting")
+        assert deduplicator.is_duplicate("Fed holds rates steady at latest meeting")
