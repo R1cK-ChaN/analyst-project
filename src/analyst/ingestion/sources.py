@@ -24,8 +24,11 @@ from analyst.ingestion.scrapers import (
     TradingEconomicsCalendarClient,
 )
 from analyst.ingestion.scrapers.gov_report import GovReportClient, GovReportItem
+from analyst.ingestion.scrapers.bis import BISClient
 from analyst.ingestion.scrapers.eia import EIAClient
+from analyst.ingestion.scrapers.eurostat import EurostatClient
 from analyst.ingestion.scrapers.fred import FredClient
+from analyst.ingestion.scrapers.imf import IMFClient
 from analyst.ingestion.scrapers.nyfed import NYFedRatesClient
 from analyst.ingestion.scrapers.rateprobability import RateProbabilityClient
 from analyst.ingestion.scrapers.treasury_fiscal import TreasuryFiscalClient
@@ -210,6 +213,82 @@ TREASURY_DATASETS = {
     },
 }
 
+IMF_SERIES = {
+    "cn_cpi": {
+        "dataflow": "CPI", "version": "5.0.0", "key": "CHN.CPI._T.IX.M",
+        "series_id": "IMF_CN_CPI", "category": "inflation",
+    },
+    "cn_gdp": {
+        "dataflow": "QNEA", "version": "7.0.0", "key": "CHN.B1GQ.V.NSA.XDC.Q",
+        "series_id": "IMF_CN_GDP", "category": "growth",
+    },
+    "cn_fx_reserves": {
+        "dataflow": "IRFCL", "version": "11.0.0", "key": "CHN.IRFCLDT1_IRFCL54_USD",
+        "series_id": "IMF_CN_FX_RESERVES", "category": "reserves",
+    },
+    "jp_cpi": {
+        "dataflow": "CPI", "version": "5.0.0", "key": "JPN.CPI._T.IX.M",
+        "series_id": "IMF_JP_CPI", "category": "inflation",
+    },
+    "jp_gdp": {
+        "dataflow": "QNEA", "version": "7.0.0", "key": "JPN.B1GQ.V.SA.XDC.Q",
+        "series_id": "IMF_JP_GDP", "category": "growth",
+    },
+    "eu_cpi": {
+        "dataflow": "CPI", "version": "5.0.0", "key": "G163.HICP._T.IX.M",
+        "series_id": "IMF_EU_CPI", "category": "inflation",
+    },
+    "global_trade": {
+        "dataflow": "ITG", "version": "4.0.0", "key": "USA.XG.FOB_USD.M",
+        "series_id": "IMF_GLOBAL_TRADE", "category": "trade",
+    },
+}
+
+IMF_VINTAGE_SERIES = ["cn_gdp", "jp_gdp"]
+
+EUROSTAT_SERIES = {
+    "hicp": {
+        "dataset": "prc_hicp_manr",
+        "params": {"coicop": "CP00", "geo": "EA20"},
+        "series_id": "ESTAT_HICP", "category": "inflation",
+    },
+    "gdp": {
+        "dataset": "namq_10_gdp",
+        "params": {"na_item": "B1GQ", "geo": "EA20", "unit": "CLV_PCH_PRE", "s_adj": "SCA"},
+        "series_id": "ESTAT_GDP", "category": "growth",
+    },
+    "unemployment": {
+        "dataset": "une_rt_m",
+        "params": {"age": "TOTAL", "sex": "T", "geo": "EA20", "s_adj": "SA", "unit": "PC_ACT"},
+        "series_id": "ESTAT_UNEMPLOYMENT", "category": "employment",
+    },
+    "indpro": {
+        "dataset": "sts_inpr_m",
+        "params": {"nace_r2": "B-D", "geo": "EA20", "s_adj": "SCA", "unit": "PCH_PRE"},
+        "series_id": "ESTAT_INDPRO", "category": "growth",
+    },
+    "esi": {
+        "dataset": "teibs010",
+        "params": {"geo": "EA20", "indic": "BS-ESI-I", "s_adj": "SA"},
+        "series_id": "ESTAT_ESI", "category": "sentiment",
+    },
+}
+
+BIS_SERIES = {
+    "policy_us": {"dataflow": "WS_CBPOL", "key": "M.US", "series_id": "BIS_POLICY_US", "category": "rates"},
+    "policy_eu": {"dataflow": "WS_CBPOL", "key": "M.XM", "series_id": "BIS_POLICY_EU", "category": "rates"},
+    "policy_jp": {"dataflow": "WS_CBPOL", "key": "M.JP", "series_id": "BIS_POLICY_JP", "category": "rates"},
+    "policy_cn": {"dataflow": "WS_CBPOL", "key": "M.CN", "series_id": "BIS_POLICY_CN", "category": "rates"},
+    "policy_gb": {"dataflow": "WS_CBPOL", "key": "M.GB", "series_id": "BIS_POLICY_GB", "category": "rates"},
+    "eer_us":    {"dataflow": "WS_EER",    "key": "M.R.B.US", "series_id": "BIS_EER_US", "category": "fx"},
+    "eer_cn":    {"dataflow": "WS_EER",    "key": "M.R.B.CN", "series_id": "BIS_EER_CN", "category": "fx"},
+    "eer_eu":    {"dataflow": "WS_EER",    "key": "M.R.B.XM", "series_id": "BIS_EER_EU", "category": "fx"},
+    "credit_gap_us": {"dataflow": "WS_CREDIT_GAP", "key": "Q.US.P", "series_id": "BIS_CREDIT_GAP_US", "category": "credit"},
+    "credit_gap_cn": {"dataflow": "WS_CREDIT_GAP", "key": "Q.CN.P", "series_id": "BIS_CREDIT_GAP_CN", "category": "credit"},
+    "property_us":   {"dataflow": "WS_SPP",  "key": "Q.US.R", "series_id": "BIS_PROPERTY_US", "category": "property"},
+    "property_cn":   {"dataflow": "WS_SPP",  "key": "Q.CN.R", "series_id": "BIS_PROPERTY_CN", "category": "property"},
+}
+
 
 class FREDIngestionClient:
     def __init__(self, api_key: str | None = None) -> None:
@@ -381,6 +460,163 @@ class TreasuryFiscalIngestionClient:
                 logger.warning("Treasury fiscal refresh failed for %s", key, exc_info=True)
             time.sleep(0.5)
         return RefreshStats(source="treasury_fiscal", count=count)
+
+
+class IMFIngestionClient:
+    def __init__(self) -> None:
+        self.client = IMFClient()
+
+    def refresh(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        count = 0
+        for key, cfg in IMF_SERIES.items():
+            try:
+                observations = self.client.get_data(
+                    cfg["dataflow"],
+                    cfg["key"],
+                    series_id=cfg["series_id"],
+                    version=cfg["version"],
+                    limit=30,
+                )
+                fam_id = family_lookup.get(("imf", cfg["series_id"])) if family_lookup else None
+                for obs in observations:
+                    store.upsert_indicator_observation(
+                        IndicatorObservationRecord(
+                            series_id=obs.series_id,
+                            source="imf",
+                            date=obs.date,
+                            value=obs.value,
+                            metadata={"category": cfg["category"], "dataflow": obs.dataflow},
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("IMF refresh failed for %s", key, exc_info=True)
+            time.sleep(1.0)
+        return RefreshStats(source="imf", count=count)
+
+    def refresh_vintages(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        count = 0
+        now = datetime.now(UTC)
+        as_of_dates = [
+            (now - timedelta(days=30 * i)).strftime("%Y-%m-%d")
+            for i in range(12)
+        ]
+        for series_key in IMF_VINTAGE_SERIES:
+            cfg = IMF_SERIES[series_key]
+            try:
+                vintages = self.client.get_vintages(
+                    cfg["dataflow"],
+                    cfg["key"],
+                    series_id=cfg["series_id"],
+                    version=cfg["version"],
+                    as_of_dates=as_of_dates,
+                    start_period=str(now.year - 2),
+                    limit=30,
+                )
+                fam_id = family_lookup.get(("imf", cfg["series_id"])) if family_lookup else None
+                for v in vintages:
+                    store.upsert_indicator_vintage(
+                        IndicatorVintageRecord(
+                            series_id=v.series_id,
+                            source="imf",
+                            observation_date=v.date,
+                            vintage_date=v.vintage_date,
+                            value=v.value,
+                            metadata={"category": cfg["category"], "dataflow": v.dataflow},
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("IMF vintage refresh failed for %s", series_key, exc_info=True)
+        return RefreshStats(source="imf_vintages", count=count)
+
+
+class EurostatIngestionClient:
+    def __init__(self) -> None:
+        self.client = EurostatClient()
+
+    def refresh(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        count = 0
+        for key, cfg in EUROSTAT_SERIES.items():
+            try:
+                observations = self.client.get_dataset(
+                    cfg["dataset"],
+                    params=dict(cfg["params"]),
+                    series_id=cfg["series_id"],
+                    limit=30,
+                )
+                fam_id = family_lookup.get(("eurostat", cfg["series_id"])) if family_lookup else None
+                for obs in observations:
+                    store.upsert_indicator_observation(
+                        IndicatorObservationRecord(
+                            series_id=obs.series_id,
+                            source="eurostat",
+                            date=obs.date,
+                            value=obs.value,
+                            metadata={"category": cfg["category"], "dataset": obs.dataset},
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("Eurostat refresh failed for %s", key, exc_info=True)
+            time.sleep(0.5)
+        return RefreshStats(source="eurostat", count=count)
+
+
+class BISIngestionClient:
+    def __init__(self) -> None:
+        self.client = BISClient()
+
+    def refresh(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        count = 0
+        for key, cfg in BIS_SERIES.items():
+            try:
+                observations = self.client.get_data(
+                    cfg["dataflow"],
+                    cfg["key"],
+                    series_id=cfg["series_id"],
+                    limit=30,
+                )
+                fam_id = family_lookup.get(("bis", cfg["series_id"])) if family_lookup else None
+                for obs in observations:
+                    store.upsert_indicator_observation(
+                        IndicatorObservationRecord(
+                            series_id=obs.series_id,
+                            source="bis",
+                            date=obs.date,
+                            value=obs.value,
+                            metadata={"category": cfg["category"], "dataflow": obs.dataflow},
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("BIS refresh failed for %s", key, exc_info=True)
+            time.sleep(0.5)
+        return RefreshStats(source="bis", count=count)
 
 
 class FedIngestionClient:
@@ -776,6 +1012,9 @@ class IngestionOrchestrator:
         gov_report: GovReportIngestionClient | None = None,
         eia: EIAIngestionClient | None = None,
         treasury_fiscal: TreasuryFiscalIngestionClient | None = None,
+        imf: IMFIngestionClient | None = None,
+        eurostat: EurostatIngestionClient | None = None,
+        bis: BISIngestionClient | None = None,
     ) -> None:
         self.store = store
         self.fred = fred or FREDIngestionClient()
@@ -790,6 +1029,9 @@ class IngestionOrchestrator:
         self.gov_report = gov_report or GovReportIngestionClient()
         self.eia = eia or EIAIngestionClient()
         self.treasury_fiscal = treasury_fiscal or TreasuryFiscalIngestionClient()
+        self.imf = imf or IMFIngestionClient()
+        self.eurostat = eurostat or EurostatIngestionClient()
+        self.bis = bis or BISIngestionClient()
         self._obs_seeded = False
         self._family_lookup: dict[tuple[str, str], str] = {}
 
@@ -882,6 +1124,22 @@ class IngestionOrchestrator:
         stats = self.treasury_fiscal.refresh(self.store, family_lookup=self._family_lookup or None)
         return {stats.source: stats.count}
 
+    def refresh_imf(self) -> dict[str, int]:
+        stats = self.imf.refresh(self.store, family_lookup=self._family_lookup or None)
+        return {stats.source: stats.count}
+
+    def refresh_imf_vintages(self) -> dict[str, int]:
+        stats = self.imf.refresh_vintages(self.store, family_lookup=self._family_lookup or None)
+        return {stats.source: stats.count}
+
+    def refresh_eurostat(self) -> dict[str, int]:
+        stats = self.eurostat.refresh(self.store, family_lookup=self._family_lookup or None)
+        return {stats.source: stats.count}
+
+    def refresh_bis(self) -> dict[str, int]:
+        stats = self.bis.refresh(self.store, family_lookup=self._family_lookup or None)
+        return {stats.source: stats.count}
+
     def refresh_gov_reports(self) -> dict[str, int]:
         try:
             stats = self.gov_report.refresh(self.store)
@@ -938,6 +1196,10 @@ class IngestionOrchestrator:
             self.refresh_gov_reports(),
             self.refresh_eia(),
             self.refresh_treasury_fiscal(),
+            self.refresh_imf(),
+            self.refresh_imf_vintages(),
+            self.refresh_eurostat(),
+            self.refresh_bis(),
         ):
             results.update(batch)
         return results
@@ -955,6 +1217,10 @@ class IngestionOrchestrator:
             "gov_reports": {"interval": 21_600, "handler": self.refresh_gov_reports},
             "eia": {"interval": 86_400, "handler": self.refresh_eia},
             "treasury_fiscal": {"interval": 86_400, "handler": self.refresh_treasury_fiscal},
+            "imf": {"interval": 86_400, "handler": self.refresh_imf},
+            "imf_vintages": {"interval": 86_400, "handler": self.refresh_imf_vintages},
+            "eurostat": {"interval": 86_400, "handler": self.refresh_eurostat},
+            "bis": {"interval": 86_400, "handler": self.refresh_bis},
         }
         next_run = {name: 0.0 for name in jobs}
         self.refresh_all()

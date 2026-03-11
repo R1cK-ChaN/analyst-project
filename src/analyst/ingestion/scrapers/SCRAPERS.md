@@ -779,6 +779,267 @@ intermittently fail; errors are caught and logged gracefully.
 
 ---
 
+## 11. FRED / ALFRED (`fred.py`)
+
+> **Transport:** Plain `requests.Session` — official public API.
+
+### FredClient
+
+Fetches **macro time-series** from FRED and **vintage/revision history** from
+ALFRED (Archival FRED). Extracted from the inline implementation in `sources.py`.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_series(series_id, *, start_date, limit=100)` | `list[FredObservation]` | Recent observations for a series |
+| `get_series_info(series_id)` | `dict` | Series metadata (title, frequency, units) |
+| `search_series(query, *, limit=10)` | `list[dict]` | Search FRED for series matching a text query |
+| `get_vintages(series_id, *, start_date, vintage_dates=None)` | `list[FredVintageObservation]` | All vintage observations (ALFRED `output_type=2`) |
+| `get_revision_history(series_id, observation_date)` | `list[FredVintageObservation]` | All revisions for a specific observation date |
+
+**`FredObservation` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `series_id` | `str` | `"DGS10"` |
+| `date` | `str` | `"2026-03-10"` |
+| `value` | `float` | `4.25` |
+
+**`FredVintageObservation` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `series_id` | `str` | `"GDP"` |
+| `date` | `str` | `"2025-10-01"` (observation date) |
+| `vintage_date` | `str` | `"2025-10-30"` (publication date) |
+| `value` | `float` | `28538.1` |
+
+**Auth:** `FRED_API_KEY` environment variable.
+
+**Key vintage series:** `GDP`, `GDPC1`, `CPIAUCSL`, `PAYEMS`, `UNRATE`,
+`INDPRO`, `RSAFS` — the monthly/quarterly macro that gets revised.
+
+**Storage:** Latest values in `indicators` table (source `fred`), vintages
+in `indicator_vintages` table (source `fred`).
+
+---
+
+## 12. EIA — Energy Information Administration (`eia.py`)
+
+> **Transport:** Plain `requests.Session` — official public API v2.
+
+### EIAClient
+
+Fetches **US energy data** (oil, gas, electricity, renewables) from the
+EIA Open Data API v2.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_series(route, *, params, series_id, start=None, limit=100)` | `list[EIAObservation]` | Observations from a dataset route |
+| `get_metadata(route)` | `dict` | Dataset metadata/facets |
+
+**`EIAObservation` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `series_id` | `str` | `"EIA_BRENT"` |
+| `date` | `str` | `"2026-03-10"` |
+| `value` | `float` | `72.50` |
+| `unit` | `str` | `"$/bbl"` |
+
+**Auth:** `EIA_API_KEY` environment variable.
+**Rate limit:** 0.5 s delay between requests.
+**Max rows:** 5000 per request.
+
+**Key series configured in `sources.py`:**
+
+| Key | Series ID | Description |
+|-----|-----------|-------------|
+| `petroleum_brent` | `EIA_BRENT` | Brent crude oil spot prices |
+| `petroleum_wti` | `EIA_WTI` | WTI crude oil spot prices |
+| `petroleum_stocks` | `EIA_CRUDE_STOCKS` | Weekly petroleum stocks |
+| `natgas_futures` | `EIA_NATGAS` | Natural gas futures |
+| `petroleum_supply` | `EIA_PETROL_SUPPLY` | US petroleum supply & disposition |
+
+**Storage:** `indicators` table (source `eia`).
+
+---
+
+## 13. Treasury Fiscal Data (`treasury_fiscal.py`)
+
+> **Transport:** Plain `requests.Session` — fully open API, no key required.
+
+### TreasuryFiscalClient
+
+Fetches **federal fiscal data** from the Treasury Fiscal Data API:
+total public debt, Treasury General Account balance, and average interest rates.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_dataset(endpoint, *, fields, filter_str, sort, page_size)` | `list[dict]` | Raw rows from any fiscal data endpoint |
+| `fetch_debt_outstanding(*, limit=30)` | `list[TreasuryFiscalObservation]` | Total public debt (Debt to the Penny) |
+| `fetch_tga_balance(*, limit=30)` | `list[TreasuryFiscalObservation]` | Treasury General Account closing balance |
+| `fetch_avg_interest_rates(*, limit=12)` | `list[TreasuryFiscalObservation]` | Average interest rates on Treasury securities |
+
+**`TreasuryFiscalObservation` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `series_id` | `str` | `"TREAS_DEBT_TOTAL"` |
+| `date` | `str` | `"2026-03-10"` |
+| `value` | `float` | `36500000000000` |
+| `metadata` | `dict` | `{"debt_held_public": "...", "intragov_holdings": "..."}` |
+
+**Auth:** None — fully open.
+
+**Storage:** `indicators` table (source `treasury_fiscal`).
+
+---
+
+## 14. IMF — SDMX 3.0 API (`imf.py`)
+
+> **Transport:** Plain `requests.Session` — Azure-hosted API, requires
+> `Ocp-Apim-Subscription-Key` header.  SDMX 3.0 supports JSON responses
+> and point-in-time vintage queries via the `asOf` parameter.
+
+### IMFClient
+
+Fetches **macro time-series** from the IMF SDMX 3.0 API — CPI, FX reserves,
+GDP, and trade dataflows covering China, Japan, Euro Area, and US.
+Supports **vintage/revision history** via `asOf` queries.
+
+**Base URL:** `https://api.imf.org/external/sdmx/3.0`
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_data(dataflow_id, key, *, series_id, version, start_period, limit)` | `list[IMFObservation]` | Observations from any SDMX dataflow |
+| `get_vintages(dataflow_id, key, *, series_id, version, as_of_dates, start_period, limit)` | `list[IMFVintageObservation]` | Point-in-time vintage observations for multiple asOf dates |
+
+**`IMFObservation` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `series_id` | `str` | `"IMF_CN_CPI"` |
+| `date` | `str` | `"2025-09-01"` |
+| `value` | `float` | `103.519` |
+| `dataflow` | `str` | `"CPI"` |
+
+**`IMFVintageObservation` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `series_id` | `str` | `"IMF_CN_GDP"` |
+| `date` | `str` | `"2024-01-01"` (observation date) |
+| `vintage_date` | `str` | `"2025-06-01"` (asOf date) |
+| `value` | `float` | `30478.6` |
+| `dataflow` | `str` | `"QNEA"` |
+
+**Key series configured in `sources.py`:**
+
+| Series ID | Dataflow | Version | Key | Description |
+|-----------|----------|---------|-----|-------------|
+| `IMF_CN_CPI` | CPI | 5.0.0 | CHN.CPI._T.IX.M | China CPI Index |
+| `IMF_CN_GDP` | QNEA | 7.0.0 | CHN.B1GQ.V.NSA.XDC.Q | China Real GDP (LCU, NSA) |
+| `IMF_CN_FX_RESERVES` | IRFCL | 11.0.0 | CHN.IRFCLDT1_IRFCL54_USD | China FX Reserves (USD) |
+| `IMF_JP_CPI` | CPI | 5.0.0 | JPN.CPI._T.IX.M | Japan CPI Index |
+| `IMF_JP_GDP` | QNEA | 7.0.0 | JPN.B1GQ.V.SA.XDC.Q | Japan Real GDP (LCU, SA) |
+| `IMF_EU_CPI` | CPI | 5.0.0 | G163.HICP._T.IX.M | Euro Area HICP Index |
+| `IMF_GLOBAL_TRADE` | ITG | 4.0.0 | USA.XG.FOB_USD.M | US Exports of Goods (USD) |
+
+**Vintage series:** `cn_gdp`, `jp_gdp` — GDP is the classic revision-tracked macro aggregate.
+
+**Country codes:** ISO alpha-3 (CHN, JPN, USA) — not the legacy 2-letter codes.
+**Date format:** `2025-M09` for monthly, `2024-Q1` for quarterly.
+**URL format:** `/data/dataflow/IMF.STA/{flow}/{version}/{key}` — requires exact dataflow version (wildcard `*` fails for multi-DSD flows).
+**Auth:** `IMF_API_KEY` environment variable (subscription key from https://portal.api.imf.org).
+**Rate limit:** 1.0 s delay between requests.
+**Storage:** `indicators` table (source `imf`), vintages in `indicator_vintages` table (source `imf`).
+
+---
+
+## 15. Eurostat — Euro Area Indicators (`eurostat.py`)
+
+> **Transport:** Plain `requests.Session` — official public API, no key required.
+
+### EurostatClient
+
+Fetches **Euro Area structured indicators** from the Eurostat JSON-stat
+dissemination API — HICP, GDP, unemployment, industrial production, trade.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_dataset(dataset_code, *, params, series_id, limit)` | `list[EurostatObservation]` | Observations from a dataset |
+
+**`EurostatObservation` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `series_id` | `str` | `"ESTAT_HICP"` |
+| `date` | `str` | `"2024-01-01"` |
+| `value` | `float` | `2.8` |
+| `dataset` | `str` | `"prc_hicp_manr"` |
+
+**Key series configured in `sources.py`:**
+
+| Series ID | Dataset | Description |
+|-----------|---------|-------------|
+| `ESTAT_HICP` | prc_hicp_manr | EA HICP YoY % |
+| `ESTAT_GDP` | namq_10_gdp | EA GDP QoQ % |
+| `ESTAT_UNEMPLOYMENT` | une_rt_m | EA Unemployment Rate |
+| `ESTAT_INDPRO` | sts_inpr_m | EA Industrial Production MoM |
+| `ESTAT_ESI` | teibs010 | EA Economic Sentiment Indicator |
+
+**Auth:** None — fully open.
+**Rate limit:** 0.5 s delay between requests.
+**Storage:** `indicators` table (source `eurostat`).
+
+---
+
+## 16. BIS — Bank for International Settlements (`bis.py`)
+
+> **Transport:** Plain `requests.Session` — official public API, no key required.
+
+### BISClient
+
+Fetches **cross-border data** from the BIS SDMX-JSON API — policy rates,
+effective exchange rates, credit gaps, and property prices across US, EU,
+JP, CN, and GB.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_data(dataflow_id, key, *, series_id, start_period, limit)` | `list[BISObservation]` | Observations from a dataflow |
+
+**`BISObservation` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `series_id` | `str` | `"BIS_POLICY_US"` |
+| `date` | `str` | `"2024-01-01"` |
+| `value` | `float` | `4.33` |
+| `dataflow` | `str` | `"WS_CBPOL"` |
+
+**Key series configured in `sources.py`:**
+
+| Series ID | Dataflow | Key | Description |
+|-----------|----------|-----|-------------|
+| `BIS_POLICY_US` | WS_CBPOL | M.US | US Policy Rate |
+| `BIS_POLICY_EU` | WS_CBPOL | M.XM | ECB Policy Rate |
+| `BIS_POLICY_JP` | WS_CBPOL | M.JP | BOJ Policy Rate |
+| `BIS_POLICY_CN` | WS_CBPOL | M.CN | PBOC Policy Rate |
+| `BIS_POLICY_GB` | WS_CBPOL | M.GB | BOE Policy Rate |
+| `BIS_EER_US` | WS_EER | M.R.B.US | US Real Effective Exchange Rate |
+| `BIS_EER_CN` | WS_EER | M.R.B.CN | CN Real Effective Exchange Rate |
+| `BIS_EER_EU` | WS_EER | M.R.B.XM | EU Real Effective Exchange Rate |
+| `BIS_CREDIT_GAP_US` | WS_CREDIT_GAP | Q.US.P | US Credit-to-GDP Gap |
+| `BIS_CREDIT_GAP_CN` | WS_CREDIT_GAP | Q.CN.P | CN Credit-to-GDP Gap |
+| `BIS_PROPERTY_US` | WS_SPP | Q.R.US | US Real Property Prices |
+| `BIS_PROPERTY_CN` | WS_SPP | Q.R.CN | CN Real Property Prices |
+
+**Auth:** None — fully open.
+**Rate limit:** 0.5 s delay between requests.
+**Storage:** `indicators` table (source `bis`).
+
+---
+
 ## Summary Matrix
 
 | Site | Calendar | News | Articles | Indicators | Markets | Gov Reports |
@@ -793,6 +1054,12 @@ intermittently fail; errors are caught and logged gracefully.
 | **rateprobability.com** | — | — | — | `RateProbabilityClient` | — | — |
 | **NY Fed** | — | — | — | `NYFedRatesClient` | — | — |
 | **Gov (US/CN/JP/EU)** | — | — | — | — | — | `GovReportClient` |
+| **FRED / ALFRED** | — | — | — | `FredClient` | — | — |
+| **EIA** | — | — | — | `EIAClient` | — | — |
+| **Treasury Fiscal** | — | — | — | `TreasuryFiscalClient` | — | — |
+| **IMF** | — | — | — | `IMFClient` | — | — |
+| **Eurostat** | — | — | — | `EurostatClient` | — | — |
+| **BIS** | — | — | — | `BISClient` | — | — |
 
 ## Running Tests
 
@@ -808,4 +1075,7 @@ pytest tests/test_scrapers.py -v
 
 # Government report scraper tests
 pytest tests/test_gov_report.py -x -q
+
+# Structured data API tests (FRED, EIA, Treasury, IMF, Eurostat, BIS)
+pytest tests/test_fred.py tests/test_eia.py tests/test_treasury_fiscal.py tests/test_imf.py tests/test_eurostat.py tests/test_bis.py -x -q
 ```
