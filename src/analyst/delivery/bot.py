@@ -56,6 +56,7 @@ from analyst.env import get_env_value  # noqa: E402
 from analyst.memory import (  # noqa: E402
     ClientProfileUpdate,
     build_chat_context,
+    build_group_chat_context,
     build_sales_context,
     record_chat_interaction,
     record_sales_interaction,
@@ -591,7 +592,22 @@ def _make_message_handler(
 
         if in_group:
             sender_name = _get_user_display_name(update)
+            group_id = str(update.effective_chat.id)
             _append_group_buffer(context, thread_id, sender_name, history_user_text)
+
+            # Persist group message and track member
+            store.append_group_message(
+                group_id=group_id,
+                thread_id=thread_id,
+                user_id=user_id,
+                display_name=sender_name,
+                content=history_user_text,
+            )
+            store.upsert_group_member(
+                group_id=group_id,
+                user_id=user_id,
+                display_name=sender_name,
+            )
 
             if not _should_reply_in_group(update, context):
                 return
@@ -604,6 +620,7 @@ def _make_message_handler(
 
             group_context_str = _render_group_context(context, thread_id)
         else:
+            group_id = ""
             group_context_str = ""
 
         # Build enriched text for LLM (includes reply context)
@@ -622,7 +639,16 @@ def _make_message_handler(
         )
 
         await update.effective_chat.send_action(ChatAction.TYPING)
-        if persona_mode is ChatPersonaMode.COMPANION:
+        if in_group and group_id:
+            # Three-layer context: group messages + speaker memory + participant model
+            memory_context = build_group_chat_context(
+                store=store,
+                group_id=group_id,
+                thread_id=thread_id,
+                speaker_user_id=user_id,
+                persona_mode=persona_mode.value,
+            )
+        elif persona_mode is ChatPersonaMode.COMPANION:
             memory_context = build_chat_context(
                 store=store,
                 client_id=user_id,
@@ -720,8 +746,15 @@ def _make_message_handler(
                 for cleanup_path in (media_item.url, *media_item.cleanup_paths):
                     _cleanup_generated_media(cleanup_path)
 
-        if in_group:
+        if in_group and group_id:
             _append_group_buffer(context, thread_id, "陈襄", reply.text, role="assistant")
+            store.append_group_message(
+                group_id=group_id,
+                thread_id=thread_id,
+                user_id="assistant",
+                display_name="陈襄",
+                content=reply.text,
+            )
 
     return handle_message
 

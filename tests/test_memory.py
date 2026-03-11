@@ -13,6 +13,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from analyst.memory import (
     ClientProfileUpdate,
     build_chat_context,
+    build_group_chat_context,
     build_research_context,
     build_sales_context,
     build_trading_context,
@@ -556,6 +557,153 @@ class MemoryPipelineTest(unittest.TestCase):
                     tags=["equities"],
                     metadata={},
                 )
+
+
+class GroupMemoryTest(unittest.TestCase):
+    """Tests for the three-layer group chat memory system."""
+
+    def test_group_messages_persist_and_list_chronologically(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            store.append_group_message(group_id="grp-1", thread_id="main", user_id="u1", display_name="Alice", content="今晚吃啥")
+            store.append_group_message(group_id="grp-1", thread_id="main", user_id="u2", display_name="Bob", content="我刚下班")
+            store.append_group_message(group_id="grp-1", thread_id="main", user_id="u1", display_name="Alice", content="走 撸串去")
+
+            messages = store.list_group_messages("grp-1", "main", limit=10)
+            self.assertEqual(len(messages), 3)
+            # Chronological order
+            self.assertEqual(messages[0].display_name, "Alice")
+            self.assertEqual(messages[0].content, "今晚吃啥")
+            self.assertEqual(messages[2].content, "走 撸串去")
+
+    def test_group_messages_isolated_by_group_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            store.append_group_message(group_id="grp-1", thread_id="main", user_id="u1", display_name="Alice", content="Group 1 msg")
+            store.append_group_message(group_id="grp-2", thread_id="main", user_id="u1", display_name="Alice", content="Group 2 msg")
+
+            msgs_1 = store.list_group_messages("grp-1", "main")
+            msgs_2 = store.list_group_messages("grp-2", "main")
+            self.assertEqual(len(msgs_1), 1)
+            self.assertEqual(len(msgs_2), 1)
+            self.assertEqual(msgs_1[0].content, "Group 1 msg")
+            self.assertEqual(msgs_2[0].content, "Group 2 msg")
+
+    def test_group_member_tracking(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            store.upsert_group_member(group_id="grp-1", user_id="u1", display_name="Alice")
+            store.upsert_group_member(group_id="grp-1", user_id="u2", display_name="Bob")
+            store.upsert_group_member(group_id="grp-1", user_id="u1", display_name="Alice")  # second message
+
+            members = store.list_group_members("grp-1")
+            self.assertEqual(len(members), 2)
+            alice = next(m for m in members if m.user_id == "u1")
+            self.assertEqual(alice.message_count, 2)
+            self.assertEqual(alice.display_name, "Alice")
+
+    def test_group_profile_upsert(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            store.upsert_group_profile(group_id="grp-1", group_name="投研群", member_count=5)
+            profile = store.get_group_profile("grp-1")
+            self.assertEqual(profile.group_name, "投研群")
+            self.assertEqual(profile.member_count, 5)
+
+            # Update name, keep member count
+            store.upsert_group_profile(group_id="grp-1", group_name="宏观讨论群")
+            profile = store.get_group_profile("grp-1")
+            self.assertEqual(profile.group_name, "宏观讨论群")
+            self.assertEqual(profile.member_count, 5)
+
+    def test_group_chat_context_three_layers(self) -> None:
+        """build_group_chat_context should include group messages, speaker memory, and participants."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            # Set up speaker's user memory (from private chat)
+            record_sales_interaction(
+                store=store,
+                client_id="u1",
+                channel_id="telegram:private",
+                thread_id="main",
+                user_text="我最近失恋了",
+                assistant_text="那先别想太多",
+                assistant_profile_update=ClientProfileUpdate(
+                    current_mood="sad",
+                    personal_facts=["recently went through a breakup"],
+                ),
+            )
+
+            # Set up group messages
+            store.append_group_message(group_id="grp-1", thread_id="main", user_id="u2", display_name="Bob", content="今天市场怎么样")
+            store.append_group_message(group_id="grp-1", thread_id="main", user_id="u1", display_name="Alice", content="哈哈最近心情不好")
+
+            # Track members
+            store.upsert_group_member(group_id="grp-1", user_id="u1", display_name="Alice")
+            store.upsert_group_member(group_id="grp-1", user_id="u2", display_name="Bob")
+
+            context = build_group_chat_context(
+                store=store,
+                group_id="grp-1",
+                thread_id="main",
+                speaker_user_id="u1",
+            )
+
+            # Layer 1: Group conversation should be present
+            self.assertIn("group_conversation", context)
+            self.assertIn("今天市场怎么样", context)
+            self.assertIn("心情不好", context)
+
+            # Layer 2: Speaker memory should be present (from private interaction)
+            self.assertIn("speaker_memory", context)
+            self.assertIn("current_mood: sad", context)
+            self.assertIn("recently went through a breakup", context)
+
+            # Layer 3: Participant model should be present
+            self.assertIn("group_participants", context)
+            self.assertIn("Alice", context)
+            self.assertIn("Bob", context)
+            self.assertIn("(current speaker)", context)
+
+    def test_group_context_does_not_leak_other_users_private_data(self) -> None:
+        """Group context should only contain the SPEAKER's memory, not other members' private data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            # Bob's private chat: he shared sensitive info
+            record_sales_interaction(
+                store=store,
+                client_id="bob",
+                channel_id="telegram:private-bob",
+                thread_id="main",
+                user_text="我老婆怀孕了",
+                assistant_text="恭喜！",
+                assistant_profile_update=ClientProfileUpdate(
+                    personal_facts=["wife is pregnant"],
+                ),
+            )
+
+            # Alice speaks in group
+            store.append_group_message(group_id="grp-1", thread_id="main", user_id="alice", display_name="Alice", content="大家好")
+            store.upsert_group_member(group_id="grp-1", user_id="alice", display_name="Alice")
+            store.upsert_group_member(group_id="grp-1", user_id="bob", display_name="Bob")
+
+            # Build context for Alice (the speaker)
+            context = build_group_chat_context(
+                store=store,
+                group_id="grp-1",
+                thread_id="main",
+                speaker_user_id="alice",
+            )
+
+            # Bob's private info should NOT appear
+            self.assertNotIn("wife is pregnant", context)
+            self.assertNotIn("怀孕", context)
 
 
 if __name__ == "__main__":

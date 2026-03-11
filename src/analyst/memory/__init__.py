@@ -9,6 +9,7 @@ from .profile import (
 from .render import RenderBudget, sub_agent_budget
 from .service import (
     build_chat_context,
+    build_group_chat_context,
     build_research_context,
     build_sales_context,
     build_trading_context,
@@ -21,6 +22,7 @@ __all__ = [
     "ClientProfileUpdate",
     "RenderBudget",
     "build_chat_context",
+    "build_group_chat_context",
     "build_research_context",
     "build_sales_context",
     "build_subagent_memory",

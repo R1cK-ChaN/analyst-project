@@ -7,6 +7,8 @@ from typing import Any
 from analyst.storage import (
     ClientProfileRecord,
     DeliveryQueueRecord,
+    GroupMemberRecord,
+    GroupMessageRecord,
     SQLiteEngineStore,
     StoredEventRecord,
 )
@@ -279,6 +281,64 @@ def record_chat_interaction(
             "personal_facts": update.personal_facts,
         },
     )
+
+
+def build_group_chat_context(
+    *,
+    store: SQLiteEngineStore,
+    group_id: str,
+    thread_id: str,
+    speaker_user_id: str,
+    persona_mode: str = "sales",
+    budget: RenderBudget | None = None,
+) -> str:
+    """Build three-layer context for group chat: group messages + speaker memory + participant model."""
+    limits = budget or RenderBudget()
+
+    # Layer 1: Group conversation (working memory)
+    group_messages = store.list_group_messages(group_id, thread_id, limit=20)
+    group_lines = [
+        f"- {msg.display_name}: {trim_text(msg.content, max_chars=limits.max_item_chars)}"
+        for msg in group_messages
+    ]
+
+    # Layer 2: Speaker's user memory (long-term memory, shared across contexts)
+    speaker_profile = store.get_client_profile(speaker_user_id)
+    is_companion = str(persona_mode).strip().lower() == "companion"
+    if is_companion:
+        speaker_lines = _render_companion_profile(speaker_profile)
+    else:
+        speaker_lines = _render_client_profile(speaker_profile)
+
+    # Layer 3: Participant model (who's in this group)
+    members = store.list_group_members(group_id, limit=15)
+    participant_lines = _render_participant_model(members, current_speaker_id=speaker_user_id)
+
+    sections: list[tuple[str, list[str]]] = [
+        ("group_conversation", group_lines),
+        ("speaker_memory", speaker_lines),
+        ("group_participants", participant_lines),
+    ]
+    return render_context_sections(sections, budget=limits)
+
+
+def _render_participant_model(
+    members: list[GroupMemberRecord],
+    *,
+    current_speaker_id: str = "",
+) -> list[str]:
+    lines: list[str] = []
+    for member in members:
+        parts = [member.display_name or member.user_id]
+        if member.user_id == current_speaker_id:
+            parts.append("(current speaker)")
+        if member.role_in_group:
+            parts.append(member.role_in_group)
+        if member.personality_notes:
+            parts.append(member.personality_notes)
+        parts.append(f"msgs: {member.message_count}")
+        lines.append(f"- {' | '.join(parts)}")
+    return lines
 
 
 def _render_client_profile(profile: ClientProfileRecord) -> list[str]:
