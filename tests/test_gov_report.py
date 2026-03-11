@@ -12,6 +12,7 @@ from analyst.ingestion.scrapers.gov_report import (
     JPGovReportClient,
     EUGovReportClient,
     _extract_content,
+    _extract_datetime_en,
     _extract_date_cn,
     _extract_date_en,
     _extract_title,
@@ -44,6 +45,19 @@ class TestExtractDateEn(unittest.TestCase):
         html = "Published 15 January 2026"
         patterns = [r"(\d{1,2} \w+ \d{4})"]
         self.assertEqual(_extract_date_en(html, patterns), "2026-01-15")
+
+    def test_embargo_datetime_et_normalized_to_utc(self):
+        html = (
+            "Transmission of material in this release is embargoed until "
+            "8:30 a.m. (ET) Wednesday, March 11, 2026"
+        )
+        patterns = [
+            r"embargoed until\s*([0-9]{1,2}:\d{2}\s*[ap]\.?m\.?\s*(?:\([A-Z]{2,4}\)|[A-Z]{2,4})\s*\w+,\s*\w+\s+\d{1,2},\s*\d{4})",
+        ]
+        self.assertEqual(
+            _extract_datetime_en(html, patterns, default_timezone="America/New_York"),
+            "2026-03-11T12:30:00+00:00",
+        )
 
 
 class TestExtractDateCn(unittest.TestCase):
@@ -214,8 +228,9 @@ class TestUSFetchFixedUrl(unittest.TestCase):
         <head><title>BLS CPI</title></head>
         <body>
             <div id="news-release">
-                <h2>Consumer Price Index - January 2026</h2>
-                <p>Released February 12, 2026</p>
+                <h2>Consumer Price Index - March 2026</h2>
+                <p>Transmission of material in this release is embargoed until
+                8:30 a.m. (ET) Wednesday, March 11, 2026</p>
                 <p>The Consumer Price Index rose 0.3 percent.</p>
             </div>
         </body>
@@ -227,7 +242,7 @@ class TestUSFetchFixedUrl(unittest.TestCase):
         self.assertIsNotNone(item)
         self.assertEqual(item.source_id, "us_bls_cpi")
         self.assertIn("Consumer Price Index", item.title)
-        self.assertEqual(item.published_at, "2026-02-12")
+        self.assertEqual(item.published_at, "2026-03-11T12:30:00+00:00")
         self.assertEqual(item.country, "US")
         self.assertEqual(item.data_category, "inflation")
 
@@ -352,7 +367,7 @@ class TestGovReportIngestionClient(unittest.TestCase):
                 source_id="us_bls_cpi",
                 title="CPI Report",
                 url="https://bls.gov/cpi",
-                published_at="2025-12-01",
+                published_at="2025-12-01T13:30:00+00:00",
                 institution="BLS",
                 country="US",
                 language="en",
@@ -373,10 +388,10 @@ class TestGovReportIngestionClient(unittest.TestCase):
         mock_store.upsert_news_article.assert_called_once()
         stored_doc = mock_store.upsert_document.call_args.args[0]
         self.assertEqual(stored_doc.published_date, "2025-12-01")
-        self.assertEqual(stored_doc.published_at, "2025-12-01T00:00:00+00:00")
+        self.assertEqual(stored_doc.published_at, "2025-12-01T13:30:00+00:00")
         self.assertEqual(
             stored_doc.published_epoch_ms,
-            int(datetime(2025, 12, 1, tzinfo=timezone.utc).timestamp() * 1000),
+            int(datetime(2025, 12, 1, 13, 30, tzinfo=timezone.utc).timestamp() * 1000),
         )
 
     @patch("analyst.ingestion.sources.GovReportClient")

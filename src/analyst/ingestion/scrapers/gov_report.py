@@ -11,7 +11,9 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import timezone
 from urllib.parse import urljoin
+from zoneinfo import ZoneInfo
 
 import feedparser
 import requests
@@ -20,6 +22,14 @@ from dateutil import parser as dateutil_parser
 from markdownify import markdownify as md
 
 logger = logging.getLogger(__name__)
+
+_TZINFOS = {
+    "UTC": timezone.utc,
+    "GMT": timezone.utc,
+    "ET": ZoneInfo("America/New_York"),
+    "EST": ZoneInfo("America/New_York"),
+    "EDT": ZoneInfo("America/New_York"),
+}
 
 # ---------------------------------------------------------------------------
 # Data class
@@ -32,7 +42,7 @@ class GovReportItem:
     source_id: str         # "us_bls_cpi", "cn_stats_gdp", etc.
     title: str
     url: str
-    published_at: str      # ISO YYYY-MM-DD
+    published_at: str      # ISO 8601 UTC when available, otherwise ISO date
     institution: str       # "BLS", "国家统计局", etc.
     country: str           # "US", "CN", "JP", "EU"
     language: str          # "en", "zh"
@@ -57,8 +67,12 @@ _US_SOURCES: dict[str, dict] = {
         "language": "en",
         "data_category": "inflation",
         "importance": "high",
+        "default_timezone": "America/New_York",
         "content_selectors": ["#news-release", ".news-release-intro", "#bodytext", "div.body-content"],
         "title_selectors": ["#news-release h2", "#news-release h3", "h1", "title"],
+        "datetime_patterns": [
+            r"embargoed until\s*([0-9]{1,2}:\d{2}\s*[ap]\.?m\.?\s*(?:\([A-Z]{2,4}\)|[A-Z]{2,4})\s*\w+,\s*\w+\s+\d{1,2},\s*\d{4})",
+        ],
         "date_patterns": [
             r"(?:Released|Issued|Published)[:\s]*(\w+ \d{1,2},?\s*\d{4})",
             r"(\w+ \d{1,2},?\s*\d{4})",
@@ -72,8 +86,12 @@ _US_SOURCES: dict[str, dict] = {
         "language": "en",
         "data_category": "inflation",
         "importance": "high",
+        "default_timezone": "America/New_York",
         "content_selectors": ["#news-release", ".news-release-intro", "#bodytext", "div.body-content"],
         "title_selectors": ["#news-release h2", "#news-release h3", "h1", "title"],
+        "datetime_patterns": [
+            r"embargoed until\s*([0-9]{1,2}:\d{2}\s*[ap]\.?m\.?\s*(?:\([A-Z]{2,4}\)|[A-Z]{2,4})\s*\w+,\s*\w+\s+\d{1,2},\s*\d{4})",
+        ],
         "date_patterns": [
             r"(?:Released|Issued|Published)[:\s]*(\w+ \d{1,2},?\s*\d{4})",
             r"(\w+ \d{1,2},?\s*\d{4})",
@@ -87,8 +105,12 @@ _US_SOURCES: dict[str, dict] = {
         "language": "en",
         "data_category": "employment",
         "importance": "high",
+        "default_timezone": "America/New_York",
         "content_selectors": ["#news-release", ".news-release-intro", "#bodytext", "div.body-content"],
         "title_selectors": ["#news-release h2", "#news-release h3", "h1", "title"],
+        "datetime_patterns": [
+            r"embargoed until\s*([0-9]{1,2}:\d{2}\s*[ap]\.?m\.?\s*(?:\([A-Z]{2,4}\)|[A-Z]{2,4})\s*\w+,\s*\w+\s+\d{1,2},\s*\d{4})",
+        ],
         "date_patterns": [
             r"(?:Released|Issued|Published)[:\s]*(\w+ \d{1,2},?\s*\d{4})",
             r"(\w+ \d{1,2},?\s*\d{4})",
@@ -904,6 +926,31 @@ def _extract_date_en(html: str, patterns: list[str]) -> str | None:
     return None
 
 
+def _extract_datetime_en(
+    html: str,
+    patterns: list[str],
+    *,
+    default_timezone: str = "UTC",
+) -> str | None:
+    """Extract an English publication datetime and normalize to UTC ISO."""
+    for pattern in patterns:
+        m = re.search(pattern, html, re.I | re.S)
+        if not m:
+            continue
+        raw = m.group(1) if m.lastindex else m.group(0)
+        cleaned = re.sub(r"\(([A-Z]{2,4})\)", r" \1 ", raw)
+        cleaned = re.sub(r"\ba\.m\.\b", "am", cleaned, flags=re.I)
+        cleaned = re.sub(r"\bp\.m\.\b", "pm", cleaned, flags=re.I)
+        try:
+            dt = dateutil_parser.parse(cleaned, fuzzy=True, tzinfos=_TZINFOS)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=ZoneInfo(default_timezone))
+            return dt.astimezone(timezone.utc).isoformat()
+        except (ValueError, OverflowError):
+            continue
+    return None
+
+
 def _extract_date_cn(html: str) -> str | None:
     """Extract a publication date from Chinese gov pages.
 
@@ -1011,7 +1058,11 @@ class USGovReportClient:
     def _fetch_fixed_url(self, source_id: str, cfg: dict) -> GovReportItem | None:
         html = _get_html(self.session, cfg["url"])
         title = _extract_title(html, cfg["title_selectors"])
-        date = _extract_date_en(html, cfg["date_patterns"])
+        published_at = _extract_datetime_en(
+            html,
+            cfg.get("datetime_patterns", []),
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        ) or _extract_date_en(html, cfg["date_patterns"])
         content_html = _extract_content(html, cfg["content_selectors"])
         content_md = _html_to_markdown(content_html)
         if not title:
@@ -1021,7 +1072,7 @@ class USGovReportClient:
             source_id=source_id,
             title=title,
             url=cfg["url"],
-            published_at=date or "",
+            published_at=published_at or "",
             institution=cfg["institution"],
             country=cfg["country"],
             language=cfg["language"],
@@ -1065,7 +1116,11 @@ class USGovReportClient:
     def _fetch_detail_page(self, source_id: str, cfg: dict, url: str) -> GovReportItem | None:
         html = _get_html(self.session, url)
         title = _extract_title(html, cfg["title_selectors"])
-        date = _extract_date_en(html, cfg["date_patterns"])
+        published_at = _extract_datetime_en(
+            html,
+            cfg.get("datetime_patterns", []),
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        ) or _extract_date_en(html, cfg["date_patterns"])
         content_html = _extract_content(html, cfg["content_selectors"])
         content_md = _html_to_markdown(content_html)
         if not title:
@@ -1075,7 +1130,7 @@ class USGovReportClient:
             source_id=source_id,
             title=title,
             url=url,
-            published_at=date or "",
+            published_at=published_at or "",
             institution=cfg["institution"],
             country=cfg["country"],
             language=cfg["language"],
@@ -1291,7 +1346,9 @@ class EUGovReportClient:
         if published:
             try:
                 dt = dateutil_parser.parse(published, fuzzy=True)
-                date = dt.strftime("%Y-%m-%d")
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                date = dt.astimezone(timezone.utc).isoformat()
             except (ValueError, OverflowError):
                 pass
 
