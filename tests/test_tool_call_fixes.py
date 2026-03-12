@@ -12,7 +12,7 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.delivery.sales_chat import system_prompt_with_memory, build_chat_tools
+from analyst.delivery.sales_chat import system_prompt_with_memory, build_chat_tools, resolve_chat_persona_mode
 from analyst.delivery.soul import (
     COMPANION_SYSTEM_PROMPT,
     SOUL_SYSTEM_PROMPT,
@@ -86,6 +86,14 @@ class PromptAssemblySelectionTest(unittest.TestCase):
     def test_companion_default_prompt_remains_small(self) -> None:
         self.assertLess(len(COMPANION_SYSTEM_PROMPT), 2200)
 
+    def test_companion_prompt_reflects_sunny_snt_companion_identity(self) -> None:
+        self.assertIn("sunny、cheerful", COMPANION_SYSTEM_PROMPT)
+        self.assertIn("SnT team", COMPANION_SYSTEM_PROMPT)
+        self.assertIn("不要主动聊金融", COMPANION_SYSTEM_PROMPT)
+
+    def test_chat_mode_resolution_defaults_to_companion(self) -> None:
+        self.assertEqual(resolve_chat_persona_mode(None).value, "companion")
+
     def test_sales_neutral_turn_does_not_load_emotional_support_module(self) -> None:
         result = assemble_persona_system_prompt(
             PromptAssemblyContext(mode="sales", user_text="PMI 怎么看")
@@ -135,19 +143,19 @@ class Fix3LiveCalendarToolTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             store = SQLiteEngineStore(db_path=Path(td) / "test.db")
             engine = _make_dummy_engine()
-            tools = build_chat_tools(engine, store)
+            tools = build_chat_tools(engine, store, persona_mode="sales")
             tool_names = [t.name for t in tools]
             self.assertIn("fetch_live_calendar", tool_names)
 
     def test_fetch_live_calendar_absent_without_store(self) -> None:
         engine = _make_dummy_engine()
-        tools = build_chat_tools(engine, None)
+        tools = build_chat_tools(engine, None, persona_mode="sales")
         tool_names = [t.name for t in tools]
         self.assertNotIn("fetch_live_calendar", tool_names)
 
     def test_get_calendar_description_mentions_cache(self) -> None:
         engine = _make_dummy_engine()
-        tools = build_chat_tools(engine, None)
+        tools = build_chat_tools(engine, None, persona_mode="sales")
         cal_tool = next((t for t in tools if t.name == "get_calendar"), None)
         self.assertIsNotNone(cal_tool)
         self.assertIn("cache", cal_tool.description.lower())

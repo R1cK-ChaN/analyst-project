@@ -4,15 +4,12 @@ Uses python-telegram-bot (v20+) async API.
 Reads ANALYST_TELEGRAM_TOKEN from the environment.
 
 All user messages are routed through a persona-driven agent loop (陈襄).
-The bot hydrates structured sales memory for each client/thread and records
+The bot hydrates structured companion memory for each client/thread and records
 the interaction after every reply.
 
 Commands
 --------
 /start      - persona greeting
-/regime     - current macro regime summary
-/calendar   - upcoming data releases
-/premarket  - pre-market briefing
 /help       - explain capabilities
 """
 
@@ -380,7 +377,7 @@ async def _chat_reply(
     user_content: Any | None = None,
     history_text: str | None = None,
     attached_image: RequestImageInput | None = None,
-    persona_mode: str | ChatPersonaMode = ChatPersonaMode.SALES,
+    persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
 ) -> SalesChatReply:
     """Send user_text through the agent loop with persona, history, tools, and sales context."""
     history = _get_history(context, is_group=is_group, thread_id=thread_id)
@@ -436,9 +433,7 @@ async def _chat_reply(
 # ---------------------------------------------------------------------------
 
 def _resolve_runtime_persona_mode() -> ChatPersonaMode:
-    return resolve_chat_persona_mode(
-        get_env_value("ANALYST_CHAT_PERSONA_MODE", default=ChatPersonaMode.SALES.value)
-    )
+    return ChatPersonaMode.COMPANION
 
 
 def _build_services() -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore, ChatPersonaMode]:
@@ -456,7 +451,7 @@ def _make_start_handler(
     agent_loop: PythonAgentLoop,
     tools: list[AgentTool],
     *,
-    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
+    persona_mode: ChatPersonaMode = ChatPersonaMode.COMPANION,
 ):
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
@@ -481,7 +476,7 @@ def _make_help_handler(
     agent_loop: PythonAgentLoop,
     tools: list[AgentTool],
     *,
-    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
+    persona_mode: ChatPersonaMode = ChatPersonaMode.COMPANION,
 ):
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
@@ -570,7 +565,7 @@ def _make_message_handler(
     tools: list[AgentTool],
     store: SQLiteEngineStore,
     *,
-    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
+    persona_mode: ChatPersonaMode = ChatPersonaMode.COMPANION,
 ):
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
@@ -770,10 +765,6 @@ def build_application(token: str) -> Application:
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", _make_start_handler(agent_loop, tools, persona_mode=persona_mode)))
     app.add_handler(CommandHandler("help", _make_help_handler(agent_loop, tools, persona_mode=persona_mode)))
-    if persona_mode is ChatPersonaMode.SALES:
-        app.add_handler(CommandHandler("regime", _make_regime_handler(agent_loop, tools, persona_mode=persona_mode)))
-        app.add_handler(CommandHandler("calendar", _make_calendar_handler(agent_loop, tools, persona_mode=persona_mode)))
-        app.add_handler(CommandHandler("premarket", _make_premarket_handler(agent_loop, tools, persona_mode=persona_mode)))
     app.add_handler(
         MessageHandler(
             (filters.TEXT | filters.PHOTO | filters.Document.IMAGE) & ~filters.COMMAND,

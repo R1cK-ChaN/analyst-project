@@ -20,22 +20,22 @@ from analyst.memory import ClientProfileUpdate
 
 
 class SalesChatCLITest(unittest.TestCase):
-    def test_sales_chat_once_prints_reply_and_records_interaction(self) -> None:
+    def test_companion_chat_once_prints_reply_and_records_interaction(self) -> None:
         fake_store = Mock()
         output = io.StringIO()
 
-        with patch("analyst.cli.build_sales_services", return_value=(Mock(), [], fake_store)):
-            with patch("analyst.cli.build_sales_context", return_value="memory block"):
+        with patch("analyst.cli.build_chat_services", return_value=(Mock(), [], fake_store)):
+            with patch("analyst.cli.build_chat_context", return_value="memory block"):
                 with patch(
-                    "analyst.cli.generate_sales_reply",
+                    "analyst.cli.generate_chat_reply",
                     return_value=SalesChatReply(
                         text="先别急，今晚数据出来再看。",
                         profile_update=ClientProfileUpdate(confidence="中"),
                     ),
                 ):
-                    with patch("analyst.cli.record_sales_interaction") as record_mock:
+                    with patch("analyst.cli.record_chat_interaction") as record_mock:
                         with redirect_stdout(output):
-                            rc = main(["sales-chat", "--once", "最近太难做了"])
+                            rc = main(["companion-chat", "--once", "最近太难做了"])
 
         self.assertEqual(rc, 0)
         rendered = output.getvalue()

@@ -70,7 +70,7 @@ SalesChatReply = ChatReply
 def resolve_chat_persona_mode(value: str | ChatPersonaMode | None = None) -> ChatPersonaMode:
     if isinstance(value, ChatPersonaMode):
         return value
-    lowered = str(value or ChatPersonaMode.SALES.value).strip().lower()
+    lowered = str(value or ChatPersonaMode.COMPANION.value).strip().lower()
     if lowered == ChatPersonaMode.COMPANION.value:
         return ChatPersonaMode.COMPANION
     return ChatPersonaMode.SALES
@@ -90,7 +90,7 @@ def build_chat_tools(
     store: SQLiteEngineStore | None = None,
     provider: LLMProvider | None = None,
     *,
-    persona_mode: str | ChatPersonaMode = ChatPersonaMode.SALES,
+    persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
 ) -> list[AgentTool]:
     resolved_mode = resolve_chat_persona_mode(persona_mode)
     if resolved_mode is ChatPersonaMode.COMPANION:
@@ -178,7 +178,7 @@ def build_sales_tools(
 def build_chat_services(
     *,
     db_path: Path | None = None,
-    persona_mode: str | ChatPersonaMode = ChatPersonaMode.SALES,
+    persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
 ) -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
     resolved_mode = resolve_chat_persona_mode(persona_mode)
     or_config = OpenRouterConfig.from_env(
@@ -259,7 +259,7 @@ def system_prompt_with_memory(
     user_text: str = "",
     user_lang: str = "",
     group_context: str = "",
-    persona_mode: str | ChatPersonaMode = ChatPersonaMode.SALES,
+    persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
 ) -> str:
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
     return assemble_persona_system_prompt(
@@ -559,7 +559,7 @@ def generate_chat_reply(
     preferred_language: str = "",
     group_context: str = "",
     user_content: MessageContent | None = None,
-    persona_mode: str | ChatPersonaMode = ChatPersonaMode.SALES,
+    persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
 ) -> ChatReply:
     history_messages = [
         ConversationMessage(role=message["role"], content=message["content"])

@@ -234,8 +234,9 @@ class TestBuildApplication(unittest.TestCase):
         ):
             app = build_application("fake-token-for-test")
         handlers = app.handlers.get(0, [])
-        # 5 command handlers + 1 message handler = 6
-        self.assertEqual(len(handlers), 6)
+        self.assertEqual(len(handlers), 3)
+        command_names = [handler.commands for handler in handlers if hasattr(handler, "commands")]
+        self.assertEqual(command_names, [{"start"}, {"help"}])
 
 
 class TestChatPersonaRouting(unittest.TestCase):
@@ -276,18 +277,18 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
             events=[],
         )
 
-    async def test_calls_agent_loop_with_soul_prompt(self) -> None:
+    async def test_calls_agent_loop_with_companion_prompt_by_default(self) -> None:
         from analyst.delivery.bot import _chat_reply
-        from analyst.delivery.soul import SOUL_SYSTEM_PROMPT
+        from analyst.delivery.soul import COMPANION_SYSTEM_PROMPT
 
         self._set_loop_response("你好！")
         await _chat_reply("hi", self.mock_context, self.mock_loop, self.mock_tools)
 
         call_kwargs = self.mock_loop.run.call_args.kwargs
-        self.assertIn(SOUL_SYSTEM_PROMPT, call_kwargs["system_prompt"])
+        self.assertIn(COMPANION_SYSTEM_PROMPT, call_kwargs["system_prompt"])
         self.assertIn("陈襄", call_kwargs["system_prompt"])
 
-    async def test_companion_mode_uses_companion_prompt(self) -> None:
+    async def test_companion_prompt_includes_latent_snt_backstory(self) -> None:
         from analyst.delivery.bot import _chat_reply
         from analyst.delivery.sales_chat import ChatPersonaMode
         from analyst.delivery.soul import COMPANION_SYSTEM_PROMPT
@@ -303,6 +304,8 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
 
         call_kwargs = self.mock_loop.run.call_args.kwargs
         self.assertIn(COMPANION_SYSTEM_PROMPT, call_kwargs["system_prompt"])
+        self.assertIn("SnT team", call_kwargs["system_prompt"])
+        self.assertIn("不要主动聊金融", call_kwargs["system_prompt"])
         self.assertNotIn("投研老兵", call_kwargs["system_prompt"])
 
     async def test_passes_tools_to_agent_loop(self) -> None:
@@ -554,8 +557,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
             text="@testbot what's the regime?", chat_type="supergroup", entities=entities,
         )
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
-             patch("analyst.delivery.bot.record_sales_interaction"):
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction"):
             await handler(update, context)
 
         update.effective_message.reply_text.assert_called()
@@ -578,8 +581,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake image bytes"))
         context.bot.get_file.return_value = telegram_file
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
-             patch("analyst.delivery.bot.record_sales_interaction"):
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction"):
             await handler(update, context)
 
         update.effective_message.reply_text.assert_called()
@@ -592,8 +595,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
             text="can you elaborate?", chat_type="supergroup", reply_to_bot=True,
         )
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
-             patch("analyst.delivery.bot.record_sales_interaction"):
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction"):
             await handler(update, context)
 
         update.effective_message.reply_text.assert_called()
@@ -642,8 +645,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         context2.user_data = {}
         context2.chat_data = context.chat_data
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
-             patch("analyst.delivery.bot.record_sales_interaction"):
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction"):
             await handler(update2, context2)
 
         # Verify the agent loop was called with group context in system prompt
@@ -656,8 +659,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
         update, context = self._make_update(text="hello", chat_type="private")
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
-             patch("analyst.delivery.bot.record_sales_interaction"):
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction"):
             await handler(update, context)
 
         # Private chat always triggers a reply
@@ -677,8 +680,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake image bytes"))
         context.bot.get_file.return_value = telegram_file
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
-             patch("analyst.delivery.bot.record_sales_interaction") as mock_record:
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction") as mock_record:
             await handler(update, context)
 
         call_kwargs = self.mock_loop.run.call_args.kwargs
@@ -703,8 +706,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake image bytes"))
         context.bot.get_file.return_value = telegram_file
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
-             patch("analyst.delivery.bot.record_sales_interaction"):
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction"):
             await handler(update, context)
 
         call_kwargs = self.mock_loop.run.call_args.kwargs
@@ -725,8 +728,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
             tmp.write(b"fake image bytes")
             temp_path = tmp.name
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
-             patch("analyst.delivery.bot.record_sales_interaction"), \
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction"), \
              patch(
                  "analyst.delivery.bot._chat_reply",
                  new=AsyncMock(
@@ -758,8 +761,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
             cover_tmp.write(b"fake cover bytes")
             cover_path = cover_tmp.name
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
-             patch("analyst.delivery.bot.record_sales_interaction"), \
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction"), \
              patch(
                  "analyst.delivery.bot._chat_reply",
                  new=AsyncMock(
@@ -840,8 +843,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         update.effective_message.reply_to_message.text = "the market is up 3%"
         update.effective_message.reply_to_message.quote = None
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value="") as mock_ctx, \
-             patch("analyst.delivery.bot.record_sales_interaction") as mock_record:
+        with patch("analyst.delivery.bot.build_chat_context", return_value="") as mock_ctx, \
+             patch("analyst.delivery.bot.record_chat_interaction") as mock_record:
             await handler(update, context)
 
         # LLM should receive enriched text with reply context
@@ -849,7 +852,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         self.assertIn("the market is up 3%", call_kwargs["user_prompt"])
         self.assertIn("can you elaborate?", call_kwargs["user_prompt"])
 
-        # record_sales_interaction should use original text
+        # record_chat_interaction should use original text
         mock_record.assert_called_once()
         self.assertEqual(mock_record.call_args.kwargs["user_text"], "can you elaborate?")
 
@@ -860,8 +863,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
         update, context = self._make_update(text="hello", chat_type="private")
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
-             patch("analyst.delivery.bot.record_sales_interaction"):
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction"):
             await handler(update, context)
 
         call_kwargs = self.mock_loop.run.call_args.kwargs
@@ -881,8 +884,8 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
             text="@testbot hi", chat_type="supergroup", entities=entities,
         )
 
-        with patch("analyst.delivery.bot.build_sales_context", return_value=""), \
-             patch("analyst.delivery.bot.record_sales_interaction"):
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction"):
             await handler(update, context)
 
         # History should be in chat_data, not user_data
