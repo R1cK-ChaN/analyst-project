@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from telegram import MessageEntity, Update
+from telegram import MessageEntity, Update, User
 from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
@@ -67,6 +67,7 @@ from analyst.storage import SQLiteEngineStore  # noqa: E402
 from analyst.tools._request_context import RequestImageInput, bind_request_image  # noqa: E402
 
 from .sales_chat import (  # noqa: E402
+    SPLIT_MARKER,
     ChatPersonaMode,
     MediaItem,
     SalesChatReply,
@@ -119,6 +120,7 @@ EMOTIONAL_CUE_TOKENS = (
     "breakup hurts",
     "stressed",
 )
+GROUP_MEMBER_MENTION_RE = re.compile(r"@\[(?P<name>[^\]\n]{1,64})\]")
 
 
 # ---------------------------------------------------------------------------
@@ -616,6 +618,84 @@ def _render_group_context(context: ContextTypes.DEFAULT_TYPE, thread_id: str) ->
         total += len(line) + 1
     lines.reverse()
     return "\n".join(lines)
+
+
+def _normalize_group_member_name(name: str) -> str:
+    return re.sub(r"\s+", " ", str(name or "")).strip().casefold()
+
+
+def _build_group_member_lookup(members: list[Any]) -> dict[str, tuple[str, int]]:
+    lookup: dict[str, tuple[str, int]] = {}
+    ambiguous: set[str] = set()
+    for member in members:
+        key = _normalize_group_member_name(getattr(member, "display_name", ""))
+        raw_user_id = getattr(member, "user_id", "")
+        if not key:
+            continue
+        try:
+            user_id = int(str(raw_user_id))
+        except (TypeError, ValueError):
+            continue
+        if key in ambiguous:
+            continue
+        existing = lookup.get(key)
+        if existing is not None and existing[1] != user_id:
+            ambiguous.add(key)
+            lookup.pop(key, None)
+            continue
+        display_name = str(getattr(member, "display_name", "") or "").strip()
+        lookup[key] = (display_name or str(raw_user_id), user_id)
+    return lookup
+
+
+def _render_group_mentions(text: str, members: list[Any]) -> tuple[str, list[MessageEntity]]:
+    if "@[" not in text:
+        return text, []
+    lookup = _build_group_member_lookup(members)
+    rendered_parts: list[str] = []
+    entities: list[MessageEntity] = []
+    cursor = 0
+    rendered_length = 0
+    for match in GROUP_MEMBER_MENTION_RE.finditer(text):
+        literal = text[cursor:match.start()]
+        rendered_parts.append(literal)
+        rendered_length += len(literal)
+
+        raw_name = re.sub(r"\s+", " ", match.group("name")).strip()
+        mention_text = f"@{raw_name}" if raw_name else match.group(0)
+        mention_meta = lookup.get(_normalize_group_member_name(raw_name))
+        if mention_meta is not None:
+            display_name, user_id = mention_meta
+            mention_text = f"@{display_name}"
+            entities.append(
+                MessageEntity(
+                    type=MessageEntity.TEXT_MENTION,
+                    offset=rendered_length,
+                    length=len(mention_text),
+                    user=User(
+                        id=user_id,
+                        first_name=display_name or raw_name or "user",
+                        is_bot=False,
+                    ),
+                )
+            )
+        rendered_parts.append(mention_text)
+        rendered_length += len(mention_text)
+        cursor = match.end()
+
+    tail = text[cursor:]
+    rendered_parts.append(tail)
+    return "".join(rendered_parts), entities
+
+
+def _render_group_bubbles_with_mentions(
+    text: str,
+    members: list[Any],
+) -> tuple[str, list[tuple[str, list[MessageEntity]]]]:
+    raw_bubbles = split_into_bubbles(text)
+    rendered_bubbles = [_render_group_mentions(bubble, members) for bubble in raw_bubbles]
+    rendered_text = SPLIT_MARKER.join(rendered for rendered, _ in rendered_bubbles)
+    return rendered_text, rendered_bubbles
 
 
 # ---------------------------------------------------------------------------
@@ -1303,6 +1383,14 @@ def _make_message_handler(
             companion_local_context=companion_local_context,
             persona_mode=persona_mode,
         )
+        mention_members = store.list_group_members(group_id, limit=100) if in_group and group_id else []
+        rendered_reply_text = reply.text
+        rendered_bubbles: list[tuple[str, list[MessageEntity]]] | None = None
+        if mention_members:
+            rendered_reply_text, rendered_bubbles = _render_group_bubbles_with_mentions(reply.text, mention_members)
+            history = _get_history(context, is_group=in_group, thread_id=thread_id)
+            if history and history[-1]["role"] == "assistant":
+                history[-1]["content"] = rendered_reply_text
         if persona_mode is ChatPersonaMode.COMPANION:
             record_chat_interaction(
                 store=store,
@@ -1310,7 +1398,7 @@ def _make_message_handler(
                 channel_id=channel_id,
                 thread_id=thread_id,
                 user_text=history_user_text,
-                assistant_text=reply.text,
+                assistant_text=rendered_reply_text,
                 assistant_profile_update=reply.profile_update,
                 tool_audit=reply.tool_audit,
                 persona_mode=persona_mode.value,
@@ -1333,22 +1421,25 @@ def _make_message_handler(
                 channel_id=channel_id,
                 thread_id=thread_id,
                 user_text=history_user_text,
-                assistant_text=reply.text,
+                assistant_text=rendered_reply_text,
                 assistant_profile_update=reply.profile_update,
                 tool_audit=reply.tool_audit,
             )
-        bubbles = split_into_bubbles(reply.text)
+        bubbles = rendered_bubbles or [(bubble, []) for bubble in split_into_bubbles(rendered_reply_text)]
         elapsed = asyncio.get_running_loop().time() - reply_started
         remaining_delay = first_reply_delay_seconds - elapsed
         if remaining_delay > 0:
             await update.effective_chat.send_action(ChatAction.TYPING)
             await asyncio.sleep(remaining_delay)
-        for i, bubble in enumerate(bubbles):
+        for i, (bubble_text, bubble_entities) in enumerate(bubbles):
             if i > 0:
                 await update.effective_chat.send_action(ChatAction.TYPING)
-                delay = min(0.5 + len(bubble) * 0.01, 2.5) + random.uniform(-0.3, 0.3)
+                delay = min(0.5 + len(bubble_text) * 0.01, 2.5) + random.uniform(-0.3, 0.3)
                 await asyncio.sleep(max(delay, 0.3))
-            await update.effective_message.reply_text(bubble)
+            reply_kwargs: dict[str, Any] = {"text": bubble_text}
+            if bubble_entities:
+                reply_kwargs["entities"] = bubble_entities
+            await update.effective_message.reply_text(**reply_kwargs)
 
         for media_item in reply.media:
             try:
@@ -1384,13 +1475,13 @@ def _make_message_handler(
                     _cleanup_generated_media(cleanup_path)
 
         if in_group and group_id:
-            _append_group_buffer(context, thread_id, "陈襄", reply.text, role="assistant")
+            _append_group_buffer(context, thread_id, "陈襄", rendered_reply_text, role="assistant")
             store.append_group_message(
                 group_id=group_id,
                 thread_id=thread_id,
                 user_id="assistant",
                 display_name="陈襄",
-                content=reply.text,
+                content=rendered_reply_text,
             )
 
     return handle_message

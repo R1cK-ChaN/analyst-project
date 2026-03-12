@@ -965,6 +965,82 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         update.effective_message.reply_to_message.quote = quote
         self.assertEqual(_extract_reply_context(update), "partial quote")
 
+    def test_render_group_mentions_resolves_unique_member(self) -> None:
+        from analyst.delivery.bot import _render_group_mentions
+
+        members = [SimpleNamespace(user_id="42", display_name="Alice Zhang")]
+        rendered, entities = _render_group_mentions("ask @[Alice Zhang] to check", members)
+
+        self.assertEqual(rendered, "ask @Alice Zhang to check")
+        self.assertEqual(len(entities), 1)
+        self.assertEqual(entities[0].user.id, 42)
+        self.assertEqual(entities[0].offset, 4)
+        self.assertEqual(entities[0].length, len("@Alice Zhang"))
+
+    def test_render_group_mentions_leaves_ambiguous_member_plain(self) -> None:
+        from analyst.delivery.bot import _render_group_mentions
+
+        members = [
+            SimpleNamespace(user_id="42", display_name="Alice"),
+            SimpleNamespace(user_id="84", display_name="Alice"),
+        ]
+        rendered, entities = _render_group_mentions("ask @[Alice] to check", members)
+
+        self.assertEqual(rendered, "ask @Alice to check")
+        self.assertEqual(entities, [])
+
+    async def test_group_reply_text_uses_telegram_entities_for_mentions(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+        from analyst.delivery.sales_chat import SalesChatReply
+        from analyst.memory import ClientProfileUpdate
+
+        mention_entity = MagicMock()
+        mention_entity.type = "mention"
+        entities = {mention_entity: "@testbot"}
+        self.mock_store.list_group_members.return_value = [
+            SimpleNamespace(
+                user_id="42",
+                display_name="Alice",
+                role_in_group="",
+                personality_notes="",
+                first_seen_at="",
+                last_seen_at="",
+                message_count=3,
+            )
+        ]
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(
+            text="@testbot who should own this?",
+            chat_type="supergroup",
+            entities=entities,
+        )
+
+        with patch("analyst.delivery.bot.build_group_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction") as record_mock, \
+             patch(
+                 "analyst.delivery.bot._chat_reply",
+                 new=AsyncMock(
+                     return_value=SalesChatReply(
+                         text="@[Alice] please take this one.",
+                         profile_update=ClientProfileUpdate(),
+                     )
+                 ),
+             ):
+            await handler(update, context)
+
+        reply_kwargs = update.effective_message.reply_text.call_args.kwargs
+        self.assertEqual(reply_kwargs["text"], "@Alice please take this one.")
+        self.assertEqual(len(reply_kwargs["entities"]), 1)
+        self.assertEqual(reply_kwargs["entities"][0].user.id, 42)
+        self.assertEqual(
+            record_mock.call_args.kwargs["assistant_text"],
+            "@Alice please take this one.",
+        )
+        self.assertEqual(
+            self.mock_store.append_group_message.call_args_list[-1].kwargs["content"],
+            "@Alice please take this one.",
+        )
+
     async def test_reply_context_enriches_llm_text(self) -> None:
         """When replying to a message, the LLM should receive enriched text."""
         from analyst.delivery.bot import _make_message_handler
