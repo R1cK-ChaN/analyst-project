@@ -84,7 +84,7 @@ class PromptAssemblySelectionTest(unittest.TestCase):
         self.assertLess(len(SOUL_SYSTEM_PROMPT), 4000)
 
     def test_companion_default_prompt_remains_small(self) -> None:
-        self.assertLess(len(COMPANION_SYSTEM_PROMPT), 2200)
+        self.assertLess(len(COMPANION_SYSTEM_PROMPT), 2500)
 
     def test_companion_prompt_reflects_sunny_snt_companion_identity(self) -> None:
         self.assertIn("sunny、cheerful", COMPANION_SYSTEM_PROMPT)

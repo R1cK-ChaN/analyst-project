@@ -21,6 +21,7 @@ class PromptAssemblyContext:
     group_context: str = ""
     current_time_label: str = ""
     proactive_kind: str = ""
+    companion_local_context: str = ""
 
 
 @dataclass(frozen=True)
@@ -216,6 +217,22 @@ COMPANION_STYLE_MODULE = PromptModule(
 """,
 )
 
+COMPANION_SINGAPORE_LIFESTYLE_MODULE = PromptModule(
+    module_id="companion_singapore_lifestyle",
+    body="""\
+你的生活锚点：
+- 你住在 Singapore，平时在 Tanjong Pagar 一带上班。
+- 所有时间感都以 Asia/Singapore 为准，不要按中国或其他时区说话。
+
+真实性规则：
+- 只有 Singapore 早上才说“早安”或像刚起床。
+- Singapore 深夜不要说你刚在 gym、刚到办公室、刚吃午饭、准备开工。
+- 工作日白天才自然提通勤、office、午餐、Tanjong Pagar 一带的工作节奏。
+- 晚上更像收工、回家、散步、洗澡、放空；周末更松，不要写成工作日。
+- 周末不要说市场刚开、准备盯盘、刚开完晨会之类的话。
+""",
+)
+
 COMPANION_MEDIA_RULES_MODULE = PromptModule(
     module_id="companion_media_rules",
     body="""\
@@ -307,6 +324,7 @@ MODE_MODULES: dict[str, dict[str, PromptModule]] = {
         COMPANION_IDENTITY_MODULE.module_id: COMPANION_IDENTITY_MODULE,
         COMPANION_MESSAGE_FORMAT_MODULE.module_id: COMPANION_MESSAGE_FORMAT_MODULE,
         COMPANION_STYLE_MODULE.module_id: COMPANION_STYLE_MODULE,
+        COMPANION_SINGAPORE_LIFESTYLE_MODULE.module_id: COMPANION_SINGAPORE_LIFESTYLE_MODULE,
         COMPANION_MEDIA_RULES_MODULE.module_id: COMPANION_MEDIA_RULES_MODULE,
         COMPANION_BOUNDARIES_MODULE.module_id: COMPANION_BOUNDARIES_MODULE,
         COMPANION_PROFILE_MEMORY_MODULE.module_id: COMPANION_PROFILE_MEMORY_MODULE,
@@ -332,6 +350,7 @@ BASE_MODULE_IDS: dict[str, tuple[str, ...]] = {
         "companion_identity",
         "companion_message_format",
         "companion_style",
+        "companion_singapore_lifestyle",
         "companion_media_rules",
         "time_awareness",
         "companion_boundaries",
@@ -466,6 +485,11 @@ def assemble_persona_system_prompt(context: PromptAssemblyContext) -> PromptAsse
     parts = [_render_modules(mode, module_ids)]
     if context.current_time_label:
         parts.append(f"[CURRENT TIME] {context.current_time_label}")
+    if context.companion_local_context:
+        parts.append(
+            "[COMPANION LOCAL CONTEXT — internal only]\n"
+            f"{context.companion_local_context}"
+        )
     if context.group_context:
         parts.append(
             "[GROUP CHAT MODE — you are responding in a group chat. Be concise. "

@@ -340,6 +340,22 @@ class CompanionCheckInStateRecord:
 
 
 @dataclass(frozen=True)
+class CompanionLifestyleStateRecord:
+    client_id: str
+    channel: str
+    thread_id: str
+    timezone_name: str
+    home_base: str
+    work_area: str
+    routine_state: str
+    last_state_changed_at: str
+    last_morning_checkin_at: str
+    last_evening_checkin_at: str
+    last_weekend_checkin_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class ConversationMessageRecord:
     message_id: int
     client_id: str
@@ -1367,6 +1383,25 @@ class SQLiteEngineStore:
                 """
             )
             connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS companion_lifestyle_state (
+                    client_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    timezone_name TEXT NOT NULL DEFAULT 'Asia/Singapore',
+                    home_base TEXT NOT NULL DEFAULT 'Singapore',
+                    work_area TEXT NOT NULL DEFAULT 'Tanjong Pagar',
+                    routine_state TEXT NOT NULL DEFAULT '',
+                    last_state_changed_at TEXT NOT NULL DEFAULT '',
+                    last_morning_checkin_at TEXT NOT NULL DEFAULT '',
+                    last_evening_checkin_at TEXT NOT NULL DEFAULT '',
+                    last_weekend_checkin_at TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (client_id, channel, thread_id)
+                )
+                """
+            )
+            connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_analytical_observations_created ON analytical_observations(id DESC)"
             )
             connection.execute(
@@ -1389,6 +1424,9 @@ class SQLiteEngineStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_companion_checkin_due ON companion_checkin_state(enabled, pending_due_at)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_companion_lifestyle_updated ON companion_lifestyle_state(updated_at DESC)"
             )
             # -- Portfolio volatility management tables ---------------------
             connection.execute(
@@ -3652,6 +3690,125 @@ class SQLiteEngineStore:
                 retry_count=retry_count,
             )
 
+    def get_companion_lifestyle_state(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+    ) -> CompanionLifestyleStateRecord:
+        with self._connection(commit=False) as connection:
+            return self._get_companion_lifestyle_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+            )
+
+    def upsert_companion_lifestyle_state(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        timezone_name: str | None = None,
+        home_base: str | None = None,
+        work_area: str | None = None,
+        routine_state: str | None = None,
+        last_state_changed_at: str | None = None,
+    ) -> CompanionLifestyleStateRecord:
+        with self._connection(commit=True) as connection:
+            self._ensure_conversation_thread_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+            )
+            return self._upsert_companion_lifestyle_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                timezone_name=timezone_name,
+                home_base=home_base,
+                work_area=work_area,
+                routine_state=routine_state,
+                last_state_changed_at=last_state_changed_at,
+            )
+
+    def mark_companion_lifestyle_ping_sent(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        kind: str,
+        sent_at: str,
+    ) -> CompanionLifestyleStateRecord:
+        updates: dict[str, str] = {}
+        normalized = str(kind).strip().lower()
+        if normalized == "morning":
+            updates["last_morning_checkin_at"] = sent_at
+        elif normalized == "evening":
+            updates["last_evening_checkin_at"] = sent_at
+        elif normalized == "weekend":
+            updates["last_weekend_checkin_at"] = sent_at
+        with self._connection(commit=True) as connection:
+            return self._upsert_companion_lifestyle_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                **updates,
+            )
+
+    def list_enabled_companion_checkins(
+        self,
+        *,
+        channel_prefix: str = "telegram:",
+        limit: int = 200,
+    ) -> list[CompanionCheckInStateRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM companion_checkin_state
+                WHERE enabled = 1 AND channel LIKE ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (f"{channel_prefix}%", limit),
+            ).fetchall()
+        return [
+            self._row_to_companion_checkin_state(
+                row,
+                client_id=row["client_id"],
+                channel=row["channel"],
+                thread_id=row["thread_id"],
+            )
+            for row in rows
+        ]
+
+    def get_last_user_message_at(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+    ) -> str:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                """
+                SELECT created_at FROM conversation_messages
+                WHERE client_id = ? AND channel = ? AND thread_id = ? AND role = 'user'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (client_id, channel, thread_id),
+            ).fetchone()
+        if row is None:
+            return ""
+        return str(row["created_at"] or "")
+
     def ensure_conversation_thread(self, *, client_id: str, channel: str, thread_id: str) -> None:
         with self._connection(commit=True) as connection:
             self._ensure_conversation_thread_in_connection(
@@ -4203,6 +4360,148 @@ class SQLiteEngineStore:
                 next_record.last_sent_kind,
                 next_record.cooldown_until,
                 next_record.retry_count,
+                next_record.updated_at,
+            ),
+        )
+        return next_record
+
+    def _row_to_companion_lifestyle_state(
+        self,
+        row: sqlite3.Row | None,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+    ) -> CompanionLifestyleStateRecord:
+        if row is None:
+            return CompanionLifestyleStateRecord(
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                timezone_name="Asia/Singapore",
+                home_base="Singapore",
+                work_area="Tanjong Pagar",
+                routine_state="",
+                last_state_changed_at="",
+                last_morning_checkin_at="",
+                last_evening_checkin_at="",
+                last_weekend_checkin_at="",
+                updated_at="",
+            )
+        return CompanionLifestyleStateRecord(
+            client_id=row["client_id"],
+            channel=row["channel"],
+            thread_id=row["thread_id"],
+            timezone_name=row["timezone_name"],
+            home_base=row["home_base"],
+            work_area=row["work_area"],
+            routine_state=row["routine_state"],
+            last_state_changed_at=row["last_state_changed_at"],
+            last_morning_checkin_at=row["last_morning_checkin_at"],
+            last_evening_checkin_at=row["last_evening_checkin_at"],
+            last_weekend_checkin_at=row["last_weekend_checkin_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _get_companion_lifestyle_state_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+    ) -> CompanionLifestyleStateRecord:
+        row = connection.execute(
+            """
+            SELECT * FROM companion_lifestyle_state
+            WHERE client_id = ? AND channel = ? AND thread_id = ?
+            LIMIT 1
+            """,
+            (client_id, channel, thread_id),
+        ).fetchone()
+        return self._row_to_companion_lifestyle_state(
+            row,
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+        )
+
+    def _upsert_companion_lifestyle_state_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        timezone_name: str | None = None,
+        home_base: str | None = None,
+        work_area: str | None = None,
+        routine_state: str | None = None,
+        last_state_changed_at: str | None = None,
+        last_morning_checkin_at: str | None = None,
+        last_evening_checkin_at: str | None = None,
+        last_weekend_checkin_at: str | None = None,
+    ) -> CompanionLifestyleStateRecord:
+        current = self._get_companion_lifestyle_state_in_connection(
+            connection,
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+        )
+        now_iso = utc_now().isoformat()
+        next_record = CompanionLifestyleStateRecord(
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+            timezone_name=current.timezone_name if timezone_name is None else timezone_name,
+            home_base=current.home_base if home_base is None else home_base,
+            work_area=current.work_area if work_area is None else work_area,
+            routine_state=current.routine_state if routine_state is None else routine_state,
+            last_state_changed_at=current.last_state_changed_at if last_state_changed_at is None else last_state_changed_at,
+            last_morning_checkin_at=current.last_morning_checkin_at if last_morning_checkin_at is None else last_morning_checkin_at,
+            last_evening_checkin_at=current.last_evening_checkin_at if last_evening_checkin_at is None else last_evening_checkin_at,
+            last_weekend_checkin_at=current.last_weekend_checkin_at if last_weekend_checkin_at is None else last_weekend_checkin_at,
+            updated_at=now_iso,
+        )
+        connection.execute(
+            """
+            INSERT INTO companion_lifestyle_state (
+                client_id,
+                channel,
+                thread_id,
+                timezone_name,
+                home_base,
+                work_area,
+                routine_state,
+                last_state_changed_at,
+                last_morning_checkin_at,
+                last_evening_checkin_at,
+                last_weekend_checkin_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(client_id, channel, thread_id) DO UPDATE SET
+                timezone_name = excluded.timezone_name,
+                home_base = excluded.home_base,
+                work_area = excluded.work_area,
+                routine_state = excluded.routine_state,
+                last_state_changed_at = excluded.last_state_changed_at,
+                last_morning_checkin_at = excluded.last_morning_checkin_at,
+                last_evening_checkin_at = excluded.last_evening_checkin_at,
+                last_weekend_checkin_at = excluded.last_weekend_checkin_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                next_record.client_id,
+                next_record.channel,
+                next_record.thread_id,
+                next_record.timezone_name,
+                next_record.home_base,
+                next_record.work_area,
+                next_record.routine_state,
+                next_record.last_state_changed_at,
+                next_record.last_morning_checkin_at,
+                next_record.last_evening_checkin_at,
+                next_record.last_weekend_checkin_at,
                 next_record.updated_at,
             ),
         )

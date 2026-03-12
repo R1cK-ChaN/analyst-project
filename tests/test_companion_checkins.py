@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from analyst.contracts import utc_now
 from analyst.delivery.bot import (
+    _derive_companion_routine_state,
     _first_reply_delay_seconds,
     _reply_timing_bucket,
+    _routine_checkin_kind,
     _run_companion_checkins_job,
 )
 from analyst.delivery.sales_chat import system_prompt_with_memory
@@ -51,6 +55,43 @@ class CompanionTimingHelperTest(unittest.TestCase):
         self.assertIn("主动发起一条 companion check-in", prompt)
         self.assertIn("不要 guilt-trip", prompt)
         self.assertIn("不要主动聊市场", prompt)
+        self.assertIn("Asia/Singapore", prompt)
+
+    def test_routine_state_matches_singapore_weekday_and_weekend_time(self) -> None:
+        self.assertEqual(
+            _derive_companion_routine_state(datetime(2026, 3, 16, 7, 30, tzinfo=ZoneInfo("Asia/Singapore"))),
+            "morning",
+        )
+        self.assertEqual(
+            _derive_companion_routine_state(datetime(2026, 3, 16, 12, 15, tzinfo=ZoneInfo("Asia/Singapore"))),
+            "lunch",
+        )
+        self.assertEqual(
+            _derive_companion_routine_state(datetime(2026, 3, 16, 23, 10, tzinfo=ZoneInfo("Asia/Singapore"))),
+            "late_night",
+        )
+        self.assertEqual(
+            _derive_companion_routine_state(datetime(2026, 3, 15, 14, 0, tzinfo=ZoneInfo("Asia/Singapore"))),
+            "weekend_day",
+        )
+
+    def test_routine_checkin_kind_matches_windows(self) -> None:
+        self.assertEqual(
+            _routine_checkin_kind(datetime(2026, 3, 16, 7, 45, tzinfo=ZoneInfo("Asia/Singapore"))),
+            "morning",
+        )
+        self.assertEqual(
+            _routine_checkin_kind(datetime(2026, 3, 16, 19, 30, tzinfo=ZoneInfo("Asia/Singapore"))),
+            "evening",
+        )
+        self.assertEqual(
+            _routine_checkin_kind(datetime(2026, 3, 15, 12, 0, tzinfo=ZoneInfo("Asia/Singapore"))),
+            "weekend",
+        )
+        self.assertEqual(
+            _routine_checkin_kind(datetime(2026, 3, 16, 14, 0, tzinfo=ZoneInfo("Asia/Singapore"))),
+            "",
+        )
 
 
 class CompanionCheckInStoreTest(unittest.TestCase):
@@ -64,6 +105,33 @@ class CompanionCheckInStoreTest(unittest.TestCase):
             )
         self.assertFalse(state.enabled)
         self.assertEqual(state.pending_kind, "")
+
+    def test_lifestyle_state_defaults_to_singapore_and_tracks_routine(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "test.db")
+            state = store.get_companion_lifestyle_state(
+                client_id="u1",
+                channel="telegram:1",
+                thread_id="main",
+            )
+            self.assertEqual(state.timezone_name, "Asia/Singapore")
+            self.assertEqual(state.work_area, "Tanjong Pagar")
+            updated = store.upsert_companion_lifestyle_state(
+                client_id="u1",
+                channel="telegram:1",
+                thread_id="main",
+                routine_state="work",
+                last_state_changed_at=utc_now().isoformat(),
+            )
+            marked = store.mark_companion_lifestyle_ping_sent(
+                client_id="u1",
+                channel="telegram:1",
+                thread_id="main",
+                kind="morning",
+                sent_at=utc_now().isoformat(),
+            )
+        self.assertEqual(updated.routine_state, "work")
+        self.assertTrue(marked.last_morning_checkin_at)
 
     def test_enable_schedule_and_mark_sent(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -121,6 +189,7 @@ class CompanionCheckInJobTest(unittest.IsolatedAsyncioTestCase):
                 return func(*args, **kwargs)
 
             with patch("analyst.delivery.bot._is_within_checkin_send_window", return_value=True), \
+                 patch("analyst.delivery.bot._routine_checkin_kind", return_value=""), \
                  patch("analyst.delivery.bot.asyncio.to_thread", side_effect=fake_to_thread), \
                  patch("analyst.delivery.bot.build_chat_context", return_value=""), \
                  patch(
@@ -169,6 +238,7 @@ class CompanionCheckInJobTest(unittest.IsolatedAsyncioTestCase):
                 return func(*args, **kwargs)
 
             with patch("analyst.delivery.bot._is_within_checkin_send_window", return_value=True), \
+                 patch("analyst.delivery.bot._routine_checkin_kind", return_value=""), \
                  patch("analyst.delivery.bot.asyncio.to_thread", side_effect=fake_to_thread), \
                  patch(
                      "analyst.delivery.bot.generate_proactive_companion_reply",

@@ -260,18 +260,22 @@ def system_prompt_with_memory(
     user_lang: str = "",
     group_context: str = "",
     proactive_kind: str = "",
+    companion_local_context: str = "",
     persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
 ) -> str:
-    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    resolved_mode = resolve_chat_persona_mode(persona_mode)
+    timezone_name = "Asia/Singapore" if resolved_mode is ChatPersonaMode.COMPANION else "Asia/Shanghai"
+    now = datetime.now(ZoneInfo(timezone_name))
     return assemble_persona_system_prompt(
         PromptAssemblyContext(
-            mode=resolve_chat_persona_mode(persona_mode).value,
+            mode=resolved_mode.value,
             user_text=user_text,
             user_lang=user_lang,
             memory_context=memory_context,
             group_context=group_context,
-            current_time_label=now.strftime("%Y-%m-%d %H:%M %A") + " (Asia/Shanghai)",
+            current_time_label=now.strftime("%Y-%m-%d %H:%M %A") + f" ({timezone_name})",
             proactive_kind=proactive_kind,
+            companion_local_context=companion_local_context,
         )
     ).prompt
 
@@ -561,6 +565,7 @@ def generate_chat_reply(
     preferred_language: str = "",
     group_context: str = "",
     user_content: MessageContent | None = None,
+    companion_local_context: str = "",
     persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
 ) -> ChatReply:
     history_messages = [
@@ -574,6 +579,7 @@ def generate_chat_reply(
             user_text=user_text,
             user_lang=user_lang,
             group_context=group_context,
+            companion_local_context=companion_local_context,
             persona_mode=persona_mode,
         ),
         user_prompt=user_content or user_text,
@@ -613,6 +619,21 @@ def _proactive_companion_instruction(kind: str) -> str:
             "Send a gentle proactive follow-up message now. The user previously sounded emotionally strained. "
             "Write like a warm companion checking in naturally, not like a service follow-up. Keep it brief."
         )
+    if normalized == "morning":
+        return (
+            "Send a light weekday morning greeting now. It should feel like a natural Singapore morning check-in "
+            "before or during the Tanjong Pagar commute, not like a formal good-morning broadcast."
+        )
+    if normalized == "evening":
+        return (
+            "Send a light weekday evening check-in now. It should feel like someone who has wrapped up work in "
+            "Singapore and is settling into the evening, not like office-hours talk."
+        )
+    if normalized == "weekend":
+        return (
+            "Send a light weekend daytime check-in now. It should feel relaxed and off-duty, with no market-open "
+            "or workday framing."
+        )
     return (
         "Send a gentle inactivity check-in now. The user has been quiet for a while. "
         "Write like a warm companion casually checking in, with no guilt or pressure. Keep it brief."
@@ -625,6 +646,7 @@ def generate_proactive_companion_reply(
     agent_loop: PythonAgentLoop,
     memory_context: str = "",
     preferred_language: str = "",
+    companion_local_context: str = "",
 ) -> ChatReply:
     user_lang = preferred_language if preferred_language in {"zh", "en"} else ""
     result = agent_loop.run(
@@ -633,6 +655,7 @@ def generate_proactive_companion_reply(
             user_text="",
             user_lang=user_lang,
             proactive_kind=kind,
+            companion_local_context=companion_local_context,
             persona_mode=ChatPersonaMode.COMPANION,
         ),
         user_prompt=_proactive_companion_instruction(kind),

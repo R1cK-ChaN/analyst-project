@@ -85,7 +85,7 @@ MAX_GROUP_CONTEXT_CHARS = 1500
 COMPANION_CHECKIN_INTERVAL_SECONDS = 300
 COMPANION_CHECKIN_SEND_WINDOW_START_HOUR = 10
 COMPANION_CHECKIN_SEND_WINDOW_END_HOUR = 20
-COMPANION_CHECKIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
+COMPANION_LOCAL_TIMEZONE = ZoneInfo("Asia/Singapore")
 MANAGED_MEDIA_PREFIXES = (
     "analyst_gen_",
     "analyst_live_",
@@ -182,13 +182,95 @@ def _telegram_chat_id_from_channel(channel: str) -> int | None:
         return None
 
 
+def _companion_local_now(now: datetime) -> datetime:
+    return now.astimezone(COMPANION_LOCAL_TIMEZONE)
+
+
+def _minutes_since_midnight(moment: datetime) -> int:
+    return moment.hour * 60 + moment.minute
+
+
+def _is_weekend(moment: datetime) -> bool:
+    return moment.weekday() >= 5
+
+
+def _derive_companion_routine_state(now: datetime) -> str:
+    local_now = _companion_local_now(now)
+    minutes = _minutes_since_midnight(local_now)
+    if _is_weekend(local_now):
+        if minutes < 9 * 60:
+            return "sleep"
+        if minutes < 22 * 60 + 30:
+            return "weekend_day"
+        return "late_night"
+    if minutes < 6 * 60 + 30:
+        return "sleep"
+    if minutes < 8 * 60:
+        return "morning"
+    if minutes < 9 * 60 + 30:
+        return "commute"
+    if minutes < 12 * 60:
+        return "work"
+    if minutes < 13 * 60 + 30:
+        return "lunch"
+    if minutes < 18 * 60 + 30:
+        return "work"
+    if minutes < 22 * 60 + 30:
+        return "evening"
+    return "late_night"
+
+
+def _routine_checkin_kind(now: datetime) -> str:
+    local_now = _companion_local_now(now)
+    minutes = _minutes_since_midnight(local_now)
+    if _is_weekend(local_now):
+        if 11 * 60 <= minutes < 18 * 60:
+            return "weekend"
+        return ""
+    if 7 * 60 + 15 <= minutes < 9 * 60:
+        return "morning"
+    if 19 * 60 <= minutes < 21 * 60:
+        return "evening"
+    return ""
+
+
+def _parse_iso_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=COMPANION_LOCAL_TIMEZONE)
+    return parsed
+
+
+def _is_same_local_day(value: str, now: datetime) -> bool:
+    parsed = _parse_iso_datetime(value)
+    if parsed is None:
+        return False
+    return _companion_local_now(parsed).date() == _companion_local_now(now).date()
+
+
+def _lifestyle_ping_sent_at(lifestyle_state: Any, kind: str) -> str:
+    normalized = str(kind).strip().lower()
+    if normalized == "morning":
+        return str(getattr(lifestyle_state, "last_morning_checkin_at", "") or "")
+    if normalized == "evening":
+        return str(getattr(lifestyle_state, "last_evening_checkin_at", "") or "")
+    if normalized == "weekend":
+        return str(getattr(lifestyle_state, "last_weekend_checkin_at", "") or "")
+    return ""
+
+
 def _is_within_checkin_send_window(now: datetime) -> bool:
-    local_now = now.astimezone(COMPANION_CHECKIN_TIMEZONE)
+    local_now = _companion_local_now(now)
     return COMPANION_CHECKIN_SEND_WINDOW_START_HOUR <= local_now.hour < COMPANION_CHECKIN_SEND_WINDOW_END_HOUR
 
 
 def _next_checkin_window_start(now: datetime) -> datetime:
-    local_now = now.astimezone(COMPANION_CHECKIN_TIMEZONE)
+    local_now = _companion_local_now(now)
     candidate = local_now.replace(
         hour=COMPANION_CHECKIN_SEND_WINDOW_START_HOUR,
         minute=0,
@@ -201,21 +283,63 @@ def _next_checkin_window_start(now: datetime) -> datetime:
         candidate = candidate
     else:
         candidate = local_now
-    return candidate.astimezone(now.tzinfo or COMPANION_CHECKIN_TIMEZONE)
+    return candidate.astimezone(now.tzinfo or COMPANION_LOCAL_TIMEZONE)
 
 
 def _same_day_retry_due(now: datetime) -> datetime | None:
-    local_now = now.astimezone(COMPANION_CHECKIN_TIMEZONE)
+    local_now = _companion_local_now(now)
     retry_local = local_now + timedelta(hours=1)
     if retry_local.date() != local_now.date():
         return None
     if retry_local.hour >= COMPANION_CHECKIN_SEND_WINDOW_END_HOUR:
         return None
-    return retry_local.astimezone(now.tzinfo or COMPANION_CHECKIN_TIMEZONE)
+    return retry_local.astimezone(now.tzinfo or COMPANION_LOCAL_TIMEZONE)
 
 
 def _cooldown_until(now: datetime) -> datetime:
     return now + timedelta(days=7)
+
+
+def _refresh_companion_lifestyle_state(
+    store: SQLiteEngineStore,
+    *,
+    client_id: str,
+    channel_id: str,
+    thread_id: str,
+    now: datetime,
+) -> Any:
+    current = store.get_companion_lifestyle_state(
+        client_id=client_id,
+        channel=channel_id,
+        thread_id=thread_id,
+    )
+    routine_state = _derive_companion_routine_state(now)
+    last_state_changed_at = current.last_state_changed_at
+    if current.routine_state != routine_state:
+        last_state_changed_at = now.isoformat()
+    return store.upsert_companion_lifestyle_state(
+        client_id=client_id,
+        channel=channel_id,
+        thread_id=thread_id,
+        timezone_name="Asia/Singapore",
+        home_base="Singapore",
+        work_area="Tanjong Pagar",
+        routine_state=routine_state,
+        last_state_changed_at=last_state_changed_at,
+    )
+
+
+def _companion_local_context(lifestyle_state: Any, now: datetime) -> str:
+    local_now = _companion_local_now(now)
+    day_type = "weekend" if _is_weekend(local_now) else "weekday"
+    return (
+        f"timezone: Asia/Singapore\n"
+        f"home_base: Singapore\n"
+        f"work_area: Tanjong Pagar\n"
+        f"local_time: {local_now.strftime('%Y-%m-%d %H:%M %A')} (Asia/Singapore)\n"
+        f"day_type: {day_type}\n"
+        f"routine_state: {getattr(lifestyle_state, 'routine_state', '')}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -507,6 +631,7 @@ def _refresh_companion_checkin_schedule(
     thread_id: str,
     user_text: str,
     profile: Any,
+    now: datetime,
 ) -> None:
     state = store.get_companion_checkin_state(
         client_id=client_id,
@@ -515,7 +640,6 @@ def _refresh_companion_checkin_schedule(
     )
     if not state.enabled:
         return
-    now = utc_now()
     if _needs_emotional_follow_up(user_text, profile):
         due_at = now + timedelta(hours=18)
         store.schedule_companion_checkin(
@@ -525,14 +649,137 @@ def _refresh_companion_checkin_schedule(
             kind="follow_up",
             due_at=due_at.isoformat(),
         )
+
+
+def _should_send_inactivity_ping(
+    *,
+    now: datetime,
+    checkin_state: Any,
+    last_user_message_at: str,
+) -> bool:
+    if not last_user_message_at:
+        return False
+    if checkin_state.pending_kind == "follow_up":
+        return False
+    if checkin_state.cooldown_until:
+        cooldown_until = _parse_iso_datetime(checkin_state.cooldown_until)
+        if cooldown_until is not None and cooldown_until > now:
+            return False
+    if checkin_state.last_sent_at and _is_same_local_day(checkin_state.last_sent_at, now):
+        return False
+    last_user_dt = _parse_iso_datetime(last_user_message_at)
+    if last_user_dt is None:
+        return False
+    return now - last_user_dt >= timedelta(days=5)
+
+
+def _should_send_routine_ping(
+    *,
+    now: datetime,
+    lifestyle_state: Any,
+    checkin_state: Any,
+    last_user_message_at: str,
+    kind: str,
+) -> bool:
+    if not kind:
+        return False
+    if checkin_state.pending_kind:
+        return False
+    if checkin_state.cooldown_until:
+        cooldown_until = _parse_iso_datetime(checkin_state.cooldown_until)
+        if cooldown_until is not None and cooldown_until > now:
+            return False
+    if last_user_message_at and _is_same_local_day(last_user_message_at, now):
+        return False
+    if checkin_state.last_sent_at and _is_same_local_day(checkin_state.last_sent_at, now):
+        return False
+    routine_sent_at = _lifestyle_ping_sent_at(lifestyle_state, kind)
+    if routine_sent_at and _is_same_local_day(routine_sent_at, now):
+        return False
+    return True
+
+
+async def _send_companion_proactive_message(
+    *,
+    store: SQLiteEngineStore,
+    agent_loop: PythonAgentLoop,
+    bot: Any,
+    state: Any,
+    kind: str,
+    now: datetime,
+) -> None:
+    chat_id = _telegram_chat_id_from_channel(state.channel)
+    if chat_id is None:
         return
-    due_at = now + timedelta(days=5)
-    store.schedule_companion_checkin(
-        client_id=client_id,
-        channel=channel_id,
-        thread_id=thread_id,
-        kind="inactivity",
-        due_at=due_at.isoformat(),
+    profile = store.get_client_profile(state.client_id)
+    lifestyle_state = _refresh_companion_lifestyle_state(
+        store,
+        client_id=state.client_id,
+        channel_id=state.channel,
+        thread_id=state.thread_id,
+        now=now,
+    )
+    memory_context = build_chat_context(
+        store=store,
+        client_id=state.client_id,
+        channel_id=state.channel,
+        thread_id=state.thread_id,
+        query="",
+        persona_mode=ChatPersonaMode.COMPANION.value,
+    )
+    reply = await asyncio.to_thread(
+        generate_proactive_companion_reply,
+        kind=kind,
+        agent_loop=agent_loop,
+        memory_context=memory_context,
+        preferred_language=profile.preferred_language,
+        companion_local_context=_companion_local_context(lifestyle_state, now),
+    )
+    bubbles = split_into_bubbles(reply.text)
+    await _send_bot_bubbles(bot, chat_id=chat_id, bubbles=bubbles)
+    sent_at = utc_now().isoformat()
+    store.append_conversation_message(
+        client_id=state.client_id,
+        channel=state.channel,
+        thread_id=state.thread_id,
+        role="assistant",
+        content=reply.text,
+        metadata={"proactive_kind": kind, "channel": state.channel},
+    )
+    store.enqueue_delivery(
+        client_id=state.client_id,
+        channel=state.channel,
+        thread_id=state.thread_id,
+        source_type="companion_checkin",
+        content_rendered=reply.text,
+        status="delivered",
+        delivered_at=sent_at,
+        metadata={"kind": kind},
+    )
+    if kind in {"morning", "evening", "weekend"}:
+        store.mark_companion_lifestyle_ping_sent(
+            client_id=state.client_id,
+            channel=state.channel,
+            thread_id=state.thread_id,
+            kind=kind,
+            sent_at=sent_at,
+        )
+        store.mark_companion_checkin_sent(
+            client_id=state.client_id,
+            channel=state.channel,
+            thread_id=state.thread_id,
+            kind=kind,
+            sent_at=sent_at,
+            cooldown_until="",
+        )
+        return
+    store.mark_companion_checkin_sent(
+        client_id=state.client_id,
+        channel=state.channel,
+        thread_id=state.thread_id,
+        kind=kind,
+        sent_at=sent_at,
+        cooldown_until=_cooldown_until(utc_now()).isoformat(),
     )
 
 
@@ -543,58 +790,18 @@ async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> Non
     if store is None or agent_loop is None:
         return
     now = utc_now()
-    if not _is_within_checkin_send_window(now):
-        return
     due_states = store.list_due_companion_checkins(now_iso=now.isoformat(), limit=10)
     for state in due_states:
-        chat_id = _telegram_chat_id_from_channel(state.channel)
-        if chat_id is None:
+        if state.pending_kind in {"follow_up", "inactivity"} and not _is_within_checkin_send_window(now):
             continue
-        profile = store.get_client_profile(state.client_id)
         try:
-            memory_context = build_chat_context(
+            await _send_companion_proactive_message(
                 store=store,
-                client_id=state.client_id,
-                channel_id=state.channel,
-                thread_id=state.thread_id,
-                query="",
-                persona_mode=ChatPersonaMode.COMPANION.value,
-            )
-            reply = await asyncio.to_thread(
-                generate_proactive_companion_reply,
-                kind=state.pending_kind,
                 agent_loop=agent_loop,
-                memory_context=memory_context,
-                preferred_language=profile.preferred_language,
-            )
-            bubbles = split_into_bubbles(reply.text)
-            await _send_bot_bubbles(context.bot, chat_id=chat_id, bubbles=bubbles)
-            sent_at = utc_now().isoformat()
-            store.append_conversation_message(
-                client_id=state.client_id,
-                channel=state.channel,
-                thread_id=state.thread_id,
-                role="assistant",
-                content=reply.text,
-                metadata={"proactive_kind": state.pending_kind, "channel": state.channel},
-            )
-            store.enqueue_delivery(
-                client_id=state.client_id,
-                channel=state.channel,
-                thread_id=state.thread_id,
-                source_type="companion_checkin",
-                content_rendered=reply.text,
-                status="delivered",
-                delivered_at=sent_at,
-                metadata={"kind": state.pending_kind},
-            )
-            store.mark_companion_checkin_sent(
-                client_id=state.client_id,
-                channel=state.channel,
-                thread_id=state.thread_id,
+                bot=context.bot,
+                state=state,
                 kind=state.pending_kind,
-                sent_at=sent_at,
-                cooldown_until=_cooldown_until(utc_now()).isoformat(),
+                now=now,
             )
         except Exception:
             logger.exception("Failed to send companion proactive check-in")
@@ -616,6 +823,59 @@ async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> Non
                     next_due_at=next_window.isoformat(),
                     retry_count=0,
                 )
+    enabled_states = store.list_enabled_companion_checkins(limit=100)
+    for state in enabled_states:
+        last_user_message_at = store.get_last_user_message_at(
+            client_id=state.client_id,
+            channel=state.channel,
+            thread_id=state.thread_id,
+        )
+        if _is_within_checkin_send_window(now) and _should_send_inactivity_ping(
+            now=now,
+            checkin_state=state,
+            last_user_message_at=last_user_message_at,
+        ):
+            try:
+                await _send_companion_proactive_message(
+                    store=store,
+                    agent_loop=agent_loop,
+                    bot=context.bot,
+                    state=state,
+                    kind="inactivity",
+                    now=now,
+                )
+            except Exception:
+                logger.exception("Failed to send companion inactivity check-in")
+            continue
+        routine_kind = _routine_checkin_kind(now)
+        if not routine_kind:
+            continue
+        lifestyle_state = _refresh_companion_lifestyle_state(
+            store,
+            client_id=state.client_id,
+            channel_id=state.channel,
+            thread_id=state.thread_id,
+            now=now,
+        )
+        if not _should_send_routine_ping(
+            now=now,
+            lifestyle_state=lifestyle_state,
+            checkin_state=state,
+            last_user_message_at=last_user_message_at,
+            kind=routine_kind,
+        ):
+            continue
+        try:
+            await _send_companion_proactive_message(
+                store=store,
+                agent_loop=agent_loop,
+                bot=context.bot,
+                state=state,
+                kind=routine_kind,
+                now=now,
+            )
+        except Exception:
+            logger.exception("Failed to send companion routine check-in")
 
 
 # ---------------------------------------------------------------------------
@@ -640,6 +900,7 @@ async def _chat_reply(
     user_content: Any | None = None,
     history_text: str | None = None,
     attached_image: RequestImageInput | None = None,
+    companion_local_context: str = "",
     persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
 ) -> SalesChatReply:
     """Send user_text through the agent loop with persona, history, tools, and sales context."""
@@ -657,6 +918,7 @@ async def _chat_reply(
                 preferred_language=preferred_language,
                 group_context=group_context,
                 user_content=user_content,
+                companion_local_context=companion_local_context,
                 persona_mode=persona_mode,
             )
         response_text = result.text
@@ -771,6 +1033,14 @@ def _make_checkins_toggle_handler(
         channel_id = f"telegram:{update.effective_chat.id}"
         topic_id = getattr(update.effective_message, "message_thread_id", None)
         thread_id = str(topic_id) if topic_id is not None else "main"
+        now = utc_now()
+        _refresh_companion_lifestyle_state(
+            store,
+            client_id=user_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            now=now,
+        )
         state = store.set_companion_checkins_enabled(
             client_id=user_id,
             channel=channel_id,
@@ -778,13 +1048,6 @@ def _make_checkins_toggle_handler(
             enabled=enabled,
         )
         if enabled and state.enabled:
-            store.schedule_companion_checkin(
-                client_id=user_id,
-                channel=channel_id,
-                thread_id=thread_id,
-                kind="inactivity",
-                due_at=(utc_now() + timedelta(days=5)).isoformat(),
-            )
             text = "行，那我之后会很偶尔地主动来问候你一下。你想停的话，随时 /checkins_off。"
         else:
             text = "好，我不再主动发 check-in 了。你之后想开回来，随时 /checkins_on。"
@@ -878,6 +1141,18 @@ def _make_message_handler(
         channel_id = f"telegram:{update.effective_chat.id}"
         topic_id = getattr(message, "message_thread_id", None)
         thread_id = str(topic_id) if topic_id is not None else "main"
+        now_utc = utc_now()
+        companion_lifestyle_state = None
+        companion_local_context = ""
+        if persona_mode is ChatPersonaMode.COMPANION:
+            companion_lifestyle_state = _refresh_companion_lifestyle_state(
+                store,
+                client_id=user_id,
+                channel_id=channel_id,
+                thread_id=thread_id,
+                now=now_utc,
+            )
+            companion_local_context = _companion_local_context(companion_lifestyle_state, now_utc)
 
         in_group = _is_group_chat(update)
         if not in_group and persona_mode is ChatPersonaMode.COMPANION:
@@ -984,6 +1259,7 @@ def _make_message_handler(
             user_content=user_content,
             history_text=history_user_text,
             attached_image=attached_image,
+            companion_local_context=companion_local_context,
             persona_mode=persona_mode,
         )
         if persona_mode is ChatPersonaMode.COMPANION:
@@ -1007,6 +1283,7 @@ def _make_message_handler(
                     thread_id=thread_id,
                     user_text=history_user_text,
                     profile=updated_profile,
+                    now=now_utc,
                 )
         else:
             record_sales_interaction(
