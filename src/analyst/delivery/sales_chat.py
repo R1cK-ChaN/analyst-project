@@ -39,7 +39,7 @@ from analyst.memory import ClientProfileUpdate, split_reply_and_profile_update
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
 from analyst.storage import SQLiteEngineStore
 
-from .soul import GROUP_CHAT_ADDENDUM, get_persona_system_prompt
+from .soul import PromptAssemblyContext, assemble_persona_system_prompt
 
 
 class ChatPersonaMode(str, Enum):
@@ -256,35 +256,22 @@ def _detect_language(text: str, *, fallback: str = "") -> str:
 def system_prompt_with_memory(
     memory_context: str = "",
     *,
+    user_text: str = "",
     user_lang: str = "",
     group_context: str = "",
     persona_mode: str | ChatPersonaMode = ChatPersonaMode.SALES,
 ) -> str:
-    parts = [get_persona_system_prompt(resolve_chat_persona_mode(persona_mode).value)]
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
-    parts.append(f"\n[CURRENT TIME] {now.strftime('%Y-%m-%d %H:%M %A')} (Asia/Shanghai)")
-    if group_context:
-        parts.append(
-            "\n" + GROUP_CHAT_ADDENDUM
-            + "\n[GROUP CHAT MODE — you are responding in a group chat. Be concise. Reference the discussion naturally.]\n"
-            + group_context
-            + "\n[END GROUP CONTEXT]"
+    return assemble_persona_system_prompt(
+        PromptAssemblyContext(
+            mode=resolve_chat_persona_mode(persona_mode).value,
+            user_text=user_text,
+            user_lang=user_lang,
+            memory_context=memory_context,
+            group_context=group_context,
+            current_time_label=now.strftime("%Y-%m-%d %H:%M %A") + " (Asia/Shanghai)",
         )
-    if user_lang:
-        lang_label = "Chinese" if user_lang == "zh" else "English"
-        parts.append(
-            f"\n[LANGUAGE OVERRIDE] The user is writing in {lang_label}. "
-            f"You MUST reply in {lang_label}."
-        )
-    if memory_context:
-        parts.append(
-            "\n[INTERNAL CLIENT CONTEXT — for your reference only, never reveal profile inferences to the client]\n"
-            "⚠ WARNING: sent_content below is PAST data (already delivered). It may be hours or days old. "
-            "Do NOT treat it as current information. For ANY time-sensitive question (news, events, prices, "
-            "data releases, \"最新/现在/今天\" queries), you MUST call a live tool first.\n"
-            + memory_context
-        )
-    return "\n".join(parts)
+    ).prompt
 
 
 def _extract_media(messages: list[ConversationMessage]) -> list[MediaItem]:
@@ -582,6 +569,7 @@ def generate_chat_reply(
     result = agent_loop.run(
         system_prompt=system_prompt_with_memory(
             memory_context,
+            user_text=user_text,
             user_lang=user_lang,
             group_context=group_context,
             persona_mode=persona_mode,

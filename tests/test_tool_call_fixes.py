@@ -13,7 +13,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from analyst.delivery.sales_chat import system_prompt_with_memory, build_chat_tools
-from analyst.delivery.soul import SOUL_SYSTEM_PROMPT
+from analyst.delivery.soul import (
+    COMPANION_SYSTEM_PROMPT,
+    SOUL_SYSTEM_PROMPT,
+    PromptAssemblyContext,
+    assemble_persona_system_prompt,
+)
 from analyst.memory.service import _format_age, _render_delivery_history, build_sales_context
 from analyst.memory import record_sales_interaction
 from analyst.storage import DeliveryQueueRecord, SQLiteEngineStore
@@ -70,6 +75,53 @@ class Fix2BroadenedToolInstructionTest(unittest.TestCase):
     def test_prompt_covers_specific_website_requests(self) -> None:
         # The instruction mentions fetching data from specific sites
         self.assertIn("investing.com", SOUL_SYSTEM_PROMPT)
+
+
+class PromptAssemblySelectionTest(unittest.TestCase):
+    """The modular prompt assembler should stage heavy rules only when needed."""
+
+    def test_sales_default_prompt_is_materially_smaller_than_old_monolith(self) -> None:
+        self.assertLess(len(SOUL_SYSTEM_PROMPT), 4000)
+
+    def test_companion_default_prompt_remains_small(self) -> None:
+        self.assertLess(len(COMPANION_SYSTEM_PROMPT), 2200)
+
+    def test_sales_neutral_turn_does_not_load_emotional_support_module(self) -> None:
+        result = assemble_persona_system_prompt(
+            PromptAssemblyContext(mode="sales", user_text="PMI 怎么看")
+        )
+        self.assertNotIn("sales_emotional_support", result.module_ids)
+
+    def test_sales_stressed_turn_loads_emotional_support_module(self) -> None:
+        result = assemble_persona_system_prompt(
+            PromptAssemblyContext(mode="sales", user_text="不行了 我快爆仓了 现在很焦虑")
+        )
+        self.assertIn("sales_emotional_support", result.module_ids)
+        self.assertIn("情绪支持优先于分析", result.prompt)
+
+    def test_profile_memory_module_only_loads_when_profile_fields_present(self) -> None:
+        neutral = assemble_persona_system_prompt(PromptAssemblyContext(mode="sales", memory_context=""))
+        profiled = assemble_persona_system_prompt(
+            PromptAssemblyContext(mode="sales", memory_context="- personal_facts: runs every morning")
+        )
+        self.assertNotIn("sales_profile_memory", neutral.module_ids)
+        self.assertIn("sales_profile_memory", profiled.module_ids)
+
+    def test_reengagement_module_loads_for_inactive_user(self) -> None:
+        result = assemble_persona_system_prompt(
+            PromptAssemblyContext(mode="sales", memory_context="- days_since_last_active: 9")
+        )
+        self.assertIn("re_engagement", result.module_ids)
+        self.assertIn("好久没聊了", result.prompt)
+
+    def test_group_module_only_loads_for_group_context(self) -> None:
+        direct = assemble_persona_system_prompt(PromptAssemblyContext(mode="sales"))
+        grouped = assemble_persona_system_prompt(
+            PromptAssemblyContext(mode="sales", group_context="### group_conversation\n- A: hi")
+        )
+        self.assertNotIn("group_chat", direct.module_ids)
+        self.assertIn("group_chat", grouped.module_ids)
+        self.assertIn("GROUP CHAT MODE", grouped.prompt)
 
 
 # ------------------------------------------------------------------ #
