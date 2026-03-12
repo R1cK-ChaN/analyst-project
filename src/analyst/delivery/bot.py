@@ -448,19 +448,29 @@ def _extract_message_text(message: Any) -> str:
     return str(message.text or message.caption or "").strip()
 
 
-def _summarize_user_message(text: str, *, has_image: bool) -> str:
-    if has_image and text:
-        return f"{text}\n[Image attached]"
-    if has_image:
-        return "[Image attached]"
+def _image_summary_marker(image: RequestImageInput | None) -> str:
+    if image is None:
+        return ""
+    if image.source == "reply":
+        return "[Referenced image]"
+    return "[Image attached]"
+
+
+def _summarize_user_message(text: str, *, image: RequestImageInput | None = None) -> str:
+    marker = _image_summary_marker(image)
+    if marker and text:
+        return f"{text}\n{marker}"
+    if marker:
+        return marker
     return text
 
 
-def _render_image_instruction(text: str) -> str:
+def _render_image_instruction(text: str, *, image: RequestImageInput | None = None) -> str:
     base = text.strip() or "The user sent an image without caption. Analyze it and respond naturally."
+    relation = "attached" if image is None or image.source != "reply" else "referenced in the replied-to message"
     return (
         f"{base}\n\n"
-        "[The user attached an image. You can inspect it directly. "
+        f"[The user provided an image ({relation}). You can inspect it directly. "
         "If they ask for a variation or edit of the attached image, call generate_image with "
         "use_attached_image=true. If they ask to animate the attached image, call "
         "generate_live_photo with use_attached_image=true.]"
@@ -497,30 +507,46 @@ def _encode_image_data_uri(raw_bytes: bytes, mime_type: str) -> RequestImageInpu
     return RequestImageInput(data_uri=f"data:{normalized_mime_type};base64,{encoded}", mime_type=normalized_mime_type)
 
 
-async def _extract_attached_image(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> RequestImageInput | None:
-    message = update.effective_message
-    if message is None:
-        return None
+def _image_file_ref(message: Any) -> tuple[str, str, str] | None:
     file_id = ""
     mime_type = "image/jpeg"
     filename = ""
     photo_items = getattr(message, "photo", None)
     if isinstance(photo_items, (list, tuple)) and photo_items:
         photo = photo_items[-1]
-        file_id = photo.file_id
+        raw_file_id = getattr(photo, "file_id", "")
+        if not isinstance(raw_file_id, str) or not raw_file_id:
+            return None
+        file_id = raw_file_id
         filename = f"{file_id}.jpg"
     else:
         document = getattr(message, "document", None)
         mime_type = getattr(document, "mime_type", "") if document is not None else ""
-        if not mime_type.startswith("image/"):
+        if not isinstance(mime_type, str) or not mime_type.startswith("image/"):
             return None
-        file_id = document.file_id
-        filename = document.file_name or f"{file_id}.jpg"
+        raw_file_id = getattr(document, "file_id", "")
+        if not isinstance(raw_file_id, str) or not raw_file_id:
+            return None
+        file_id = raw_file_id
+        raw_filename = getattr(document, "file_name", "")
+        filename = raw_filename if isinstance(raw_filename, str) and raw_filename else f"{file_id}.jpg"
     if not file_id:
         return None
+    return file_id, mime_type, filename
+
+
+async def _extract_message_image(
+    message: Any,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    source: str,
+) -> RequestImageInput | None:
+    if message is None:
+        return None
+    image_ref = _image_file_ref(message)
+    if image_ref is None:
+        return None
+    file_id, mime_type, filename = image_ref
 
     telegram_file = await context.bot.get_file(file_id)
     raw_bytes = bytes(await telegram_file.download_as_bytearray())
@@ -529,7 +555,22 @@ async def _extract_attached_image(
         data_uri=request_image.data_uri,
         mime_type=request_image.mime_type,
         filename=filename,
+        source=source,
     )
+
+
+async def _extract_attached_image(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> RequestImageInput | None:
+    message = update.effective_message
+    if message is None:
+        return None
+    direct_image = await _extract_message_image(message, context, source="message")
+    if direct_image is not None:
+        return direct_image
+    reply_message = getattr(message, "reply_to_message", None)
+    return await _extract_message_image(reply_message, context, source="reply")
 
 
 # ---------------------------------------------------------------------------
@@ -1163,7 +1204,7 @@ def _make_message_handler(
             )
 
         reply_context = _extract_reply_context(update)
-        history_user_text = _summarize_user_message(text, has_image=attached_image is not None)
+        history_user_text = _summarize_user_message(text, image=attached_image)
 
         if in_group:
             sender_name = _get_user_display_name(update)
@@ -1189,7 +1230,7 @@ def _make_message_handler(
 
             bot_username = context.bot.username or ""
             text = _strip_bot_mention(text, bot_username)
-            history_user_text = _summarize_user_message(text, has_image=attached_image is not None)
+            history_user_text = _summarize_user_message(text, image=attached_image)
             if not text and attached_image is None:
                 return
 
@@ -1210,7 +1251,7 @@ def _make_message_handler(
         )
         user_content = (
             [
-                {"type": "text", "text": _render_image_instruction(llm_text)},
+                {"type": "text", "text": _render_image_instruction(llm_text, image=attached_image)},
                 {"type": "image_url", "image_url": {"url": attached_image.data_uri}},
             ]
             if attached_image is not None

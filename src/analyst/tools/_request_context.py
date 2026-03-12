@@ -11,6 +11,7 @@ class RequestImageInput:
     data_uri: str
     mime_type: str
     filename: str = ""
+    source: str = "message"
 
 
 _REQUEST_IMAGE: ContextVar[RequestImageInput | None] = ContextVar(

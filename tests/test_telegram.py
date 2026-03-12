@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -449,7 +450,31 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         self.mock_loop = MagicMock()
         self.mock_tools = []
         self.mock_store = MagicMock()
-        self.mock_store.get_client_profile.return_value = MagicMock(preferred_language="zh")
+
+        async def run_inline(func, /, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        self.to_thread_patcher = patch(
+            "analyst.delivery.bot.asyncio.to_thread",
+            new=AsyncMock(side_effect=run_inline),
+        )
+        self.to_thread_patcher.start()
+        self.addCleanup(self.to_thread_patcher.stop)
+
+        self.mock_store.get_client_profile.return_value = SimpleNamespace(
+            preferred_language="zh",
+            response_style="",
+            current_mood="",
+            emotional_trend="",
+            stress_level="",
+            confidence="",
+            notes="",
+            personal_facts=[],
+            total_interactions=0,
+            last_active_at="",
+        )
+        self.mock_store.list_group_messages.return_value = []
+        self.mock_store.list_group_members.return_value = []
         self.mock_store.build_sales_context = MagicMock(return_value="")
 
         self.mock_loop.run.return_value = AgentLoopResult(
@@ -736,6 +761,92 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(call_kwargs["user_prompt"], list)
         self.assertEqual(call_kwargs["user_prompt"][0]["type"], "text")
         self.assertEqual(call_kwargs["user_prompt"][1]["type"], "image_url")
+
+    async def test_private_reply_to_photo_uses_referenced_image(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+        from analyst.delivery.sales_chat import SalesChatReply
+        from analyst.memory import ClientProfileUpdate
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(
+            text="what's happening here?",
+            chat_type="private",
+            reply_to_bot=True,
+        )
+        reply_photo = MagicMock()
+        reply_photo.file_id = "reply-photo-file-id"
+        update.effective_message.reply_to_message.photo = [reply_photo]
+        update.effective_message.reply_to_message.text = None
+        update.effective_message.reply_to_message.caption = None
+        telegram_file = MagicMock()
+        telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake image bytes"))
+        context.bot.get_file.return_value = telegram_file
+
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction") as mock_record, \
+             patch(
+                 "analyst.delivery.bot._chat_reply",
+                 new=AsyncMock(
+                     return_value=SalesChatReply(
+                         text="reply text",
+                         profile_update=ClientProfileUpdate(),
+                     )
+                 ),
+             ) as mock_chat_reply:
+            await handler(update, context)
+
+        call_kwargs = mock_chat_reply.call_args.kwargs
+        self.assertEqual(call_kwargs["attached_image"].source, "reply")
+        self.assertEqual(call_kwargs["user_content"][1]["type"], "image_url")
+        self.assertIn("referenced in the replied-to message", call_kwargs["user_content"][0]["text"])
+        self.assertIn("[Referenced image]", mock_record.call_args.kwargs["user_text"])
+
+    async def test_group_reply_to_photo_with_mention_uses_referenced_image(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+        from analyst.delivery.sales_chat import SalesChatReply
+        from analyst.memory import ClientProfileUpdate
+
+        mention_entity = MagicMock()
+        mention_entity.type = "mention"
+        entities = {mention_entity: "@testbot"}
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(
+            text="@testbot what do you think of this?",
+            chat_type="supergroup",
+            entities=entities,
+        )
+        update.effective_message.reply_to_message = MagicMock()
+        reply_user = MagicMock()
+        reply_user.id = 12345
+        update.effective_message.reply_to_message.from_user = reply_user
+        reply_photo = MagicMock()
+        reply_photo.file_id = "group-reply-photo-file-id"
+        update.effective_message.reply_to_message.photo = [reply_photo]
+        update.effective_message.reply_to_message.text = None
+        update.effective_message.reply_to_message.caption = None
+        update.effective_message.reply_to_message.quote = None
+        telegram_file = MagicMock()
+        telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake image bytes"))
+        context.bot.get_file.return_value = telegram_file
+
+        with patch("analyst.delivery.bot.build_group_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.record_chat_interaction") as mock_record, \
+             patch(
+                 "analyst.delivery.bot._chat_reply",
+                 new=AsyncMock(
+                     return_value=SalesChatReply(
+                         text="reply text",
+                         profile_update=ClientProfileUpdate(),
+                     )
+                 ),
+             ) as mock_chat_reply:
+            await handler(update, context)
+
+        call_kwargs = mock_chat_reply.call_args.kwargs
+        self.assertEqual(call_kwargs["attached_image"].source, "reply")
+        self.assertEqual(call_kwargs["user_content"][1]["type"], "image_url")
+        self.assertIn("referenced in the replied-to message", call_kwargs["user_content"][0]["text"])
+        self.assertIn("[Referenced image]", mock_record.call_args.kwargs["user_text"])
 
     async def test_private_chat_sends_and_cleans_up_generated_photo(self) -> None:
         from analyst.delivery.bot import _make_message_handler
