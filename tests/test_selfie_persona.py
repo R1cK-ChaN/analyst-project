@@ -14,7 +14,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from analyst.tools._image_gen import GeneratedImage
 from analyst.tools._selfie_persona import (
-    CompanionMomentService,
+    BackCameraPhotoService,
     SelfiePromptConfig,
     SelfiePromptService,
 )
@@ -108,7 +108,7 @@ class TestSelfiePromptService(unittest.TestCase):
         self.assertTrue(service.is_selfie_request({"mode": "selfie"}))
         self.assertTrue(service.is_selfie_request({"scene_key": "bedroom_late_night"}))
         self.assertTrue(service.is_selfie_request({"scene_prompt": "coffee shop daylight"}))
-        self.assertFalse(service.is_selfie_request({"mode": "companion_moment", "moment_scene_key": "lunch_table_food"}))
+        self.assertFalse(service.is_selfie_request({"mode": "back_camera", "back_camera_scene_key": "lunch_table_food"}))
         self.assertFalse(service.is_selfie_request({"prompt": "please send a selfie"}))
         self.assertFalse(service.is_selfie_request({"prompt": "draw a market chart"}))
 
@@ -134,10 +134,10 @@ class TestSelfiePromptService(unittest.TestCase):
             self.assertIn("/selfie_history/", result.image_path)
             self.assertEqual(len(client.calls), 4)
 
-    def test_generate_companion_moment_uses_candid_prompt_for_food_scene(self) -> None:
+    def test_generate_back_camera_photo_uses_pov_prompt_for_food_scene(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            service = CompanionMomentService(
+            service = BackCameraPhotoService(
                 SelfiePromptConfig(
                     media_root=root / "persona",
                     bootstrap_count=3,
@@ -145,40 +145,41 @@ class TestSelfiePromptService(unittest.TestCase):
             )
             client = FakeImageClient(root / "source")
 
-            result = service.generate_moment(
+            result = service.generate_photo(
                 {
-                    "mode": "companion_moment",
-                    "moment_scene_key": "lunch_table_food",
+                    "mode": "back_camera",
+                    "back_camera_scene_key": "lunch_table_food",
                 },
                 client,
             )
 
             self.assertEqual(result.scene_key, "lunch_table_food")
-            self.assertIn("roast meat shop table in Tanjong Pagar", result.prompt_used)
-            self.assertIn("imperfect framing", result.prompt_used)
+            self.assertIn("looking down at a small roast meat shop table", result.prompt_used)
+            self.assertIn("point of view", result.prompt_used)
             self.assertEqual(client.calls[-1]["image_input"], "")
 
-    def test_generate_companion_moment_uses_reference_for_candid_in_frame_scene(self) -> None:
+    def test_generate_back_camera_photo_stays_pov_for_desk_scene(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config = SelfiePromptConfig(
                 media_root=root / "persona",
                 bootstrap_count=3,
             )
-            service = CompanionMomentService(config)
+            service = BackCameraPhotoService(config)
             client = FakeImageClient(root / "source")
 
-            result = service.generate_moment(
+            result = service.generate_photo(
                 {
-                    "mode": "companion_moment",
-                    "moment_scene_key": "desk_midday_candid",
+                    "mode": "back_camera",
+                    "back_camera_scene_key": "desk_midday_pov",
                 },
                 client,
             )
 
-            self.assertEqual(result.scene_key, "desk_midday_candid")
-            self.assertIn("sitting at a desk in the office", result.prompt_used)
-            self.assertTrue(client.calls[-1]["image_input"].startswith("data:image/"))
+            self.assertEqual(result.scene_key, "desk_midday_pov")
+            self.assertIn("office desk while seated", result.prompt_used)
+            self.assertIn("point of view", result.prompt_used)
+            self.assertEqual(client.calls[-1]["image_input"], "")
 
 
 if __name__ == "__main__":

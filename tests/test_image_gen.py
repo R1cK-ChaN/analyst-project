@@ -152,17 +152,17 @@ class TestImageGenHandler(unittest.TestCase):
             negative_prompt="studio lighting\nperfect symmetry",
         )
 
-    def test_companion_moment_mode_routes_through_moment_service(self) -> None:
+    def test_back_camera_mode_routes_through_back_camera_service(self) -> None:
         image_client = Mock()
         selfie_service = Mock()
         selfie_service.is_selfie_request.return_value = False
-        moment_service = Mock()
-        moment_service.is_moment_request.return_value = True
-        moment_service.generate_moment.return_value = Mock(
-            image_path="/tmp/moment.jpg",
-            prompt_used="candid lunch prompt",
+        back_camera_service = Mock()
+        back_camera_service.is_back_camera_request.return_value = True
+        back_camera_service.generate_photo.return_value = Mock(
+            image_path="/tmp/back-camera.jpg",
+            prompt_used="back camera lunch prompt",
             scene_key="lunch_table_food",
-            scene_prompt="quick phone photo at lunch",
+            scene_prompt="back camera phone photo at lunch",
             negative_prompt="studio lighting",
         )
 
@@ -170,15 +170,15 @@ class TestImageGenHandler(unittest.TestCase):
             self.config,
             image_client=image_client,
             selfie_service=selfie_service,
-            moment_service=moment_service,
+            back_camera_service=back_camera_service,
         )
-        result = handler({"mode": "companion_moment", "moment_scene_key": "lunch_table_food"})
+        result = handler({"mode": "back_camera", "back_camera_scene_key": "lunch_table_food"})
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["mode"], "companion_moment")
+        self.assertEqual(result["mode"], "back_camera")
         self.assertEqual(result["scene_key"], "lunch_table_food")
-        self.assertEqual(result["image_path"], "/tmp/moment.jpg")
-        moment_service.generate_moment.assert_called_once()
+        self.assertEqual(result["image_path"], "/tmp/back-camera.jpg")
+        back_camera_service.generate_photo.assert_called_once()
 
     def test_generic_mode_can_use_attached_image_context(self) -> None:
         image_client = Mock()

@@ -18,7 +18,7 @@ from analyst.engine.live_types import AgentTool
 from analyst.env import get_env_value
 
 from ._request_context import get_request_image
-from ._selfie_persona import CompanionMomentService, SelfiePromptService
+from ._selfie_persona import BackCameraPhotoService, SelfiePromptService
 
 logger = logging.getLogger(__name__)
 
@@ -284,20 +284,18 @@ class ImageGenHandler:
         *,
         image_client: SeedreamImageClient | None = None,
         selfie_service: SelfiePromptService | None = None,
-        moment_service: CompanionMomentService | None = None,
+        back_camera_service: BackCameraPhotoService | None = None,
     ) -> None:
         self._config = config
         self._image_client = image_client or SeedreamImageClient(config, session=session)
         self._selfie_service = selfie_service or SelfiePromptService()
-        self._moment_service = moment_service or CompanionMomentService(
-            selfie_service=self._selfie_service if isinstance(self._selfie_service, SelfiePromptService) else None
-        )
+        self._back_camera_service = back_camera_service or BackCameraPhotoService()
 
     def __call__(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._selfie_service.is_selfie_request(arguments):
             return self._handle_selfie(arguments)
-        if self._moment_service.is_moment_request(arguments):
-            return self._handle_companion_moment(arguments)
+        if self._back_camera_service.is_back_camera_request(arguments):
+            return self._handle_back_camera(arguments)
 
         prompt = str(arguments.get("prompt", "")).strip()
         use_attached_image = bool(arguments.get("use_attached_image"))
@@ -373,18 +371,18 @@ class ImageGenHandler:
         result["negative_prompt_used"] = draft.negative_prompt
         return result
 
-    def _handle_companion_moment(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _handle_back_camera(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            generated = self._moment_service.generate_moment(arguments, self._image_client)
+            generated = self._back_camera_service.generate_photo(arguments, self._image_client)
         except RuntimeError as exc:
-            logger.warning("Companion moment image generation failed: %s", exc)
+            logger.warning("Back camera image generation failed: %s", exc)
             return {"status": "error", "error": str(exc)}
 
         result = {
             "status": "ok",
             "image_path": generated.image_path,
             "prompt_used": generated.prompt_used,
-            "mode": "companion_moment",
+            "mode": "back_camera",
             "scene_prompt": generated.scene_prompt,
             "negative_prompt_used": generated.negative_prompt,
         }
@@ -418,10 +416,10 @@ def build_image_gen_tool(
         description=(
             "Generate an image from a text description. Use mode='selfie' for persona selfies so the backend "
             "can enforce consistent but natural phone-camera selfie prompts with scene_key / scene_prompt. "
-            "Use mode='companion_moment' for candid daily-life photos of the persona, such as lunch, coffee, desk, "
-            "home, or street moments, with moment_scene_key / scene_prompt. "
+            "Use mode='back_camera' for rear-camera POV photos of what the persona is seeing, such as lunch, coffee, desk, "
+            "home, or street views, with back_camera_scene_key / scene_prompt. "
             "Only use mode='selfie' when the user explicitly wants to see the persona/agent in frame. "
-            "For objects, food, drinks, desks, rooms, scenery, or environment shots without the persona, use generic prompt-only mode."
+            "For back_camera mode, the persona must not appear in frame. For objects, food, drinks, desks, rooms, scenery, or environment shots without persona context, use generic prompt-only mode."
         ),
         parameters={
             "type": "object",
@@ -435,7 +433,7 @@ def build_image_gen_tool(
                 },
                 "mode": {
                     "type": "string",
-                    "description": "Set to 'selfie' for explicit selfies, or 'companion_moment' for candid daily-life persona moments.",
+                    "description": "Set to 'selfie' for explicit front-camera selfies, or 'back_camera' for rear-camera POV photos.",
                 },
                 "scene_key": {
                     "type": "string",
@@ -447,19 +445,19 @@ def build_image_gen_tool(
                 },
                 "scene_prompt": {
                     "type": "string",
-                    "description": "Optional short English scene detail appended to the selected selfie or companion-moment scene.",
+                    "description": "Optional short English scene detail appended to the selected selfie or back-camera scene.",
                 },
-                "moment_scene_key": {
+                "back_camera_scene_key": {
                     "type": "string",
                     "description": (
-                        "Optional shared companion-moment scene key, only for mode='companion_moment', "
-                        "e.g. lunch_table_food, coffee_table_candid, desk_midday_candid, "
-                        "home_window_evening, or street_walk_candid."
+                        "Optional shared back-camera scene key, only for mode='back_camera', "
+                        "e.g. lunch_table_food, coffee_table_pov, desk_midday_pov, "
+                        "home_window_view, or street_walk_view."
                     ),
                 },
-                "moment_scene_prompt": {
+                "back_camera_scene_prompt": {
                     "type": "string",
-                    "description": "Optional short English detail appended to the selected companion-moment scene.",
+                    "description": "Optional short English detail appended to the selected back-camera scene.",
                 },
                 "use_attached_image": {
                     "type": "boolean",

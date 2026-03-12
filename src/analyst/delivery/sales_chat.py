@@ -482,7 +482,7 @@ def _looks_like_selfie_request(user_text: str) -> bool:
     )
 
 
-def _looks_like_companion_moment_request(user_text: str) -> bool:
+def _looks_like_back_camera_request(user_text: str) -> bool:
     lowered = user_text.lower()
     return any(
         token in lowered
@@ -531,14 +531,14 @@ def _infer_selfie_scene_key(user_text: str) -> str:
     return ""
 
 
-def _infer_companion_moment_scene_key(user_text: str) -> str:
+def _infer_back_camera_scene_key(user_text: str) -> str:
     lowered = user_text.lower()
     scene_hints = (
         ("lunch_table_food", ("beef rice", "char siu", "roast pork", "roast meat", "吃什么", "午饭", "午餐", "dinner", "晚饭")),
-        ("coffee_table_candid", ("coffee", "cafe", "咖啡")),
-        ("desk_midday_candid", ("desk", "office", "work", "在干嘛", "working", "办公")),
-        ("home_window_evening", ("home", "window", "在家", "窗边", "room", "house")),
-        ("street_walk_candid", ("walk", "walking", "outside", "street", "散步", "路上", "外面")),
+        ("coffee_table_pov", ("coffee", "cafe", "咖啡")),
+        ("desk_midday_pov", ("desk", "office", "work", "在干嘛", "working", "办公")),
+        ("home_window_view", ("home", "window", "在家", "窗边", "room", "house")),
+        ("street_walk_view", ("walk", "walking", "outside", "street", "散步", "路上", "外面")),
     )
     for scene_key, tokens in scene_hints:
         if any(token in lowered for token in tokens):
@@ -564,17 +564,17 @@ def _build_placeholder_image_arguments(
             )
         return arguments
 
-    if _looks_like_companion_moment_request(user_text):
-        arguments = {"mode": "companion_moment"}
-        scene_key = _infer_companion_moment_scene_key(user_text)
+    if _looks_like_back_camera_request(user_text):
+        arguments = {"mode": "back_camera"}
+        scene_key = _infer_back_camera_scene_key(user_text)
         if scene_key:
-            arguments["moment_scene_key"] = scene_key
+            arguments["back_camera_scene_key"] = scene_key
         else:
             arguments["prompt"] = (
-                "quick phone photo taken in the middle of a normal day\n"
+                "back camera phone photo taken in the middle of a normal day\n"
                 "imperfect framing\n"
                 "slight tilt\n"
-                "not posed"
+                "point of view shot"
             )
         return arguments
 

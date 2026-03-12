@@ -452,7 +452,7 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.tool_audit[0]["repair_kind"], "placeholder_image")
         self.assertEqual(result.tool_audit[0]["arguments"]["mode"], "selfie")
 
-    async def test_placeholder_repair_prefers_companion_moment_for_lunch_photo(self) -> None:
+    async def test_placeholder_repair_prefers_back_camera_for_lunch_photo(self) -> None:
         from analyst.delivery.bot import _chat_reply
 
         self._set_loop_response(
@@ -465,16 +465,16 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
             handler=lambda arguments: {
                 "status": "ok",
                 "image_url": "https://example.com/lunch.jpg",
-                "mode": "companion_moment",
-                "scene_key": arguments.get("moment_scene_key", ""),
+                "mode": "back_camera",
+                "scene_key": arguments.get("back_camera_scene_key", ""),
             },
         )
 
         result = await _chat_reply("你午饭吃什么，发张现在的照片", self.mock_context, self.mock_loop, [image_tool])
 
         self.assertEqual(result.media[0].url, "https://example.com/lunch.jpg")
-        self.assertEqual(result.tool_audit[0]["arguments"]["mode"], "companion_moment")
-        self.assertEqual(result.tool_audit[0]["arguments"]["moment_scene_key"], "lunch_table_food")
+        self.assertEqual(result.tool_audit[0]["arguments"]["mode"], "back_camera")
+        self.assertEqual(result.tool_audit[0]["arguments"]["back_camera_scene_key"], "lunch_table_food")
 
 
 class TestGroupChat(unittest.IsolatedAsyncioTestCase):

@@ -85,9 +85,8 @@ class SelfieScene:
 
 
 @dataclass(frozen=True)
-class CompanionMomentScene:
+class BackCameraScene:
     scene_prompt: str
-    include_reference_image: bool = False
 
 
 _SCENE_CATALOG: dict[str, SelfieScene] = {
@@ -192,51 +191,46 @@ _SCENE_CATALOG: dict[str, SelfieScene] = {
     ),
 }
 
-_MOMENT_SCENE_CATALOG: dict[str, CompanionMomentScene] = {
-    "lunch_table_food": CompanionMomentScene(
+_BACK_CAMERA_SCENE_CATALOG: dict[str, BackCameraScene] = {
+    "lunch_table_food": BackCameraScene(
         scene_prompt=(
-            "quick phone photo taken across a small roast meat shop table in Tanjong Pagar\n"
-            "char siu rice or roast meat rice already half eaten\n"
+            "back camera phone photo looking down at a small roast meat shop table in Tanjong Pagar\n"
+            "char siu rice or roast meat rice already half eaten from the seated point of view\n"
             "messy tray, chopsticks, napkins, and soup bowl\n"
             "mixed fluorescent light and daylight from the storefront"
         ),
-        include_reference_image=False,
     ),
-    "coffee_table_candid": CompanionMomentScene(
+    "coffee_table_pov": BackCameraScene(
         scene_prompt=(
-            "quick phone photo taken across a coffee shop table in Tanjong Pagar\n"
-            "paper cup, laptop, and receipt on the table\n"
-            "subject slightly distracted and not looking directly at camera\n"
-            "background mildly cluttered and imperfect"
+            "back camera phone photo of a coffee shop table in Tanjong Pagar\n"
+            "paper cup, laptop, receipt, and table edge visible from the seated point of view\n"
+            "slightly awkward framing and mild table clutter\n"
+            "mixed indoor light and window light"
         ),
-        include_reference_image=True,
     ),
-    "desk_midday_candid": CompanionMomentScene(
+    "desk_midday_pov": BackCameraScene(
         scene_prompt=(
-            "quick phone photo taken while sitting at a desk in the office\n"
-            "screen glow, notebook, water bottle, and cable clutter visible\n"
-            "subject halfway through work and not posing\n"
-            "mixed office light with one side slightly shadowed"
+            "back camera phone photo of an office desk while seated\n"
+            "laptop, notebook, water bottle, and cable clutter visible from the user's point of view\n"
+            "slightly uneven office lighting with one darker side\n"
+            "not carefully composed"
         ),
-        include_reference_image=True,
     ),
-    "home_window_evening": CompanionMomentScene(
+    "home_window_view": BackCameraScene(
         scene_prompt=(
-            "quick candid phone photo at home near a window in the evening\n"
+            "back camera phone photo from home near a window in the evening\n"
             "lamp light mixing with dim outdoor light\n"
-            "ordinary lived-in room with small background clutter\n"
-            "subject relaxed and slightly tired, not posing"
+            "ordinary lived-in room details and small clutter in frame\n"
+            "quiet point of view shot"
         ),
-        include_reference_image=True,
     ),
-    "street_walk_candid": CompanionMomentScene(
+    "street_walk_view": BackCameraScene(
         scene_prompt=(
-            "quick phone photo taken while walking outside in the evening\n"
-            "city lights, passing people, and imperfect background motion\n"
-            "subject caught mid-step and not looking straight at camera\n"
-            "slight motion blur and uneven street lighting"
+            "back camera phone photo taken while walking outside in the evening\n"
+            "city lights, passing people, and storefronts ahead in the point of view\n"
+            "slight motion blur and uneven street lighting\n"
+            "imperfect handheld framing"
         ),
-        include_reference_image=True,
     ),
 }
 
@@ -324,7 +318,7 @@ class SelfiePromptDraft:
 
 
 @dataclass(frozen=True)
-class GeneratedCompanionMoment:
+class GeneratedBackCameraPhoto:
     image_path: str
     prompt_used: str
     negative_prompt: str
@@ -333,12 +327,11 @@ class GeneratedCompanionMoment:
 
 
 @dataclass(frozen=True)
-class CompanionMomentPromptDraft:
+class BackCameraPromptDraft:
     prompt_used: str
     negative_prompt: str
     scene_key: str
     scene_prompt: str
-    include_reference_image: bool
 
 
 class SelfiePromptService:
@@ -347,11 +340,14 @@ class SelfiePromptService:
 
     def is_selfie_request(self, arguments: dict[str, Any]) -> bool:
         mode = str(arguments.get("mode", "")).strip().lower()
-        if mode == "companion_moment":
+        if mode in {"back_camera", "companion_moment"}:
             return False
         if mode == "selfie":
             return True
-        if any(str(arguments.get(key, "")).strip() for key in ("moment_scene_key", "moment_scene_prompt")):
+        if any(
+            str(arguments.get(key, "")).strip()
+            for key in ("back_camera_scene_key", "back_camera_scene_prompt", "moment_scene_key", "moment_scene_prompt")
+        ):
             return False
         if any(str(arguments.get(key, "")).strip() for key in ("scene_key", "scene_prompt")):
             return True
@@ -627,39 +623,35 @@ class SelfiePromptService:
         return migrated
 
 
-class CompanionMomentService:
+class BackCameraPhotoService:
     def __init__(
         self,
         config: SelfiePromptConfig | None = None,
-        selfie_service: SelfiePromptService | None = None,
     ) -> None:
         self._config = config or SelfiePromptConfig.from_env()
-        self._selfie_service = selfie_service or SelfiePromptService(self._config)
 
-    def is_moment_request(self, arguments: dict[str, Any]) -> bool:
+    def is_back_camera_request(self, arguments: dict[str, Any]) -> bool:
         mode = str(arguments.get("mode", "")).strip().lower()
-        if mode == "companion_moment":
+        if mode in {"back_camera", "companion_moment"}:
             return True
-        if any(str(arguments.get(key, "")).strip() for key in ("moment_scene_key", "moment_scene_prompt")):
+        if any(
+            str(arguments.get(key, "")).strip()
+            for key in ("back_camera_scene_key", "back_camera_scene_prompt", "moment_scene_key", "moment_scene_prompt")
+        ):
             return True
         return False
 
-    def generate_moment(self, arguments: dict[str, Any], image_client: Any) -> GeneratedCompanionMoment:
+    def generate_photo(self, arguments: dict[str, Any], image_client: Any) -> GeneratedBackCameraPhoto:
         draft = self.build_prompt_draft(arguments)
-        image_input = ""
-        if draft.include_reference_image:
-            state = self._selfie_service._ensure_state(image_client)
-            image_input = self._selfie_service._build_reference_image_data_uri(state)
         generated = image_client.generate_image(
             prompt=draft.prompt_used,
             negative_prompt=draft.negative_prompt,
-            image_input=image_input,
         )
         history_path = image_client.materialize_image(
             generated,
-            self._selfie_service._next_history_path(draft.scene_key or "moment"),
+            SelfiePromptService(self._config)._next_history_path(draft.scene_key or "back_camera"),
         )
-        return GeneratedCompanionMoment(
+        return GeneratedBackCameraPhoto(
             image_path=history_path,
             prompt_used=draft.prompt_used,
             negative_prompt=draft.negative_prompt,
@@ -671,28 +663,24 @@ class CompanionMomentService:
     def negative_prompt_text(self) -> str:
         return "\n".join(self._config.moment_negative_prompt)
 
-    def build_prompt_draft(self, arguments: dict[str, Any]) -> CompanionMomentPromptDraft:
-        scene_key, scene_prompt, include_reference_image = self._resolve_scene(arguments)
-        return CompanionMomentPromptDraft(
-            prompt_used=self._assemble_prompt(
-                scene_prompt,
-                include_character_dna=include_reference_image,
-            ),
+    def build_prompt_draft(self, arguments: dict[str, Any]) -> BackCameraPromptDraft:
+        scene_key, scene_prompt = self._resolve_scene(arguments)
+        return BackCameraPromptDraft(
+            prompt_used=self._assemble_prompt(scene_prompt),
             negative_prompt=self.negative_prompt_text,
             scene_key=scene_key,
             scene_prompt=scene_prompt,
-            include_reference_image=include_reference_image,
         )
 
-    def _resolve_scene(self, arguments: dict[str, Any]) -> tuple[str, str, bool]:
+    def _resolve_scene(self, arguments: dict[str, Any]) -> tuple[str, str]:
         scene_key = str(
-            arguments.get("moment_scene_key", arguments.get("scene_key", ""))
+            arguments.get("back_camera_scene_key", arguments.get("moment_scene_key", arguments.get("scene_key", "")))
         ).strip().lower()
         free_text = str(
-            arguments.get("moment_scene_prompt", arguments.get("scene_prompt", ""))
+            arguments.get("back_camera_scene_prompt", arguments.get("moment_scene_prompt", arguments.get("scene_prompt", "")))
         ).strip()
         fallback_prompt = str(arguments.get("prompt", "")).strip()
-        scene = _MOMENT_SCENE_CATALOG.get(scene_key)
+        scene = _BACK_CAMERA_SCENE_CATALOG.get(scene_key)
 
         if scene is None and scene_key:
             free_text = "\n".join(
@@ -702,26 +690,21 @@ class CompanionMomentService:
             free_text = fallback_prompt
 
         if scene is None and not free_text:
-            raise RuntimeError("moment_scene_prompt or prompt is required for companion moment generation.")
+            raise RuntimeError("back_camera_scene_prompt or prompt is required for back camera generation.")
 
         if scene is None:
-            return "", free_text, False
+            return "", free_text
 
         scene_prompt = scene.scene_prompt
         if free_text:
             scene_prompt = f"{scene_prompt}\n{free_text}"
-        return scene_key, scene_prompt, scene.include_reference_image
+        return scene_key, scene_prompt
 
-    def _assemble_prompt(self, scene_prompt: str, *, include_character_dna: bool) -> str:
-        blocks = []
-        if include_character_dna:
-            blocks.append("\n".join(self._config.character_dna))
-        blocks.extend(
-            (
-                "\n".join(self._config.moment_camera_style),
-                scene_prompt,
-                "\n".join(self._config.moment_quality_modifiers),
-            )
+    def _assemble_prompt(self, scene_prompt: str) -> str:
+        blocks = (
+            "\n".join(self._config.moment_camera_style),
+            scene_prompt,
+            "\n".join(self._config.moment_quality_modifiers),
         )
         return "\n\n".join(block.strip() for block in blocks if block.strip())
 
