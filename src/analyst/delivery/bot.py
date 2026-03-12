@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import logging
 import os
@@ -85,7 +85,7 @@ MAX_GROUP_CONTEXT_CHARS = 1500
 COMPANION_CHECKIN_INTERVAL_SECONDS = 300
 COMPANION_CHECKIN_SEND_WINDOW_START_HOUR = 10
 COMPANION_CHECKIN_SEND_WINDOW_END_HOUR = 20
-COMPANION_LOCAL_TIMEZONE = ZoneInfo("Asia/Singapore")
+COMPANION_LOCAL_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Singapore")
 MANAGED_MEDIA_PREFIXES = (
     "analyst_gen_",
     "analyst_live_",

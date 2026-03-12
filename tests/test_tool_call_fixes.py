@@ -89,6 +89,7 @@ class PromptAssemblySelectionTest(unittest.TestCase):
     def test_companion_prompt_reflects_sunny_snt_companion_identity(self) -> None:
         self.assertIn("sunny、cheerful", COMPANION_SYSTEM_PROMPT)
         self.assertIn("SnT team", COMPANION_SYSTEM_PROMPT)
+        self.assertIn("Shawn Chan", COMPANION_SYSTEM_PROMPT)
         self.assertIn("不要主动聊金融", COMPANION_SYSTEM_PROMPT)
 
     def test_chat_mode_resolution_defaults_to_companion(self) -> None:

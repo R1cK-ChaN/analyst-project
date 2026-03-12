@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -290,7 +290,10 @@ def system_prompt_with_memory(
 ) -> str:
     resolved_mode = resolve_chat_persona_mode(persona_mode)
     timezone_name = "Asia/Singapore" if resolved_mode is ChatPersonaMode.COMPANION else "Asia/Shanghai"
-    now = datetime.now(ZoneInfo(timezone_name))
+    if resolved_mode is ChatPersonaMode.COMPANION:
+        now = datetime.now(timezone(timedelta(hours=8), name="Asia/Singapore"))
+    else:
+        now = datetime.now(ZoneInfo(timezone_name))
     return assemble_persona_system_prompt(
         PromptAssemblyContext(
             mode=resolved_mode.value,
