@@ -1,10 +1,13 @@
 from .profile import (
+    CompanionScheduleUpdate,
     ClientProfileUpdate,
     extract_client_profile_update,
     extract_embedded_profile_update,
+    extract_embedded_schedule_update,
     merge_client_profile_updates,
     split_reply_and_profile_update,
     strip_embedded_profile_update,
+    strip_embedded_schedule_update,
 )
 from .render import RenderBudget, sub_agent_budget
 from .service import (
@@ -20,6 +23,7 @@ from .subagent import build_subagent_memory
 
 __all__ = [
     "ClientProfileUpdate",
+    "CompanionScheduleUpdate",
     "RenderBudget",
     "build_chat_context",
     "build_group_chat_context",
@@ -29,10 +33,12 @@ __all__ = [
     "build_trading_context",
     "extract_client_profile_update",
     "extract_embedded_profile_update",
+    "extract_embedded_schedule_update",
     "merge_client_profile_updates",
     "record_chat_interaction",
     "record_sales_interaction",
     "split_reply_and_profile_update",
     "strip_embedded_profile_update",
+    "strip_embedded_schedule_update",
     "sub_agent_budget",
 ]

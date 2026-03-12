@@ -1065,6 +1065,35 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         mock_record.assert_called_once()
         self.assertEqual(mock_record.call_args.kwargs["user_text"], "can you elaborate?")
 
+    async def test_companion_reply_applies_schedule_update(self) -> None:
+        from analyst.delivery.bot import _make_message_handler
+        from analyst.delivery.sales_chat import SalesChatReply
+        from analyst.memory import ClientProfileUpdate, CompanionScheduleUpdate
+
+        handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
+        update, context = self._make_update(text="中午准备干嘛？", chat_type="private")
+
+        with patch("analyst.delivery.bot.build_chat_context", return_value=""), \
+             patch("analyst.delivery.bot.apply_companion_schedule_update") as schedule_mock, \
+             patch("analyst.delivery.bot.record_chat_interaction"):
+            with patch(
+                "analyst.delivery.bot._chat_reply",
+                new=AsyncMock(
+                    return_value=SalesChatReply(
+                        text="我应该去吃牛肉饭。",
+                        profile_update=ClientProfileUpdate(),
+                        schedule_update=CompanionScheduleUpdate(
+                            revision_mode="set",
+                            lunch_plan="beef rice",
+                        ),
+                    )
+                ),
+            ):
+                await handler(update, context)
+
+        schedule_mock.assert_called_once()
+        self.assertEqual(schedule_mock.call_args.args[1].lunch_plan, "beef rice")
+
     async def test_no_reply_context_passes_original_text(self) -> None:
         """Without a reply, the LLM text should be the original message."""
         from analyst.delivery.bot import _make_message_handler

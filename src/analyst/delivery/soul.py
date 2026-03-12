@@ -268,6 +268,17 @@ COMPANION_PROFILE_MEMORY_MODULE = PromptModule(
 """,
 )
 
+COMPANION_SCHEDULE_CONSISTENCY_MODULE = PromptModule(
+    module_id="companion_schedule_consistency",
+    body="""\
+你有一份 internal daily schedule（今天自己的安排）：
+- 如果某个时段已经写明 lunch_plan / dinner_plan / evening_plan 等，就保持一致，不要下一条又换成别的安排。
+- 空白时段可以自然补充；一旦你在回复里定下具体安排，就用 <schedule_update>{...}</schedule_update> 写进去。
+- 只有对话里明确出现“改计划了 / 临时换了 / actually / changed my mind / 改吃别的”这类意思时，才能改已有安排；这时 revision_mode 用 "revise"。
+- current_plan / next_plan 可以随进度轻微更新，但不要和已存的 meal / day-part plan 打架。
+""",
+)
+
 COMPANION_EMOTIONAL_SUPPORT_MODULE = PromptModule(
     module_id="companion_emotional_support",
     body="""\
@@ -293,10 +304,16 @@ COMPANION_PROFILE_UPDATE_MODULE = PromptModule(
     module_id="companion_profile_update",
     body="""\
 最终回复格式：
-先给用户可见内容。最后另起一行追加：
+先给用户可见内容。最后可以另起一行追加：
+<schedule_update>{...}</schedule_update>
 <profile_update>{...}</profile_update>
 
 规则：
+- 如果今天自己的安排没有新信息或没有明确改动，就不要输出 <schedule_update>。
+- <schedule_update> 必须放在 <profile_update> 前面。
+- schedule_update 可用字段：revision_mode, morning_plan, lunch_plan, afternoon_plan, dinner_plan, evening_plan, current_plan, next_plan, revision_note
+- revision_mode 只能是 "set" 或 "revise"。
+- 已经存在的时段安排，只有在明确改计划时才用 "revise" 覆盖；否则保持原样。
 - 标签必须放在最后，不要解释。
 - 没有更新就写 {}。
 - 可用字段：preferred_language, response_style, current_mood, emotional_trend, stress_level, confidence, notes, personal_facts
@@ -330,6 +347,7 @@ MODE_MODULES: dict[str, dict[str, PromptModule]] = {
         COMPANION_MEDIA_RULES_MODULE.module_id: COMPANION_MEDIA_RULES_MODULE,
         COMPANION_BOUNDARIES_MODULE.module_id: COMPANION_BOUNDARIES_MODULE,
         COMPANION_PROFILE_MEMORY_MODULE.module_id: COMPANION_PROFILE_MEMORY_MODULE,
+        COMPANION_SCHEDULE_CONSISTENCY_MODULE.module_id: COMPANION_SCHEDULE_CONSISTENCY_MODULE,
         COMPANION_EMOTIONAL_SUPPORT_MODULE.module_id: COMPANION_EMOTIONAL_SUPPORT_MODULE,
         COMPANION_PROACTIVE_MODULE.module_id: COMPANION_PROACTIVE_MODULE,
         COMPANION_PROFILE_UPDATE_MODULE.module_id: COMPANION_PROFILE_UPDATE_MODULE,
@@ -356,6 +374,7 @@ BASE_MODULE_IDS: dict[str, tuple[str, ...]] = {
         "companion_media_rules",
         "time_awareness",
         "companion_boundaries",
+        "companion_schedule_consistency",
         "companion_profile_update",
     ),
 }

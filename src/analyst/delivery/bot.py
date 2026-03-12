@@ -66,6 +66,10 @@ from analyst.memory import (  # noqa: E402
 from analyst.storage import SQLiteEngineStore  # noqa: E402
 from analyst.tools._request_context import RequestImageInput, bind_request_image  # noqa: E402
 
+from .companion_schedule import (  # noqa: E402
+    apply_companion_schedule_update,
+    build_companion_schedule_context,
+)
 from .sales_chat import (  # noqa: E402
     SPLIT_MARKER,
     ChatPersonaMode,
@@ -331,10 +335,14 @@ def _refresh_companion_lifestyle_state(
     )
 
 
-def _companion_local_context(lifestyle_state: Any, now: datetime) -> str:
+def _companion_local_context(
+    store: SQLiteEngineStore,
+    lifestyle_state: Any,
+    now: datetime,
+) -> str:
     local_now = _companion_local_now(now)
     day_type = "weekend" if _is_weekend(local_now) else "weekday"
-    return (
+    base = (
         f"timezone: Asia/Singapore\n"
         f"home_base: Singapore\n"
         f"work_area: Tanjong Pagar\n"
@@ -342,6 +350,12 @@ def _companion_local_context(lifestyle_state: Any, now: datetime) -> str:
         f"day_type: {day_type}\n"
         f"routine_state: {getattr(lifestyle_state, 'routine_state', '')}"
     )
+    schedule_context = build_companion_schedule_context(
+        store,
+        now=now,
+        routine_state=str(getattr(lifestyle_state, "routine_state", "") or ""),
+    )
+    return f"{base}\n{schedule_context}"
 
 
 # ---------------------------------------------------------------------------
@@ -854,7 +868,13 @@ async def _send_companion_proactive_message(
         agent_loop=agent_loop,
         memory_context=memory_context,
         preferred_language=profile.preferred_language,
-        companion_local_context=_companion_local_context(lifestyle_state, now),
+        companion_local_context=_companion_local_context(store, lifestyle_state, now),
+    )
+    apply_companion_schedule_update(
+        store,
+        reply.schedule_update,
+        now=now,
+        routine_state=str(getattr(lifestyle_state, "routine_state", "") or ""),
     )
     bubbles = split_into_bubbles(reply.text)
     await _send_bot_bubbles(bot, chat_id=chat_id, bubbles=bubbles)
@@ -1273,7 +1293,7 @@ def _make_message_handler(
                 thread_id=thread_id,
                 now=now_utc,
             )
-            companion_local_context = _companion_local_context(companion_lifestyle_state, now_utc)
+            companion_local_context = _companion_local_context(store, companion_lifestyle_state, now_utc)
 
         in_group = _is_group_chat(update)
         if not in_group and persona_mode is ChatPersonaMode.COMPANION:
@@ -1392,6 +1412,12 @@ def _make_message_handler(
             if history and history[-1]["role"] == "assistant":
                 history[-1]["content"] = rendered_reply_text
         if persona_mode is ChatPersonaMode.COMPANION:
+            apply_companion_schedule_update(
+                store,
+                reply.schedule_update,
+                now=now_utc,
+                routine_state=str(getattr(companion_lifestyle_state, "routine_state", "") or ""),
+            )
             record_chat_interaction(
                 store=store,
                 client_id=user_id,

@@ -35,7 +35,12 @@ from analyst.tools import (
 )
 from analyst.tools._live_calendar import build_live_calendar_tool
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
-from analyst.memory import ClientProfileUpdate, split_reply_and_profile_update
+from analyst.memory import (
+    ClientProfileUpdate,
+    CompanionScheduleUpdate,
+    extract_embedded_schedule_update,
+    split_reply_and_profile_update,
+)
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
 from analyst.storage import SQLiteEngineStore
 
@@ -75,6 +80,7 @@ class MediaItem:
 class ChatReply:
     text: str
     profile_update: ClientProfileUpdate
+    schedule_update: CompanionScheduleUpdate = field(default_factory=CompanionScheduleUpdate)
     media: list[MediaItem] = field(default_factory=list)
     tool_audit: list[dict[str, Any]] = field(default_factory=list)
 
@@ -615,6 +621,7 @@ def generate_chat_reply(
         history=history_messages,
     )
     response_text, profile_update = split_reply_and_profile_update(result.final_text)
+    schedule_update = extract_embedded_schedule_update(result.final_text)
     contains_image_placeholder = IMAGE_PLACEHOLDER in response_text
     response_text = normalize_sales_reply(response_text)
     if not response_text:
@@ -635,6 +642,7 @@ def generate_chat_reply(
     return ChatReply(
         text=response_text,
         profile_update=profile_update,
+        schedule_update=schedule_update,
         media=media,
         tool_audit=tool_audit,
     )
@@ -691,12 +699,14 @@ def generate_proactive_companion_reply(
         history=[],
     )
     response_text, profile_update = split_reply_and_profile_update(result.final_text)
+    schedule_update = extract_embedded_schedule_update(result.final_text)
     response_text = normalize_sales_reply(response_text)
     if not response_text:
         response_text = "在想你今天过得怎么样。"
     return ChatReply(
         text=response_text,
         profile_update=profile_update,
+        schedule_update=schedule_update,
         media=[],
         tool_audit=[],
     )

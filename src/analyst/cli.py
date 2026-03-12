@@ -11,6 +11,10 @@ import sys
 from urllib.parse import urlparse
 
 from analyst.contracts import format_epoch
+from analyst.delivery.companion_schedule import (
+    apply_companion_schedule_update,
+    build_companion_schedule_context,
+)
 from analyst.delivery.sales_chat import (
     ChatPersonaMode,
     build_companion_services,
@@ -483,8 +487,10 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
             tools=tools,
             memory_context=memory_context,
             preferred_language=profile.preferred_language,
+            companion_local_context=build_companion_schedule_context(store),
             persona_mode=persona_mode,
         )
+        apply_companion_schedule_update(store, reply.schedule_update)
         history.append({"role": "user", "content": user_text})
         history.append({"role": "assistant", "content": reply.text})
         record_chat_interaction(

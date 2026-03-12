@@ -72,6 +72,53 @@ class ClientProfileUpdate:
         }
 
 
+@dataclass(frozen=True)
+class CompanionScheduleUpdate:
+    revision_mode: str | None = None
+    morning_plan: str | None = None
+    lunch_plan: str | None = None
+    afternoon_plan: str | None = None
+    dinner_plan: str | None = None
+    evening_plan: str | None = None
+    current_plan: str | None = None
+    next_plan: str | None = None
+    revision_note: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "CompanionScheduleUpdate":
+        if not isinstance(payload, dict):
+            return cls()
+        return cls(
+            revision_mode=_clean_scalar(payload.get("revision_mode")),
+            morning_plan=_clean_scalar(payload.get("morning_plan")),
+            lunch_plan=_clean_scalar(payload.get("lunch_plan")),
+            afternoon_plan=_clean_scalar(payload.get("afternoon_plan")),
+            dinner_plan=_clean_scalar(payload.get("dinner_plan")),
+            evening_plan=_clean_scalar(payload.get("evening_plan")),
+            current_plan=_clean_scalar(payload.get("current_plan")),
+            next_plan=_clean_scalar(payload.get("next_plan")),
+            revision_note=_clean_scalar(payload.get("revision_note")),
+        )
+
+    def has_changes(self) -> bool:
+        return any(
+            getattr(self, field) is not None
+            for field in (
+                "morning_plan",
+                "lunch_plan",
+                "afternoon_plan",
+                "dinner_plan",
+                "evening_plan",
+                "current_plan",
+                "next_plan",
+                "revision_note",
+            )
+        )
+
+    def normalized_revision_mode(self) -> str:
+        return "revise" if str(self.revision_mode or "").strip().lower() == "revise" else "set"
+
+
 _WATCHLIST_PATTERNS = {
     "fed": re.compile(r"(?:\b(?:fed|fomc|powell)\b|美联储|联储)", re.IGNORECASE),
     "cpi": re.compile(r"(?:\b(?:cpi|inflation)\b|通胀)", re.IGNORECASE),
@@ -152,6 +199,10 @@ _PROFILE_UPDATE_PATTERN = re.compile(
     r"<profile_update>\s*(\{.*?\})\s*</profile_update>",
     re.DOTALL | re.IGNORECASE,
 )
+_SCHEDULE_UPDATE_PATTERN = re.compile(
+    r"<schedule_update>\s*(\{.*?\})\s*</schedule_update>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 def extract_client_profile_update(text: str) -> ClientProfileUpdate:
@@ -217,8 +268,24 @@ def extract_embedded_profile_update(text: str) -> ClientProfileUpdate:
     return ClientProfileUpdate.from_dict(decoded)
 
 
+def extract_embedded_schedule_update(text: str) -> CompanionScheduleUpdate:
+    matches = _SCHEDULE_UPDATE_PATTERN.findall(text)
+    if not matches:
+        return CompanionScheduleUpdate()
+    raw_payload = matches[-1]
+    try:
+        decoded = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return CompanionScheduleUpdate()
+    return CompanionScheduleUpdate.from_dict(decoded)
+
+
+def strip_embedded_schedule_update(text: str) -> str:
+    return _SCHEDULE_UPDATE_PATTERN.sub("", text).strip()
+
+
 def strip_embedded_profile_update(text: str) -> str:
-    return _PROFILE_UPDATE_PATTERN.sub("", text).strip()
+    return _PROFILE_UPDATE_PATTERN.sub("", strip_embedded_schedule_update(text)).strip()
 
 
 def split_reply_and_profile_update(text: str) -> tuple[str, ClientProfileUpdate]:

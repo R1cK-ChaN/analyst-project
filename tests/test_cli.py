@@ -13,10 +13,11 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from analyst.cli import main
 from analyst.delivery.sales_chat import SalesChatReply
+from analyst.engine.live_types import AgentTool
 from analyst.ingestion.scrapers.oecd import OECDDataflow, OECDStructureSummary
 from analyst.ingestion.sources import OECDSeriesConfig
-from analyst.engine.live_types import AgentTool
 from analyst.memory import ClientProfileUpdate
+from analyst.memory import CompanionScheduleUpdate
 
 
 class SalesChatCLITest(unittest.TestCase):
@@ -42,6 +43,36 @@ class SalesChatCLITest(unittest.TestCase):
         self.assertIn("assistant>", rendered)
         self.assertIn("先别急，今晚数据出来再看。", rendered)
         record_mock.assert_called_once()
+
+    def test_companion_chat_once_threads_schedule_context_and_update(self) -> None:
+        fake_store = Mock()
+        output = io.StringIO()
+
+        with patch("analyst.cli.build_companion_services", return_value=(Mock(), [], fake_store)):
+            with patch("analyst.cli.build_chat_context", return_value="memory block"):
+                with patch("analyst.cli.build_companion_schedule_context", return_value="schedule block"):
+                    with patch(
+                        "analyst.cli.generate_chat_reply",
+                        return_value=SalesChatReply(
+                            text="中午我应该去吃牛肉饭。",
+                            profile_update=ClientProfileUpdate(),
+                            schedule_update=CompanionScheduleUpdate(
+                                revision_mode="set",
+                                lunch_plan="beef rice",
+                            ),
+                        ),
+                    ) as reply_mock:
+                        with patch("analyst.cli.apply_companion_schedule_update") as schedule_mock:
+                            with patch("analyst.cli.record_chat_interaction"):
+                                with redirect_stdout(output):
+                                    rc = main(["companion-chat", "--once", "中午准备干嘛？"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            reply_mock.call_args.kwargs["companion_local_context"],
+            "schedule block",
+        )
+        schedule_mock.assert_called_once()
 
     def test_media_gen_image_copies_generated_image_into_output_dir(self) -> None:
         output = io.StringIO()

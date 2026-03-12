@@ -356,6 +356,24 @@ class CompanionLifestyleStateRecord:
 
 
 @dataclass(frozen=True)
+class CompanionDailyScheduleRecord:
+    schedule_date: str
+    timezone_name: str
+    routine_state_snapshot: str
+    morning_plan: str
+    lunch_plan: str
+    afternoon_plan: str
+    dinner_plan: str
+    evening_plan: str
+    current_plan: str
+    next_plan: str
+    revision_note: str
+    last_explicit_update_at: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class ConversationMessageRecord:
     message_id: int
     client_id: str
@@ -1402,6 +1420,26 @@ class SQLiteEngineStore:
                 """
             )
             connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS companion_daily_schedule (
+                    schedule_date TEXT PRIMARY KEY,
+                    timezone_name TEXT NOT NULL DEFAULT 'Asia/Singapore',
+                    routine_state_snapshot TEXT NOT NULL DEFAULT '',
+                    morning_plan TEXT NOT NULL DEFAULT '',
+                    lunch_plan TEXT NOT NULL DEFAULT '',
+                    afternoon_plan TEXT NOT NULL DEFAULT '',
+                    dinner_plan TEXT NOT NULL DEFAULT '',
+                    evening_plan TEXT NOT NULL DEFAULT '',
+                    current_plan TEXT NOT NULL DEFAULT '',
+                    next_plan TEXT NOT NULL DEFAULT '',
+                    revision_note TEXT NOT NULL DEFAULT '',
+                    last_explicit_update_at TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_analytical_observations_created ON analytical_observations(id DESC)"
             )
             connection.execute(
@@ -1427,6 +1465,9 @@ class SQLiteEngineStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_companion_lifestyle_updated ON companion_lifestyle_state(updated_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_companion_daily_schedule_updated ON companion_daily_schedule(updated_at DESC)"
             )
             # -- Portfolio volatility management tables ---------------------
             connection.execute(
@@ -3788,6 +3829,52 @@ class SQLiteEngineStore:
             for row in rows
         ]
 
+    def get_companion_daily_schedule(
+        self,
+        *,
+        schedule_date: str,
+        timezone_name: str = "Asia/Singapore",
+    ) -> CompanionDailyScheduleRecord:
+        with self._connection(commit=False) as connection:
+            return self._get_companion_daily_schedule_in_connection(
+                connection,
+                schedule_date=schedule_date,
+                timezone_name=timezone_name,
+            )
+
+    def upsert_companion_daily_schedule(
+        self,
+        *,
+        schedule_date: str,
+        timezone_name: str | None = None,
+        routine_state_snapshot: str | None = None,
+        morning_plan: str | None = None,
+        lunch_plan: str | None = None,
+        afternoon_plan: str | None = None,
+        dinner_plan: str | None = None,
+        evening_plan: str | None = None,
+        current_plan: str | None = None,
+        next_plan: str | None = None,
+        revision_note: str | None = None,
+        last_explicit_update_at: str | None = None,
+    ) -> CompanionDailyScheduleRecord:
+        with self._connection(commit=True) as connection:
+            return self._upsert_companion_daily_schedule_in_connection(
+                connection,
+                schedule_date=schedule_date,
+                timezone_name=timezone_name,
+                routine_state_snapshot=routine_state_snapshot,
+                morning_plan=morning_plan,
+                lunch_plan=lunch_plan,
+                afternoon_plan=afternoon_plan,
+                dinner_plan=dinner_plan,
+                evening_plan=evening_plan,
+                current_plan=current_plan,
+                next_plan=next_plan,
+                revision_note=revision_note,
+                last_explicit_update_at=last_explicit_update_at,
+            )
+
     def get_last_user_message_at(
         self,
         *,
@@ -4403,6 +4490,47 @@ class SQLiteEngineStore:
             updated_at=row["updated_at"],
         )
 
+    def _row_to_companion_daily_schedule(
+        self,
+        row: sqlite3.Row | None,
+        *,
+        schedule_date: str,
+        timezone_name: str,
+    ) -> CompanionDailyScheduleRecord:
+        if row is None:
+            return CompanionDailyScheduleRecord(
+                schedule_date=schedule_date,
+                timezone_name=timezone_name,
+                routine_state_snapshot="",
+                morning_plan="",
+                lunch_plan="",
+                afternoon_plan="",
+                dinner_plan="",
+                evening_plan="",
+                current_plan="",
+                next_plan="",
+                revision_note="",
+                last_explicit_update_at="",
+                created_at="",
+                updated_at="",
+            )
+        return CompanionDailyScheduleRecord(
+            schedule_date=row["schedule_date"],
+            timezone_name=row["timezone_name"],
+            routine_state_snapshot=row["routine_state_snapshot"],
+            morning_plan=row["morning_plan"],
+            lunch_plan=row["lunch_plan"],
+            afternoon_plan=row["afternoon_plan"],
+            dinner_plan=row["dinner_plan"],
+            evening_plan=row["evening_plan"],
+            current_plan=row["current_plan"],
+            next_plan=row["next_plan"],
+            revision_note=row["revision_note"],
+            last_explicit_update_at=row["last_explicit_update_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
     def _get_companion_lifestyle_state_in_connection(
         self,
         connection: sqlite3.Connection,
@@ -4424,6 +4552,27 @@ class SQLiteEngineStore:
             client_id=client_id,
             channel=channel,
             thread_id=thread_id,
+        )
+
+    def _get_companion_daily_schedule_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        schedule_date: str,
+        timezone_name: str,
+    ) -> CompanionDailyScheduleRecord:
+        row = connection.execute(
+            """
+            SELECT * FROM companion_daily_schedule
+            WHERE schedule_date = ?
+            LIMIT 1
+            """,
+            (schedule_date,),
+        ).fetchone()
+        return self._row_to_companion_daily_schedule(
+            row,
+            schedule_date=schedule_date,
+            timezone_name=timezone_name,
         )
 
     def _upsert_companion_lifestyle_state_in_connection(
@@ -4502,6 +4651,97 @@ class SQLiteEngineStore:
                 next_record.last_morning_checkin_at,
                 next_record.last_evening_checkin_at,
                 next_record.last_weekend_checkin_at,
+                next_record.updated_at,
+            ),
+        )
+        return next_record
+
+    def _upsert_companion_daily_schedule_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        schedule_date: str,
+        timezone_name: str | None = None,
+        routine_state_snapshot: str | None = None,
+        morning_plan: str | None = None,
+        lunch_plan: str | None = None,
+        afternoon_plan: str | None = None,
+        dinner_plan: str | None = None,
+        evening_plan: str | None = None,
+        current_plan: str | None = None,
+        next_plan: str | None = None,
+        revision_note: str | None = None,
+        last_explicit_update_at: str | None = None,
+    ) -> CompanionDailyScheduleRecord:
+        current = self._get_companion_daily_schedule_in_connection(
+            connection,
+            schedule_date=schedule_date,
+            timezone_name=timezone_name or "Asia/Singapore",
+        )
+        now_iso = utc_now().isoformat()
+        next_record = CompanionDailyScheduleRecord(
+            schedule_date=schedule_date,
+            timezone_name=current.timezone_name if timezone_name is None else timezone_name,
+            routine_state_snapshot=current.routine_state_snapshot if routine_state_snapshot is None else routine_state_snapshot,
+            morning_plan=current.morning_plan if morning_plan is None else morning_plan,
+            lunch_plan=current.lunch_plan if lunch_plan is None else lunch_plan,
+            afternoon_plan=current.afternoon_plan if afternoon_plan is None else afternoon_plan,
+            dinner_plan=current.dinner_plan if dinner_plan is None else dinner_plan,
+            evening_plan=current.evening_plan if evening_plan is None else evening_plan,
+            current_plan=current.current_plan if current_plan is None else current_plan,
+            next_plan=current.next_plan if next_plan is None else next_plan,
+            revision_note=current.revision_note if revision_note is None else revision_note,
+            last_explicit_update_at=current.last_explicit_update_at if last_explicit_update_at is None else last_explicit_update_at,
+            created_at=current.created_at or now_iso,
+            updated_at=now_iso,
+        )
+        connection.execute(
+            """
+            INSERT INTO companion_daily_schedule (
+                schedule_date,
+                timezone_name,
+                routine_state_snapshot,
+                morning_plan,
+                lunch_plan,
+                afternoon_plan,
+                dinner_plan,
+                evening_plan,
+                current_plan,
+                next_plan,
+                revision_note,
+                last_explicit_update_at,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(schedule_date) DO UPDATE SET
+                timezone_name = excluded.timezone_name,
+                routine_state_snapshot = excluded.routine_state_snapshot,
+                morning_plan = excluded.morning_plan,
+                lunch_plan = excluded.lunch_plan,
+                afternoon_plan = excluded.afternoon_plan,
+                dinner_plan = excluded.dinner_plan,
+                evening_plan = excluded.evening_plan,
+                current_plan = excluded.current_plan,
+                next_plan = excluded.next_plan,
+                revision_note = excluded.revision_note,
+                last_explicit_update_at = excluded.last_explicit_update_at,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                next_record.schedule_date,
+                next_record.timezone_name,
+                next_record.routine_state_snapshot,
+                next_record.morning_plan,
+                next_record.lunch_plan,
+                next_record.afternoon_plan,
+                next_record.dinner_plan,
+                next_record.evening_plan,
+                next_record.current_plan,
+                next_record.next_plan,
+                next_record.revision_note,
+                next_record.last_explicit_update_at,
+                next_record.created_at,
                 next_record.updated_at,
             ),
         )
