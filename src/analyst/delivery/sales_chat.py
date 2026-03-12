@@ -47,6 +47,21 @@ class ChatPersonaMode(str, Enum):
     COMPANION = "companion"
 
 
+COMPANION_MODEL_KEYS = (
+    "ANALYST_COMPANION_OPENROUTER_MODEL",
+    "ANALYST_TELEGRAM_OPENROUTER_MODEL",
+    "ANALYST_OPENROUTER_MODEL",
+    "LLM_MODEL",
+)
+COMPANION_DEFAULT_MODEL = "google/gemini-3-flash-preview"
+SALES_MODEL_KEYS = (
+    "ANALYST_TELEGRAM_OPENROUTER_MODEL",
+    "ANALYST_OPENROUTER_MODEL",
+    "LLM_MODEL",
+)
+SALES_DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
+
+
 @dataclass(frozen=True)
 class MediaItem:
     kind: str       # "photo" or "video"
@@ -76,7 +91,7 @@ def resolve_chat_persona_mode(value: str | ChatPersonaMode | None = None) -> Cha
     return ChatPersonaMode.SALES
 
 
-def _build_companion_tools() -> list[AgentTool]:
+def build_companion_tools() -> list[AgentTool]:
     kit = ToolKit()
     kit.add(build_image_gen_tool())
     live_photo_tool = build_optional_live_photo_tool()
@@ -94,7 +109,7 @@ def build_chat_tools(
 ) -> list[AgentTool]:
     resolved_mode = resolve_chat_persona_mode(persona_mode)
     if resolved_mode is ChatPersonaMode.COMPANION:
-        return _build_companion_tools()
+        return build_companion_tools()
 
     def get_regime(arguments: dict[str, object]) -> str:
         note = engine.get_regime_summary()
@@ -181,13 +196,12 @@ def build_chat_services(
     persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
 ) -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
     resolved_mode = resolve_chat_persona_mode(persona_mode)
+    if resolved_mode is ChatPersonaMode.COMPANION:
+        return build_companion_services(db_path=db_path)
+
     or_config = OpenRouterConfig.from_env(
-        model_keys=(
-            "ANALYST_TELEGRAM_OPENROUTER_MODEL",
-            "ANALYST_OPENROUTER_MODEL",
-            "LLM_MODEL",
-        ),
-        default_model="google/gemini-3.1-flash-lite-preview",
+        model_keys=SALES_MODEL_KEYS,
+        default_model=SALES_DEFAULT_MODEL,
     )
     store = SQLiteEngineStore(db_path=db_path)
     provider = OpenRouterProvider(or_config)
@@ -195,9 +209,6 @@ def build_chat_services(
         provider=provider,
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
     )
-    if resolved_mode is ChatPersonaMode.COMPANION:
-        tools = _build_companion_tools()
-        return agent_loop, tools, store
 
     repository = FileBackedInformationRepository()
     info_service = AnalystInformationService(repository)
@@ -206,17 +217,31 @@ def build_chat_services(
     runtime = OpenRouterAgentRuntime(
         provider_config=or_config,
         config=OpenRouterRuntimeConfig(
-            model_keys=(
-                "ANALYST_TELEGRAM_OPENROUTER_MODEL",
-                "ANALYST_OPENROUTER_MODEL",
-                "LLM_MODEL",
-            ),
-            default_model="google/gemini-3.1-flash-lite-preview",
+            model_keys=SALES_MODEL_KEYS,
+            default_model=SALES_DEFAULT_MODEL,
         ),
         tools=content_tools,
     )
     engine = OpenRouterAnalystEngine(info_service=info_service, runtime=runtime)
     tools = build_chat_tools(engine, store, provider=provider, persona_mode=resolved_mode)
+    return agent_loop, tools, store
+
+
+def build_companion_services(
+    *,
+    db_path: Path | None = None,
+) -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
+    or_config = OpenRouterConfig.from_env(
+        model_keys=COMPANION_MODEL_KEYS,
+        default_model=COMPANION_DEFAULT_MODEL,
+    )
+    store = SQLiteEngineStore(db_path=db_path)
+    provider = OpenRouterProvider(or_config)
+    agent_loop = PythonAgentLoop(
+        provider=provider,
+        config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
+    )
+    tools = build_companion_tools()
     return agent_loop, tools, store
 
 

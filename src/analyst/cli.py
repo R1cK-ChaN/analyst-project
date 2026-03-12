@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from analyst.contracts import format_epoch
 from analyst.delivery.sales_chat import (
     ChatPersonaMode,
-    build_chat_services,
+    build_companion_services,
     generate_chat_reply,
     split_into_bubbles,
 )
@@ -463,7 +463,7 @@ def _run_media_gen(args: argparse.Namespace) -> int:
 def _run_companion_chat(args: argparse.Namespace) -> int:
     db_path = Path(args.db_path) if args.db_path else None
     persona_mode = ChatPersonaMode.COMPANION
-    agent_loop, tools, store = build_chat_services(db_path=db_path, persona_mode=persona_mode)
+    agent_loop, tools, store = build_companion_services(db_path=db_path)
     history: list[dict[str, str]] = []
 
     def handle_turn(user_text: str) -> None:

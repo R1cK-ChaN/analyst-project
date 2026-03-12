@@ -19,7 +19,7 @@ dependencies = [
     "Pillow",
     "playwright",
     "playwright-stealth",
-    "python-telegram-bot>=21.0,<22",
+    "python-telegram-bot[job-queue]>=21.0,<22",
     "PyYAML",
     "readability-lxml",
     "requests",

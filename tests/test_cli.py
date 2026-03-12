@@ -24,7 +24,7 @@ class SalesChatCLITest(unittest.TestCase):
         fake_store = Mock()
         output = io.StringIO()
 
-        with patch("analyst.cli.build_chat_services", return_value=(Mock(), [], fake_store)):
+        with patch("analyst.cli.build_companion_services", return_value=(Mock(), [], fake_store)):
             with patch("analyst.cli.build_chat_context", return_value="memory block"):
                 with patch(
                     "analyst.cli.generate_chat_reply",

@@ -70,7 +70,7 @@ from .sales_chat import (  # noqa: E402
     ChatPersonaMode,
     MediaItem,
     SalesChatReply,
-    build_chat_services,
+    build_companion_services,
     generate_proactive_companion_reply,
     generate_chat_reply,
     split_into_bubbles,
@@ -964,7 +964,7 @@ def _resolve_runtime_persona_mode() -> ChatPersonaMode:
 def _build_services() -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore, ChatPersonaMode]:
     """Wire up the agent loop, tools, memory store, and active chat persona."""
     persona_mode = _resolve_runtime_persona_mode()
-    agent_loop, tools, store = build_chat_services(persona_mode=persona_mode)
+    agent_loop, tools, store = build_companion_services()
     return agent_loop, tools, store, persona_mode
 
 
