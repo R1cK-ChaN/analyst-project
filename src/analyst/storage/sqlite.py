@@ -325,6 +325,21 @@ class ClientProfileRecord:
 
 
 @dataclass(frozen=True)
+class CompanionCheckInStateRecord:
+    client_id: str
+    channel: str
+    thread_id: str
+    enabled: bool
+    pending_kind: str
+    pending_due_at: str
+    last_sent_at: str
+    last_sent_kind: str
+    cooldown_until: str
+    retry_count: int
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class ConversationMessageRecord:
     message_id: int
     client_id: str
@@ -1334,6 +1349,24 @@ class SQLiteEngineStore:
                 """
             )
             connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS companion_checkin_state (
+                    client_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    pending_kind TEXT NOT NULL DEFAULT '',
+                    pending_due_at TEXT NOT NULL DEFAULT '',
+                    last_sent_at TEXT NOT NULL DEFAULT '',
+                    last_sent_kind TEXT NOT NULL DEFAULT '',
+                    cooldown_until TEXT NOT NULL DEFAULT '',
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (client_id, channel, thread_id)
+                )
+                """
+            )
+            connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_analytical_observations_created ON analytical_observations(id DESC)"
             )
             connection.execute(
@@ -1353,6 +1386,9 @@ class SQLiteEngineStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_delivery_queue_client_created ON delivery_queue(client_id, channel, thread_id, id DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_companion_checkin_due ON companion_checkin_state(enabled, pending_due_at)"
             )
             # -- Portfolio volatility management tables ---------------------
             connection.execute(
@@ -3450,6 +3486,172 @@ class SQLiteEngineStore:
                 interaction_increment=interaction_increment,
             )
 
+    def get_companion_checkin_state(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+    ) -> CompanionCheckInStateRecord:
+        with self._connection(commit=False) as connection:
+            return self._get_companion_checkin_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+            )
+
+    def set_companion_checkins_enabled(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        enabled: bool,
+    ) -> CompanionCheckInStateRecord:
+        with self._connection(commit=True) as connection:
+            self._ensure_conversation_thread_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+            )
+            return self._upsert_companion_checkin_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                enabled=enabled,
+                pending_kind="" if not enabled else None,
+                pending_due_at="" if not enabled else None,
+                retry_count=0 if not enabled else None,
+            )
+
+    def schedule_companion_checkin(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        kind: str,
+        due_at: str,
+    ) -> CompanionCheckInStateRecord:
+        with self._connection(commit=True) as connection:
+            current = self._get_companion_checkin_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+            )
+            if not current.enabled:
+                return current
+            self._ensure_conversation_thread_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+            )
+            return self._upsert_companion_checkin_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                pending_kind=kind,
+                pending_due_at=due_at,
+                retry_count=0,
+            )
+
+    def clear_companion_checkin_pending(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+    ) -> CompanionCheckInStateRecord:
+        with self._connection(commit=True) as connection:
+            return self._upsert_companion_checkin_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                pending_kind="",
+                pending_due_at="",
+                retry_count=0,
+            )
+
+    def list_due_companion_checkins(
+        self,
+        *,
+        now_iso: str,
+        limit: int = 20,
+    ) -> list[CompanionCheckInStateRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM companion_checkin_state
+                WHERE enabled = 1
+                  AND pending_kind != ''
+                  AND pending_due_at != ''
+                  AND pending_due_at <= ?
+                  AND (cooldown_until = '' OR cooldown_until <= ?)
+                ORDER BY pending_due_at ASC
+                LIMIT ?
+                """,
+                (now_iso, now_iso, limit),
+            ).fetchall()
+        return [
+            self._row_to_companion_checkin_state(
+                row,
+                client_id=row["client_id"],
+                channel=row["channel"],
+                thread_id=row["thread_id"],
+            )
+            for row in rows
+        ]
+
+    def mark_companion_checkin_sent(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        kind: str,
+        sent_at: str,
+        cooldown_until: str,
+    ) -> CompanionCheckInStateRecord:
+        with self._connection(commit=True) as connection:
+            return self._upsert_companion_checkin_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                pending_kind="",
+                pending_due_at="",
+                last_sent_at=sent_at,
+                last_sent_kind=kind,
+                cooldown_until=cooldown_until,
+                retry_count=0,
+            )
+
+    def reschedule_companion_checkin_retry(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        next_due_at: str,
+        retry_count: int,
+    ) -> CompanionCheckInStateRecord:
+        with self._connection(commit=True) as connection:
+            return self._upsert_companion_checkin_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                pending_due_at=next_due_at,
+                retry_count=retry_count,
+            )
+
     def ensure_conversation_thread(self, *, client_id: str, channel: str, thread_id: str) -> None:
         with self._connection(commit=True) as connection:
             self._ensure_conversation_thread_in_connection(
@@ -3870,6 +4072,141 @@ class SQLiteEngineStore:
             total_interactions=int(row["total_interactions"]),
             updated_at=row["updated_at"],
         )
+
+    def _row_to_companion_checkin_state(
+        self,
+        row: sqlite3.Row | None,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+    ) -> CompanionCheckInStateRecord:
+        if row is None:
+            return CompanionCheckInStateRecord(
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                enabled=False,
+                pending_kind="",
+                pending_due_at="",
+                last_sent_at="",
+                last_sent_kind="",
+                cooldown_until="",
+                retry_count=0,
+                updated_at="",
+            )
+        return CompanionCheckInStateRecord(
+            client_id=row["client_id"],
+            channel=row["channel"],
+            thread_id=row["thread_id"],
+            enabled=bool(row["enabled"]),
+            pending_kind=row["pending_kind"],
+            pending_due_at=row["pending_due_at"],
+            last_sent_at=row["last_sent_at"],
+            last_sent_kind=row["last_sent_kind"],
+            cooldown_until=row["cooldown_until"],
+            retry_count=int(row["retry_count"]),
+            updated_at=row["updated_at"],
+        )
+
+    def _get_companion_checkin_state_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+    ) -> CompanionCheckInStateRecord:
+        row = connection.execute(
+            """
+            SELECT * FROM companion_checkin_state
+            WHERE client_id = ? AND channel = ? AND thread_id = ?
+            LIMIT 1
+            """,
+            (client_id, channel, thread_id),
+        ).fetchone()
+        return self._row_to_companion_checkin_state(
+            row,
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+        )
+
+    def _upsert_companion_checkin_state_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        enabled: bool | None = None,
+        pending_kind: str | None = None,
+        pending_due_at: str | None = None,
+        last_sent_at: str | None = None,
+        last_sent_kind: str | None = None,
+        cooldown_until: str | None = None,
+        retry_count: int | None = None,
+    ) -> CompanionCheckInStateRecord:
+        current = self._get_companion_checkin_state_in_connection(
+            connection,
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+        )
+        now_iso = utc_now().isoformat()
+        next_record = CompanionCheckInStateRecord(
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+            enabled=current.enabled if enabled is None else enabled,
+            pending_kind=current.pending_kind if pending_kind is None else pending_kind,
+            pending_due_at=current.pending_due_at if pending_due_at is None else pending_due_at,
+            last_sent_at=current.last_sent_at if last_sent_at is None else last_sent_at,
+            last_sent_kind=current.last_sent_kind if last_sent_kind is None else last_sent_kind,
+            cooldown_until=current.cooldown_until if cooldown_until is None else cooldown_until,
+            retry_count=current.retry_count if retry_count is None else retry_count,
+            updated_at=now_iso,
+        )
+        connection.execute(
+            """
+            INSERT INTO companion_checkin_state (
+                client_id,
+                channel,
+                thread_id,
+                enabled,
+                pending_kind,
+                pending_due_at,
+                last_sent_at,
+                last_sent_kind,
+                cooldown_until,
+                retry_count,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(client_id, channel, thread_id) DO UPDATE SET
+                enabled = excluded.enabled,
+                pending_kind = excluded.pending_kind,
+                pending_due_at = excluded.pending_due_at,
+                last_sent_at = excluded.last_sent_at,
+                last_sent_kind = excluded.last_sent_kind,
+                cooldown_until = excluded.cooldown_until,
+                retry_count = excluded.retry_count,
+                updated_at = excluded.updated_at
+            """,
+            (
+                next_record.client_id,
+                next_record.channel,
+                next_record.thread_id,
+                1 if next_record.enabled else 0,
+                next_record.pending_kind,
+                next_record.pending_due_at,
+                next_record.last_sent_at,
+                next_record.last_sent_kind,
+                next_record.cooldown_until,
+                next_record.retry_count,
+                next_record.updated_at,
+            ),
+        )
+        return next_record
 
     def _get_client_profile_in_connection(
         self,

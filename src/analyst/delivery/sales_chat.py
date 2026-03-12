@@ -259,6 +259,7 @@ def system_prompt_with_memory(
     user_text: str = "",
     user_lang: str = "",
     group_context: str = "",
+    proactive_kind: str = "",
     persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
 ) -> str:
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
@@ -270,6 +271,7 @@ def system_prompt_with_memory(
             memory_context=memory_context,
             group_context=group_context,
             current_time_label=now.strftime("%Y-%m-%d %H:%M %A") + " (Asia/Shanghai)",
+            proactive_kind=proactive_kind,
         )
     ).prompt
 
@@ -601,6 +603,51 @@ def generate_chat_reply(
         profile_update=profile_update,
         media=media,
         tool_audit=tool_audit,
+    )
+
+
+def _proactive_companion_instruction(kind: str) -> str:
+    normalized = str(kind).strip().lower()
+    if normalized == "follow_up":
+        return (
+            "Send a gentle proactive follow-up message now. The user previously sounded emotionally strained. "
+            "Write like a warm companion checking in naturally, not like a service follow-up. Keep it brief."
+        )
+    return (
+        "Send a gentle inactivity check-in now. The user has been quiet for a while. "
+        "Write like a warm companion casually checking in, with no guilt or pressure. Keep it brief."
+    )
+
+
+def generate_proactive_companion_reply(
+    *,
+    kind: str,
+    agent_loop: PythonAgentLoop,
+    memory_context: str = "",
+    preferred_language: str = "",
+) -> ChatReply:
+    user_lang = preferred_language if preferred_language in {"zh", "en"} else ""
+    result = agent_loop.run(
+        system_prompt=system_prompt_with_memory(
+            memory_context,
+            user_text="",
+            user_lang=user_lang,
+            proactive_kind=kind,
+            persona_mode=ChatPersonaMode.COMPANION,
+        ),
+        user_prompt=_proactive_companion_instruction(kind),
+        tools=[],
+        history=[],
+    )
+    response_text, profile_update = split_reply_and_profile_update(result.final_text)
+    response_text = normalize_sales_reply(response_text)
+    if not response_text:
+        response_text = "在想你今天过得怎么样。"
+    return ChatReply(
+        text=response_text,
+        profile_update=profile_update,
+        media=[],
+        tool_audit=[],
     )
 
 

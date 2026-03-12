@@ -20,6 +20,7 @@ class PromptAssemblyContext:
     memory_context: str = ""
     group_context: str = ""
     current_time_label: str = ""
+    proactive_kind: str = ""
 
 
 @dataclass(frozen=True)
@@ -255,6 +256,20 @@ COMPANION_EMOTIONAL_SUPPORT_MODULE = PromptModule(
 """,
 )
 
+COMPANION_PROACTIVE_MODULE = PromptModule(
+    module_id="companion_proactive",
+    body="""\
+你现在是在主动发起一条 companion check-in，而不是被动回复。
+
+规则：
+- 只能发 1-2 条短消息，轻一点、软一点、别太满。
+- 语气要像自然想起对方时顺手问一句，不要像运营触达，也不要像客服回访。
+- 如果是 follow_up，就轻轻承接上次的情绪或话题；如果是 inactivity，就简单问候，不要追问“为什么不回我”。
+- 绝对不要 guilt-trip，不要说“你怎么不找我了”“我一直在等你”这类话。
+- 不要主动聊市场，不要把消息写成工作服务，也不要带任何营销感。
+""",
+)
+
 COMPANION_PROFILE_UPDATE_MODULE = PromptModule(
     module_id="companion_profile_update",
     body="""\
@@ -296,6 +311,7 @@ MODE_MODULES: dict[str, dict[str, PromptModule]] = {
         COMPANION_BOUNDARIES_MODULE.module_id: COMPANION_BOUNDARIES_MODULE,
         COMPANION_PROFILE_MEMORY_MODULE.module_id: COMPANION_PROFILE_MEMORY_MODULE,
         COMPANION_EMOTIONAL_SUPPORT_MODULE.module_id: COMPANION_EMOTIONAL_SUPPORT_MODULE,
+        COMPANION_PROACTIVE_MODULE.module_id: COMPANION_PROACTIVE_MODULE,
         COMPANION_PROFILE_UPDATE_MODULE.module_id: COMPANION_PROFILE_UPDATE_MODULE,
     },
 }
@@ -439,6 +455,8 @@ def _optional_module_ids(context: PromptAssemblyContext) -> tuple[str, ...]:
         module_ids.append("re_engagement")
     if _user_text_needs_emotional_support(context.user_text) or _memory_needs_emotional_support(context.memory_context):
         module_ids.append(f"{mode}_emotional_support")
+    if mode == "companion" and context.proactive_kind:
+        module_ids.append("companion_proactive")
     return _dedupe_module_ids(module_ids)
 
 

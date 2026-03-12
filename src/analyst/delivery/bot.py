@@ -11,12 +11,15 @@ Commands
 --------
 /start      - persona greeting
 /help       - explain capabilities
+/checkins_on  - enable occasional proactive check-ins
+/checkins_off - disable proactive check-ins
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+from datetime import datetime, timedelta
 from io import BytesIO
 import logging
 import os
@@ -27,6 +30,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from telegram import MessageEntity, Update
 from telegram.constants import ChatAction
@@ -49,6 +53,7 @@ if str(_PROJECT_ROOT / "src") not in sys.path:
 from analyst.engine.agent_loop import PythonAgentLoop  # noqa: E402
 from analyst.engine.live_provider import OpenRouterConfig  # noqa: E402
 from analyst.engine.live_types import AgentTool  # noqa: E402
+from analyst.contracts import utc_now  # noqa: E402
 from analyst.env import get_env_value  # noqa: E402
 from analyst.memory import (  # noqa: E402
     ClientProfileUpdate,
@@ -66,8 +71,9 @@ from .sales_chat import (  # noqa: E402
     MediaItem,
     SalesChatReply,
     build_chat_services,
+    generate_proactive_companion_reply,
     generate_chat_reply,
-    resolve_chat_persona_mode,
+    split_into_bubbles,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,11 +82,140 @@ MAX_TELEGRAM_LENGTH = 4096
 MAX_HISTORY_TURNS = 20
 MAX_GROUP_CONTEXT_MESSAGES = 50
 MAX_GROUP_CONTEXT_CHARS = 1500
+COMPANION_CHECKIN_INTERVAL_SECONDS = 300
+COMPANION_CHECKIN_SEND_WINDOW_START_HOUR = 10
+COMPANION_CHECKIN_SEND_WINDOW_END_HOUR = 20
+COMPANION_CHECKIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
 MANAGED_MEDIA_PREFIXES = (
     "analyst_gen_",
     "analyst_live_",
 )
 MAX_INBOUND_IMAGE_EDGE = 1536
+INSTANT_REPLY_MAX_CHARS = 12
+DEEP_STORY_MIN_LINES = 4
+DEEP_STORY_MIN_CHARS = 220
+EMOTIONAL_CUE_TOKENS = (
+    "怎么办",
+    "完了",
+    "扛不住",
+    "不想做了",
+    "睡不好",
+    "睡不着",
+    "焦虑",
+    "崩溃",
+    "难受",
+    "烦死",
+    "累了",
+    "失眠",
+    "overwhelmed",
+    "anxious",
+    "panic",
+    "panicking",
+    "burned out",
+    "burnt out",
+    "rough day",
+    "can't sleep",
+    "cant sleep",
+    "breakup hurts",
+    "stressed",
+)
+
+
+# ---------------------------------------------------------------------------
+# Companion timing / proactive helpers
+# ---------------------------------------------------------------------------
+
+def _contains_emotional_cue(text: str) -> bool:
+    lowered = text.lower()
+    return any(token in lowered for token in EMOTIONAL_CUE_TOKENS)
+
+
+def _reply_timing_bucket(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return "instant"
+    if stripped.count("\n") + 1 >= DEEP_STORY_MIN_LINES or len(stripped) >= DEEP_STORY_MIN_CHARS:
+        return "deep_story"
+    if _contains_emotional_cue(stripped):
+        return "emotional"
+    if len(stripped) <= INSTANT_REPLY_MAX_CHARS:
+        return "instant"
+    return "normal"
+
+
+def _first_reply_delay_seconds(text: str, *, has_image: bool = False) -> float:
+    if has_image:
+        return 0.0
+    stripped = text.strip()
+    if not stripped:
+        return 0.0
+    bucket = _reply_timing_bucket(stripped)
+    if bucket == "instant":
+        return min(0.4, 0.05 + len(stripped) * 0.02)
+    if bucket == "emotional":
+        return min(3.5, 2.0 + min(len(stripped), 180) / 120.0)
+    if bucket == "deep_story":
+        return min(5.0, 3.0 + min(len(stripped), 320) / 160.0)
+    return min(1.8, 0.8 + min(len(stripped), 120) / 120.0)
+
+
+def _needs_emotional_follow_up(text: str, profile: Any) -> bool:
+    if _contains_emotional_cue(text):
+        return True
+    stress_level = str(getattr(profile, "stress_level", "") or "").lower()
+    emotional_trend = str(getattr(profile, "emotional_trend", "") or "").lower()
+    current_mood = str(getattr(profile, "current_mood", "") or "").lower()
+    return (
+        stress_level in {"high", "critical"}
+        or emotional_trend == "declining"
+        or current_mood in {"anxious", "panicking", "burned_out", "defeated", "tired"}
+    )
+
+
+def _telegram_chat_id_from_channel(channel: str) -> int | None:
+    prefix, _, raw_chat_id = str(channel).partition(":")
+    if prefix != "telegram" or not raw_chat_id:
+        return None
+    try:
+        return int(raw_chat_id)
+    except ValueError:
+        return None
+
+
+def _is_within_checkin_send_window(now: datetime) -> bool:
+    local_now = now.astimezone(COMPANION_CHECKIN_TIMEZONE)
+    return COMPANION_CHECKIN_SEND_WINDOW_START_HOUR <= local_now.hour < COMPANION_CHECKIN_SEND_WINDOW_END_HOUR
+
+
+def _next_checkin_window_start(now: datetime) -> datetime:
+    local_now = now.astimezone(COMPANION_CHECKIN_TIMEZONE)
+    candidate = local_now.replace(
+        hour=COMPANION_CHECKIN_SEND_WINDOW_START_HOUR,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    if local_now.hour >= COMPANION_CHECKIN_SEND_WINDOW_END_HOUR:
+        candidate = candidate + timedelta(days=1)
+    elif local_now.hour < COMPANION_CHECKIN_SEND_WINDOW_START_HOUR:
+        candidate = candidate
+    else:
+        candidate = local_now
+    return candidate.astimezone(now.tzinfo or COMPANION_CHECKIN_TIMEZONE)
+
+
+def _same_day_retry_due(now: datetime) -> datetime | None:
+    local_now = now.astimezone(COMPANION_CHECKIN_TIMEZONE)
+    retry_local = local_now + timedelta(hours=1)
+    if retry_local.date() != local_now.date():
+        return None
+    if retry_local.hour >= COMPANION_CHECKIN_SEND_WINDOW_END_HOUR:
+        return None
+    return retry_local.astimezone(now.tzinfo or COMPANION_CHECKIN_TIMEZONE)
+
+
+def _cooldown_until(now: datetime) -> datetime:
+    return now + timedelta(days=7)
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +490,134 @@ def _append_history(
         del history[: len(history) - max_messages]
 
 
+async def _send_bot_bubbles(bot: Any, *, chat_id: int, bubbles: list[str]) -> None:
+    for i, bubble in enumerate(bubbles):
+        await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        if i > 0:
+            delay = min(0.5 + len(bubble) * 0.01, 2.5) + random.uniform(-0.3, 0.3)
+            await asyncio.sleep(max(delay, 0.3))
+        await bot.send_message(chat_id=chat_id, text=bubble)
+
+
+def _refresh_companion_checkin_schedule(
+    store: SQLiteEngineStore,
+    *,
+    client_id: str,
+    channel_id: str,
+    thread_id: str,
+    user_text: str,
+    profile: Any,
+) -> None:
+    state = store.get_companion_checkin_state(
+        client_id=client_id,
+        channel=channel_id,
+        thread_id=thread_id,
+    )
+    if not state.enabled:
+        return
+    now = utc_now()
+    if _needs_emotional_follow_up(user_text, profile):
+        due_at = now + timedelta(hours=18)
+        store.schedule_companion_checkin(
+            client_id=client_id,
+            channel=channel_id,
+            thread_id=thread_id,
+            kind="follow_up",
+            due_at=due_at.isoformat(),
+        )
+        return
+    due_at = now + timedelta(days=5)
+    store.schedule_companion_checkin(
+        client_id=client_id,
+        channel=channel_id,
+        thread_id=thread_id,
+        kind="inactivity",
+        due_at=due_at.isoformat(),
+    )
+
+
+async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    job_data = getattr(context.job, "data", {}) or {}
+    store: SQLiteEngineStore | None = job_data.get("store")
+    agent_loop: PythonAgentLoop | None = job_data.get("agent_loop")
+    if store is None or agent_loop is None:
+        return
+    now = utc_now()
+    if not _is_within_checkin_send_window(now):
+        return
+    due_states = store.list_due_companion_checkins(now_iso=now.isoformat(), limit=10)
+    for state in due_states:
+        chat_id = _telegram_chat_id_from_channel(state.channel)
+        if chat_id is None:
+            continue
+        profile = store.get_client_profile(state.client_id)
+        try:
+            memory_context = build_chat_context(
+                store=store,
+                client_id=state.client_id,
+                channel_id=state.channel,
+                thread_id=state.thread_id,
+                query="",
+                persona_mode=ChatPersonaMode.COMPANION.value,
+            )
+            reply = await asyncio.to_thread(
+                generate_proactive_companion_reply,
+                kind=state.pending_kind,
+                agent_loop=agent_loop,
+                memory_context=memory_context,
+                preferred_language=profile.preferred_language,
+            )
+            bubbles = split_into_bubbles(reply.text)
+            await _send_bot_bubbles(context.bot, chat_id=chat_id, bubbles=bubbles)
+            sent_at = utc_now().isoformat()
+            store.append_conversation_message(
+                client_id=state.client_id,
+                channel=state.channel,
+                thread_id=state.thread_id,
+                role="assistant",
+                content=reply.text,
+                metadata={"proactive_kind": state.pending_kind, "channel": state.channel},
+            )
+            store.enqueue_delivery(
+                client_id=state.client_id,
+                channel=state.channel,
+                thread_id=state.thread_id,
+                source_type="companion_checkin",
+                content_rendered=reply.text,
+                status="delivered",
+                delivered_at=sent_at,
+                metadata={"kind": state.pending_kind},
+            )
+            store.mark_companion_checkin_sent(
+                client_id=state.client_id,
+                channel=state.channel,
+                thread_id=state.thread_id,
+                kind=state.pending_kind,
+                sent_at=sent_at,
+                cooldown_until=_cooldown_until(utc_now()).isoformat(),
+            )
+        except Exception:
+            logger.exception("Failed to send companion proactive check-in")
+            retry_due = _same_day_retry_due(now) if state.retry_count == 0 else None
+            if retry_due is not None:
+                store.reschedule_companion_checkin_retry(
+                    client_id=state.client_id,
+                    channel=state.channel,
+                    thread_id=state.thread_id,
+                    next_due_at=retry_due.isoformat(),
+                    retry_count=1,
+                )
+            else:
+                next_window = _next_checkin_window_start(now)
+                store.reschedule_companion_checkin_retry(
+                    client_id=state.client_id,
+                    channel=state.channel,
+                    thread_id=state.thread_id,
+                    next_due_at=next_window.isoformat(),
+                    retry_count=0,
+                )
+
+
 # ---------------------------------------------------------------------------
 # Tool definitions
 # ---------------------------------------------------------------------------
@@ -483,7 +746,7 @@ def _make_help_handler(
             return
         await update.effective_chat.send_action(ChatAction.TYPING)
         reply = await _chat_reply(
-            "(The user wants to know what you can help with. Explain naturally.)",
+            "(The user wants to know what you can help with. Explain naturally, and mention /checkins_on plus /checkins_off for occasional opt-in check-ins.)",
             context,
             agent_loop,
             tools,
@@ -492,6 +755,42 @@ def _make_help_handler(
         await update.effective_message.reply_text(reply.text)
 
     return help_command
+
+
+def _make_checkins_toggle_handler(
+    store: SQLiteEngineStore,
+    *,
+    enabled: bool,
+):
+    async def toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_message is None or update.effective_chat is None:
+            return
+        if _is_group_chat(update):
+            return
+        user_id = str(update.effective_user.id) if update.effective_user else str(update.effective_chat.id)
+        channel_id = f"telegram:{update.effective_chat.id}"
+        topic_id = getattr(update.effective_message, "message_thread_id", None)
+        thread_id = str(topic_id) if topic_id is not None else "main"
+        state = store.set_companion_checkins_enabled(
+            client_id=user_id,
+            channel=channel_id,
+            thread_id=thread_id,
+            enabled=enabled,
+        )
+        if enabled and state.enabled:
+            store.schedule_companion_checkin(
+                client_id=user_id,
+                channel=channel_id,
+                thread_id=thread_id,
+                kind="inactivity",
+                due_at=(utc_now() + timedelta(days=5)).isoformat(),
+            )
+            text = "行，那我之后会很偶尔地主动来问候你一下。你想停的话，随时 /checkins_off。"
+        else:
+            text = "好，我不再主动发 check-in 了。你之后想开回来，随时 /checkins_on。"
+        await update.effective_message.reply_text(text)
+
+    return toggle
 
 
 def _make_regime_handler(
@@ -581,6 +880,12 @@ def _make_message_handler(
         thread_id = str(topic_id) if topic_id is not None else "main"
 
         in_group = _is_group_chat(update)
+        if not in_group and persona_mode is ChatPersonaMode.COMPANION:
+            store.clear_companion_checkin_pending(
+                client_id=user_id,
+                channel=channel_id,
+                thread_id=thread_id,
+            )
 
         reply_context = _extract_reply_context(update)
         history_user_text = _summarize_user_message(text, has_image=attached_image is not None)
@@ -624,6 +929,10 @@ def _make_message_handler(
             llm_text = f'回复消息：\n"{reply_context}"\n\n用户说：\n{base_llm_text}'
         else:
             llm_text = base_llm_text
+        first_reply_delay_seconds = _first_reply_delay_seconds(
+            text,
+            has_image=attached_image is not None,
+        )
         user_content = (
             [
                 {"type": "text", "text": _render_image_instruction(llm_text)},
@@ -634,6 +943,7 @@ def _make_message_handler(
         )
 
         await update.effective_chat.send_action(ChatAction.TYPING)
+        reply_started = asyncio.get_running_loop().time()
         if in_group and group_id:
             # Three-layer context: group messages + speaker memory + participant model
             memory_context = build_group_chat_context(
@@ -688,6 +998,16 @@ def _make_message_handler(
                 tool_audit=reply.tool_audit,
                 persona_mode=persona_mode.value,
             )
+            updated_profile = store.get_client_profile(user_id)
+            if not in_group:
+                _refresh_companion_checkin_schedule(
+                    store,
+                    client_id=user_id,
+                    channel_id=channel_id,
+                    thread_id=thread_id,
+                    user_text=history_user_text,
+                    profile=updated_profile,
+                )
         else:
             record_sales_interaction(
                 store=store,
@@ -699,8 +1019,12 @@ def _make_message_handler(
                 assistant_profile_update=reply.profile_update,
                 tool_audit=reply.tool_audit,
             )
-        from analyst.delivery.sales_chat import split_into_bubbles
         bubbles = split_into_bubbles(reply.text)
+        elapsed = asyncio.get_running_loop().time() - reply_started
+        remaining_delay = first_reply_delay_seconds - elapsed
+        if remaining_delay > 0:
+            await update.effective_chat.send_action(ChatAction.TYPING)
+            await asyncio.sleep(remaining_delay)
         for i, bubble in enumerate(bubbles):
             if i > 0:
                 await update.effective_chat.send_action(ChatAction.TYPING)
@@ -765,12 +1089,26 @@ def build_application(token: str) -> Application:
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", _make_start_handler(agent_loop, tools, persona_mode=persona_mode)))
     app.add_handler(CommandHandler("help", _make_help_handler(agent_loop, tools, persona_mode=persona_mode)))
+    app.add_handler(CommandHandler("checkins_on", _make_checkins_toggle_handler(store, enabled=True)))
+    app.add_handler(CommandHandler("checkins_off", _make_checkins_toggle_handler(store, enabled=False)))
     app.add_handler(
         MessageHandler(
             (filters.TEXT | filters.PHOTO | filters.Document.IMAGE) & ~filters.COMMAND,
             _make_message_handler(agent_loop, tools, store, persona_mode=persona_mode),
         )
     )
+    if app.job_queue is not None:
+        app.job_queue.run_repeating(
+            _run_companion_checkins_job,
+            interval=COMPANION_CHECKIN_INTERVAL_SECONDS,
+            first=60,
+            data={"store": store, "agent_loop": agent_loop},
+            name="companion_checkins",
+        )
+    else:
+        logger.warning(
+            "Companion proactive check-ins require python-telegram-bot[job-queue]; scheduler not started."
+        )
 
     return app
 

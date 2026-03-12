@@ -234,9 +234,12 @@ class TestBuildApplication(unittest.TestCase):
         ):
             app = build_application("fake-token-for-test")
         handlers = app.handlers.get(0, [])
-        self.assertEqual(len(handlers), 3)
+        self.assertEqual(len(handlers), 5)
         command_names = [handler.commands for handler in handlers if hasattr(handler, "commands")]
-        self.assertEqual(command_names, [{"start"}, {"help"}])
+        self.assertEqual(
+            command_names,
+            [{"start"}, {"help"}, {"checkins_on"}, {"checkins_off"}],
+        )
 
 
 class TestChatPersonaRouting(unittest.TestCase):
