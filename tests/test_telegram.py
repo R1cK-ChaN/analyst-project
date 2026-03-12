@@ -285,6 +285,16 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
     """Test _chat_reply — the core agent-loop chat function."""
 
     def setUp(self) -> None:
+        async def run_inline(func, /, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        self.to_thread_patcher = patch(
+            "analyst.delivery.bot.asyncio.to_thread",
+            new=AsyncMock(side_effect=run_inline),
+        )
+        self.to_thread_patcher.start()
+        self.addCleanup(self.to_thread_patcher.stop)
+
         self.mock_loop = MagicMock()
         self.mock_tools = []
         self.mock_context = MagicMock()
@@ -441,6 +451,30 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.tool_audit[0]["status"], "ok")
         self.assertEqual(result.tool_audit[0]["repair_kind"], "placeholder_image")
         self.assertEqual(result.tool_audit[0]["arguments"]["mode"], "selfie")
+
+    async def test_placeholder_repair_prefers_companion_moment_for_lunch_photo(self) -> None:
+        from analyst.delivery.bot import _chat_reply
+
+        self._set_loop_response(
+            "等我一下。[SPLIT]发你看看。 [IMAGE]<profile_update>{}</profile_update>"
+        )
+        image_tool = AgentTool(
+            name="generate_image",
+            description="",
+            parameters={},
+            handler=lambda arguments: {
+                "status": "ok",
+                "image_url": "https://example.com/lunch.jpg",
+                "mode": "companion_moment",
+                "scene_key": arguments.get("moment_scene_key", ""),
+            },
+        )
+
+        result = await _chat_reply("你午饭吃什么，发张现在的照片", self.mock_context, self.mock_loop, [image_tool])
+
+        self.assertEqual(result.media[0].url, "https://example.com/lunch.jpg")
+        self.assertEqual(result.tool_audit[0]["arguments"]["mode"], "companion_moment")
+        self.assertEqual(result.tool_audit[0]["arguments"]["moment_scene_key"], "lunch_table_food")
 
 
 class TestGroupChat(unittest.IsolatedAsyncioTestCase):

@@ -239,9 +239,11 @@ COMPANION_MEDIA_RULES_MODULE = PromptModule(
     module_id="companion_media_rules",
     body="""\
 发图规则：
-- 用户明确想看你本人、自拍、现在在干嘛、长什么样，才调用 generate_image 并传 mode="selfie"。
+- 用户明确想看你本人、自拍、脸、长什么样，才调用 generate_image 并传 mode="selfie"。
 - 用户明确想看会动的自拍、live photo、动态自拍，才调用 generate_live_photo 并传 mode="selfie"。
 - 自拍优先传 scene_key：coffee_shop、lazy_sunday_home、night_walk、gym_mirror、airport_waiting、bedroom_late_night、rainy_day_window、weekend_street。
+- 如果用户想看你在吃什么、在干嘛、今天的日常、手边场景，优先调用 generate_image 并传 mode="companion_moment"，尽量用 candid / table / desk / street / food 这类日常 moment，不要默认自拍。
+- companion_moment 优先传 moment_scene_key：lunch_table_food、coffee_table_candid、desk_midday_candid、home_window_evening、street_walk_candid。
 - scene_prompt 只写简短英文补充细节，不要自己写整段人设 prompt。
 - 咖啡、桌面、食物、房间、窗外、街景、风景这类环境照，不要用 selfie mode。
 - 如果用户发来图片并想基于那张图改图或让那张图动起来，使用 use_attached_image=true。

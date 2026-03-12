@@ -17,42 +17,64 @@ from analyst.env import PROJECT_ROOT, get_env_value
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CHARACTER_DNA = (
-    "young Chinese male",
-    "mid 20s",
-    "short black hair",
-    "friendly smile",
-    "clean casual style",
-    "slim build",
-    "gentle approachable vibe",
-    "ordinary handsome in a natural way",
-    "similar vibe to Huang Zihongfan",
+    "same person as the reference images",
+    "casual everyday appearance",
+    "natural unfiltered face",
 )
 
 _DEFAULT_CAMERA_STYLE = (
-    "iphone front camera selfie",
-    "casual snapshot",
-    "natural lighting",
-    "slightly messy composition",
-    "realistic smartphone photo",
+    "front camera phone photo",
+    "quick casual capture",
+    "slightly off-center framing",
+    "not carefully posed",
 )
 
 _DEFAULT_QUALITY_MODIFIERS = (
-    "photorealistic",
-    "natural skin texture",
-    "smartphone compression",
-    "slight motion blur",
-    "realistic imperfections",
+    "mixed natural and indoor lighting",
+    "phone camera dynamic range",
+    "mild sensor noise",
+    "jpeg compression artifacts",
+    "subtle lens distortion near edges",
 )
 
 _DEFAULT_NEGATIVE_PROMPT = (
-    "different person",
-    "cartoon",
     "studio lighting",
+    "editorial portrait",
     "fashion photography",
-    "professional photoshoot",
-    "perfect portrait",
+    "beauty retouching",
+    "beauty filter",
+    "instagram influencer style",
+    "perfect symmetry",
+    "hdr photography",
+    "perfect lighting",
     "airbrushed skin",
-    "luxury editorial styling",
+)
+
+_DEFAULT_MOMENT_CAMERA_STYLE = (
+    "quick phone photo taken in the middle of real life",
+    "imperfect framing",
+    "slight tilt or awkward crop",
+    "not a posed portrait",
+)
+
+_DEFAULT_MOMENT_QUALITY_MODIFIERS = (
+    "mixed lighting with uneven shadows",
+    "slight overexposure near bright areas",
+    "mild sensor noise",
+    "jpeg compression",
+    "subtle motion blur",
+)
+
+_DEFAULT_MOMENT_NEGATIVE_PROMPT = (
+    "studio lighting",
+    "editorial portrait",
+    "fashion photography",
+    "beauty retouching",
+    "beauty filter",
+    "instagram influencer style",
+    "perfect symmetry",
+    "advertising photo",
+    "perfect lighting",
 )
 
 
@@ -62,105 +84,159 @@ class SelfieScene:
     motion_prompt: str
 
 
+@dataclass(frozen=True)
+class CompanionMomentScene:
+    scene_prompt: str
+    include_reference_image: bool = False
+
+
 _SCENE_CATALOG: dict[str, SelfieScene] = {
     "coffee_shop": SelfieScene(
         scene_prompt=(
-            "sitting in a coffee shop\n"
-            "holding a coffee cup\n"
-            "window daylight"
+            "front camera selfie at a small coffee shop table in Tanjong Pagar\n"
+            "paper cup already opened on the table\n"
+            "mixed window light and indoor light\n"
+            "background slightly cluttered"
         ),
         motion_prompt=(
-            "holding a phone selfie in a coffee shop\n"
-            "lifting a coffee cup slightly toward the camera\n"
-            "soft blinking and a relaxed smile\n"
-            "gentle handheld phone motion"
+            "front camera selfie at a small coffee shop table\n"
+            "briefly lifting the paper cup while talking\n"
+            "natural blinking and a half smile\n"
+            "small handheld phone wobble"
         ),
     ),
     "lazy_sunday_home": SelfieScene(
         scene_prompt=(
-            "lazy sunday at home\n"
-            "sitting on a sofa in casual clothes\n"
-            "soft afternoon light"
+            "quick home selfie on a sofa on a lazy sunday\n"
+            "casual clothes and slightly rumpled background\n"
+            "soft uneven afternoon light"
         ),
         motion_prompt=(
-            "holding a phone selfie on a sofa at home\n"
-            "small relaxed stretch and soft blinking\n"
-            "gentle handheld phone motion"
+            "quick home selfie on a sofa\n"
+            "small relaxed stretch and natural blinking\n"
+            "slight handheld phone sway"
         ),
     ),
     "night_walk": SelfieScene(
         scene_prompt=(
-            "night street selfie\n"
-            "city lights in the background\n"
-            "casual walk outside"
+            "front camera selfie during a night walk\n"
+            "street lights and storefront glow in the background\n"
+            "slight motion and uneven night lighting"
         ),
         motion_prompt=(
-            "holding a phone selfie while walking at night\n"
-            "city lights in the background\n"
-            "soft blinking with a relaxed smile\n"
-            "gentle handheld phone motion"
+            "front camera selfie while walking at night\n"
+            "small head turn and relaxed expression\n"
+            "street lights shifting behind\n"
+            "gentle walking motion"
         ),
     ),
     "gym_mirror": SelfieScene(
         scene_prompt=(
-            "mirror selfie in a gym\n"
-            "wearing sportswear\n"
-            "gym equipment background"
+            "mirror selfie in a gym after a workout\n"
+            "sportswear slightly creased\n"
+            "gym equipment and random reflections in the background"
         ),
         motion_prompt=(
             "mirror selfie in a gym\n"
-            "slight pose adjustment and natural blinking\n"
-            "subtle body movement with a relaxed smile"
+            "small grip adjustment and natural blinking\n"
+            "subtle tired posture shift"
         ),
     ),
     "airport_waiting": SelfieScene(
         scene_prompt=(
-            "taking a selfie while waiting at the airport gate\n"
-            "backpack and boarding area nearby\n"
-            "soft travel-day lighting"
+            "front camera selfie while waiting at an airport gate\n"
+            "backpack, gate seats, and boarding area nearby\n"
+            "flat travel-day indoor lighting"
         ),
         motion_prompt=(
-            "holding a phone selfie at an airport gate\n"
-            "slight head turn and soft smile\n"
-            "gentle handheld phone motion"
+            "front camera selfie at an airport gate\n"
+            "small glance toward the boarding screen\n"
+            "subtle blinking and handheld phone motion"
         ),
     ),
     "bedroom_late_night": SelfieScene(
         scene_prompt=(
             "late night bedroom selfie\n"
-            "warm dim lighting\n"
-            "lying on a bed"
+            "warm dim bedside lighting\n"
+            "slightly tired expression and casual bedding in frame"
         ),
         motion_prompt=(
-            "taking a phone selfie in a bedroom at night\n"
-            "warm dim lighting\n"
-            "small tired smile and subtle blinking\n"
-            "gentle handheld phone motion"
+            "late night bedroom selfie\n"
+            "subtle blinking and a tired half smile\n"
+            "small handheld phone movement"
         ),
     ),
     "rainy_day_window": SelfieScene(
         scene_prompt=(
-            "standing by a window on a rainy day\n"
-            "soft grey daylight\n"
-            "quiet home atmosphere"
+            "quick selfie by a rainy window at home\n"
+            "grey daylight and soft shadows\n"
+            "quiet room with an ordinary lived-in background"
         ),
         motion_prompt=(
-            "holding a phone selfie by a rainy window\n"
-            "small head movement and soft blinking\n"
+            "quick selfie by a rainy window\n"
+            "small glance outside and natural blinking\n"
             "gentle handheld phone motion"
         ),
     ),
     "weekend_street": SelfieScene(
         scene_prompt=(
-            "weekend street selfie\n"
+            "front camera selfie on a weekend street\n"
             "casual outfit outdoors\n"
-            "natural daylight"
+            "busy daylight background with partial passersby"
         ),
         motion_prompt=(
-            "holding a phone selfie on a weekend street\n"
-            "small step forward and relaxed smile\n"
+            "front camera selfie on a weekend street\n"
+            "small step forward and relaxed half smile\n"
             "gentle handheld phone motion"
         ),
+    ),
+}
+
+_MOMENT_SCENE_CATALOG: dict[str, CompanionMomentScene] = {
+    "lunch_table_food": CompanionMomentScene(
+        scene_prompt=(
+            "quick phone photo taken across a small roast meat shop table in Tanjong Pagar\n"
+            "char siu rice or roast meat rice already half eaten\n"
+            "messy tray, chopsticks, napkins, and soup bowl\n"
+            "mixed fluorescent light and daylight from the storefront"
+        ),
+        include_reference_image=False,
+    ),
+    "coffee_table_candid": CompanionMomentScene(
+        scene_prompt=(
+            "quick phone photo taken across a coffee shop table in Tanjong Pagar\n"
+            "paper cup, laptop, and receipt on the table\n"
+            "subject slightly distracted and not looking directly at camera\n"
+            "background mildly cluttered and imperfect"
+        ),
+        include_reference_image=True,
+    ),
+    "desk_midday_candid": CompanionMomentScene(
+        scene_prompt=(
+            "quick phone photo taken while sitting at a desk in the office\n"
+            "screen glow, notebook, water bottle, and cable clutter visible\n"
+            "subject halfway through work and not posing\n"
+            "mixed office light with one side slightly shadowed"
+        ),
+        include_reference_image=True,
+    ),
+    "home_window_evening": CompanionMomentScene(
+        scene_prompt=(
+            "quick candid phone photo at home near a window in the evening\n"
+            "lamp light mixing with dim outdoor light\n"
+            "ordinary lived-in room with small background clutter\n"
+            "subject relaxed and slightly tired, not posing"
+        ),
+        include_reference_image=True,
+    ),
+    "street_walk_candid": CompanionMomentScene(
+        scene_prompt=(
+            "quick phone photo taken while walking outside in the evening\n"
+            "city lights, passing people, and imperfect background motion\n"
+            "subject caught mid-step and not looking straight at camera\n"
+            "slight motion blur and uneven street lighting"
+        ),
+        include_reference_image=True,
     ),
 }
 
@@ -172,14 +248,13 @@ class SelfiePromptConfig:
     scene_catalog_version: str = "companion-v1"
     neutral_scene: SelfieScene = SelfieScene(
         scene_prompt=(
-            "taking a casual phone selfie at home near a window\n"
-            "soft daylight\n"
-            "relaxed friendly expression"
+            "quick front camera selfie at home near a window\n"
+            "slightly off-center framing\n"
+            "soft uneven daylight"
         ),
         motion_prompt=(
-            "taking a casual phone selfie at home near a window\n"
-            "soft daylight\n"
-            "subtle blinking and a relaxed friendly smile\n"
+            "quick front camera selfie at home near a window\n"
+            "subtle blinking and a small natural smile\n"
             "gentle handheld phone motion"
         ),
     )
@@ -187,6 +262,9 @@ class SelfiePromptConfig:
     camera_style: tuple[str, ...] = _DEFAULT_CAMERA_STYLE
     quality_modifiers: tuple[str, ...] = _DEFAULT_QUALITY_MODIFIERS
     negative_prompt: tuple[str, ...] = _DEFAULT_NEGATIVE_PROMPT
+    moment_camera_style: tuple[str, ...] = _DEFAULT_MOMENT_CAMERA_STYLE
+    moment_quality_modifiers: tuple[str, ...] = _DEFAULT_MOMENT_QUALITY_MODIFIERS
+    moment_negative_prompt: tuple[str, ...] = _DEFAULT_MOMENT_NEGATIVE_PROMPT
 
     @classmethod
     def from_env(cls) -> SelfiePromptConfig:
@@ -245,14 +323,36 @@ class SelfiePromptDraft:
     motion_prompt: str
 
 
+@dataclass(frozen=True)
+class GeneratedCompanionMoment:
+    image_path: str
+    prompt_used: str
+    negative_prompt: str
+    scene_key: str
+    scene_prompt: str
+
+
+@dataclass(frozen=True)
+class CompanionMomentPromptDraft:
+    prompt_used: str
+    negative_prompt: str
+    scene_key: str
+    scene_prompt: str
+    include_reference_image: bool
+
+
 class SelfiePromptService:
     def __init__(self, config: SelfiePromptConfig | None = None) -> None:
         self._config = config or SelfiePromptConfig.from_env()
 
     def is_selfie_request(self, arguments: dict[str, Any]) -> bool:
         mode = str(arguments.get("mode", "")).strip().lower()
+        if mode == "companion_moment":
+            return False
         if mode == "selfie":
             return True
+        if any(str(arguments.get(key, "")).strip() for key in ("moment_scene_key", "moment_scene_prompt")):
+            return False
         if any(str(arguments.get(key, "")).strip() for key in ("scene_key", "scene_prompt")):
             return True
         return False
@@ -525,6 +625,105 @@ class SelfiePromptService:
         migrated.setdefault("last_scene_prompt", "")
         migrated.setdefault("version", 2)
         return migrated
+
+
+class CompanionMomentService:
+    def __init__(
+        self,
+        config: SelfiePromptConfig | None = None,
+        selfie_service: SelfiePromptService | None = None,
+    ) -> None:
+        self._config = config or SelfiePromptConfig.from_env()
+        self._selfie_service = selfie_service or SelfiePromptService(self._config)
+
+    def is_moment_request(self, arguments: dict[str, Any]) -> bool:
+        mode = str(arguments.get("mode", "")).strip().lower()
+        if mode == "companion_moment":
+            return True
+        if any(str(arguments.get(key, "")).strip() for key in ("moment_scene_key", "moment_scene_prompt")):
+            return True
+        return False
+
+    def generate_moment(self, arguments: dict[str, Any], image_client: Any) -> GeneratedCompanionMoment:
+        draft = self.build_prompt_draft(arguments)
+        image_input = ""
+        if draft.include_reference_image:
+            state = self._selfie_service._ensure_state(image_client)
+            image_input = self._selfie_service._build_reference_image_data_uri(state)
+        generated = image_client.generate_image(
+            prompt=draft.prompt_used,
+            negative_prompt=draft.negative_prompt,
+            image_input=image_input,
+        )
+        history_path = image_client.materialize_image(
+            generated,
+            self._selfie_service._next_history_path(draft.scene_key or "moment"),
+        )
+        return GeneratedCompanionMoment(
+            image_path=history_path,
+            prompt_used=draft.prompt_used,
+            negative_prompt=draft.negative_prompt,
+            scene_key=draft.scene_key,
+            scene_prompt=draft.scene_prompt,
+        )
+
+    @property
+    def negative_prompt_text(self) -> str:
+        return "\n".join(self._config.moment_negative_prompt)
+
+    def build_prompt_draft(self, arguments: dict[str, Any]) -> CompanionMomentPromptDraft:
+        scene_key, scene_prompt, include_reference_image = self._resolve_scene(arguments)
+        return CompanionMomentPromptDraft(
+            prompt_used=self._assemble_prompt(
+                scene_prompt,
+                include_character_dna=include_reference_image,
+            ),
+            negative_prompt=self.negative_prompt_text,
+            scene_key=scene_key,
+            scene_prompt=scene_prompt,
+            include_reference_image=include_reference_image,
+        )
+
+    def _resolve_scene(self, arguments: dict[str, Any]) -> tuple[str, str, bool]:
+        scene_key = str(
+            arguments.get("moment_scene_key", arguments.get("scene_key", ""))
+        ).strip().lower()
+        free_text = str(
+            arguments.get("moment_scene_prompt", arguments.get("scene_prompt", ""))
+        ).strip()
+        fallback_prompt = str(arguments.get("prompt", "")).strip()
+        scene = _MOMENT_SCENE_CATALOG.get(scene_key)
+
+        if scene is None and scene_key:
+            free_text = "\n".join(
+                part for part in (scene_key.replace("_", " "), free_text, fallback_prompt) if part
+            )
+        elif not free_text:
+            free_text = fallback_prompt
+
+        if scene is None and not free_text:
+            raise RuntimeError("moment_scene_prompt or prompt is required for companion moment generation.")
+
+        if scene is None:
+            return "", free_text, False
+
+        scene_prompt = scene.scene_prompt
+        if free_text:
+            scene_prompt = f"{scene_prompt}\n{free_text}"
+        return scene_key, scene_prompt, scene.include_reference_image
+
+    def _assemble_prompt(self, scene_prompt: str, *, include_character_dna: bool) -> str:
+        blocks = []
+        if include_character_dna:
+            blocks.append("\n".join(self._config.character_dna))
+        blocks.extend(
+            (
+                "\n".join(self._config.moment_camera_style),
+                scene_prompt,
+                "\n".join(self._config.moment_quality_modifiers),
+            )
+        )
+        return "\n\n".join(block.strip() for block in blocks if block.strip())
 
 
 def _now_iso() -> str:

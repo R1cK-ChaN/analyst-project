@@ -130,10 +130,10 @@ class TestImageGenHandler(unittest.TestCase):
         selfie_service.is_selfie_request.return_value = True
         selfie_service.generate_selfie.side_effect = ImageGenerationError("timed out", retryable=True)
         selfie_service.build_prompt_draft.return_value = Mock(
-            fallback_prompt="realistic smartphone photo of coffee on a cafe table",
-            negative_prompt="different person",
+            fallback_prompt="quick phone photo taken across a coffee shop table",
+            negative_prompt="studio lighting\nperfect symmetry",
             scene_key="coffee_shop",
-            scene_prompt="holding a coffee cup near the camera",
+            scene_prompt="paper cup already opened on the table",
         )
 
         handler = ImageGenHandler(
@@ -148,9 +148,37 @@ class TestImageGenHandler(unittest.TestCase):
         self.assertEqual(result["mode"], "selfie")
         self.assertEqual(result["scene_key"], "coffee_shop")
         image_client.generate_image.assert_called_once_with(
-            prompt="realistic smartphone photo of coffee on a cafe table",
-            negative_prompt="different person",
+            prompt="quick phone photo taken across a coffee shop table",
+            negative_prompt="studio lighting\nperfect symmetry",
         )
+
+    def test_companion_moment_mode_routes_through_moment_service(self) -> None:
+        image_client = Mock()
+        selfie_service = Mock()
+        selfie_service.is_selfie_request.return_value = False
+        moment_service = Mock()
+        moment_service.is_moment_request.return_value = True
+        moment_service.generate_moment.return_value = Mock(
+            image_path="/tmp/moment.jpg",
+            prompt_used="candid lunch prompt",
+            scene_key="lunch_table_food",
+            scene_prompt="quick phone photo at lunch",
+            negative_prompt="studio lighting",
+        )
+
+        handler = ImageGenHandler(
+            self.config,
+            image_client=image_client,
+            selfie_service=selfie_service,
+            moment_service=moment_service,
+        )
+        result = handler({"mode": "companion_moment", "moment_scene_key": "lunch_table_food"})
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["mode"], "companion_moment")
+        self.assertEqual(result["scene_key"], "lunch_table_food")
+        self.assertEqual(result["image_path"], "/tmp/moment.jpg")
+        moment_service.generate_moment.assert_called_once()
 
     def test_generic_mode_can_use_attached_image_context(self) -> None:
         image_client = Mock()

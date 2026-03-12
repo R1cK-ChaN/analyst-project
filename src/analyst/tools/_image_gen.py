@@ -18,7 +18,7 @@ from analyst.engine.live_types import AgentTool
 from analyst.env import get_env_value
 
 from ._request_context import get_request_image
-from ._selfie_persona import SelfiePromptService
+from ._selfie_persona import CompanionMomentService, SelfiePromptService
 
 logger = logging.getLogger(__name__)
 
@@ -284,14 +284,20 @@ class ImageGenHandler:
         *,
         image_client: SeedreamImageClient | None = None,
         selfie_service: SelfiePromptService | None = None,
+        moment_service: CompanionMomentService | None = None,
     ) -> None:
         self._config = config
         self._image_client = image_client or SeedreamImageClient(config, session=session)
         self._selfie_service = selfie_service or SelfiePromptService()
+        self._moment_service = moment_service or CompanionMomentService(
+            selfie_service=self._selfie_service if isinstance(self._selfie_service, SelfiePromptService) else None
+        )
 
     def __call__(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._selfie_service.is_selfie_request(arguments):
             return self._handle_selfie(arguments)
+        if self._moment_service.is_moment_request(arguments):
+            return self._handle_companion_moment(arguments)
 
         prompt = str(arguments.get("prompt", "")).strip()
         use_attached_image = bool(arguments.get("use_attached_image"))
@@ -367,6 +373,25 @@ class ImageGenHandler:
         result["negative_prompt_used"] = draft.negative_prompt
         return result
 
+    def _handle_companion_moment(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        try:
+            generated = self._moment_service.generate_moment(arguments, self._image_client)
+        except RuntimeError as exc:
+            logger.warning("Companion moment image generation failed: %s", exc)
+            return {"status": "error", "error": str(exc)}
+
+        result = {
+            "status": "ok",
+            "image_path": generated.image_path,
+            "prompt_used": generated.prompt_used,
+            "mode": "companion_moment",
+            "scene_prompt": generated.scene_prompt,
+            "negative_prompt_used": generated.negative_prompt,
+        }
+        if generated.scene_key:
+            result["scene_key"] = generated.scene_key
+        return result
+
     def _is_retryable_error(self, exc: RuntimeError) -> bool:
         if isinstance(exc, ImageGenerationError):
             return exc.retryable
@@ -392,9 +417,11 @@ def build_image_gen_tool(
         name="generate_image",
         description=(
             "Generate an image from a text description. Use mode='selfie' for persona selfies so the backend "
-            "can enforce consistent Seedream character prompts with scene_key / scene_prompt. "
+            "can enforce consistent but natural phone-camera selfie prompts with scene_key / scene_prompt. "
+            "Use mode='companion_moment' for candid daily-life photos of the persona, such as lunch, coffee, desk, "
+            "home, or street moments, with moment_scene_key / scene_prompt. "
             "Only use mode='selfie' when the user explicitly wants to see the persona/agent in frame. "
-            "For objects, food, drinks, desks, rooms, scenery, or environment shots, use generic prompt-only mode."
+            "For objects, food, drinks, desks, rooms, scenery, or environment shots without the persona, use generic prompt-only mode."
         ),
         parameters={
             "type": "object",
@@ -408,7 +435,7 @@ def build_image_gen_tool(
                 },
                 "mode": {
                     "type": "string",
-                    "description": "Set to 'selfie' only when the user explicitly wants the persona/agent in frame.",
+                    "description": "Set to 'selfie' for explicit selfies, or 'companion_moment' for candid daily-life persona moments.",
                 },
                 "scene_key": {
                     "type": "string",
@@ -420,7 +447,19 @@ def build_image_gen_tool(
                 },
                 "scene_prompt": {
                     "type": "string",
-                    "description": "Optional short English scene detail appended to the selected selfie scene.",
+                    "description": "Optional short English scene detail appended to the selected selfie or companion-moment scene.",
+                },
+                "moment_scene_key": {
+                    "type": "string",
+                    "description": (
+                        "Optional shared companion-moment scene key, only for mode='companion_moment', "
+                        "e.g. lunch_table_food, coffee_table_candid, desk_midday_candid, "
+                        "home_window_evening, or street_walk_candid."
+                    ),
+                },
+                "moment_scene_prompt": {
+                    "type": "string",
+                    "description": "Optional short English detail appended to the selected companion-moment scene.",
                 },
                 "use_attached_image": {
                     "type": "boolean",

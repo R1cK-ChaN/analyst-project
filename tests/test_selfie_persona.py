@@ -13,7 +13,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from analyst.tools._image_gen import GeneratedImage
-from analyst.tools._selfie_persona import SelfiePromptConfig, SelfiePromptService
+from analyst.tools._selfie_persona import (
+    CompanionMomentService,
+    SelfiePromptConfig,
+    SelfiePromptService,
+)
 
 
 class FakeImageClient:
@@ -73,28 +77,28 @@ class TestSelfiePromptService(unittest.TestCase):
             self.assertTrue(state["character_anchor_path"].endswith("character_anchor.jpg"))
             self.assertTrue(state["latest_selfie_path"].endswith("latest_selfie.jpg"))
             self.assertEqual(state["scene_catalog_version"], "companion-v1")
-            self.assertEqual(state["character_dna"][0], "young Chinese male")
-            self.assertEqual(state["camera_style"][0], "iphone front camera selfie")
-            self.assertEqual(state["quality_modifiers"][0], "photorealistic")
-            self.assertEqual(state["negative_prompt"][0], "different person")
+            self.assertEqual(state["character_dna"][0], "same person as the reference images")
+            self.assertEqual(state["camera_style"][0], "front camera phone photo")
+            self.assertEqual(state["quality_modifiers"][0], "mixed natural and indoor lighting")
+            self.assertEqual(state["negative_prompt"][0], "studio lighting")
             self.assertEqual(state["last_scene_key"], "coffee_shop")
-            self.assertIn("holding a coffee cup", state["last_scene_prompt"])
-            self.assertIn("young Chinese male", state["last_prompt_used"])
+            self.assertIn("paper cup already opened", state["last_scene_prompt"])
+            self.assertIn("same person as the reference images", state["last_prompt_used"])
             self.assertEqual(len(client.calls), 5)
             self.assertEqual(client.calls[0]["image_input"], "")
             self.assertTrue(client.calls[-1]["image_input"].startswith("data:image/"))
-            self.assertIn("different person", client.calls[-1]["negative_prompt"])
+            self.assertIn("perfect symmetry", client.calls[-1]["negative_prompt"])
             self.assertIn("studio lighting", client.calls[-1]["negative_prompt"])
             self.assertTrue(Path(state["character_anchor_path"]).exists())
             self.assertTrue(Path(state["latest_selfie_path"]).exists())
             self.assertIn("/selfie_history/", result.image_path)
-            self.assertIn("young Chinese male", result.prompt_used)
-            self.assertIn("iphone front camera selfie", result.prompt_used)
-            self.assertIn("holding a coffee cup", result.prompt_used)
-            self.assertIn("photorealistic", result.prompt_used)
+            self.assertIn("same person as the reference images", result.prompt_used)
+            self.assertIn("front camera phone photo", result.prompt_used)
+            self.assertIn("paper cup already opened", result.prompt_used)
+            self.assertIn("phone camera dynamic range", result.prompt_used)
             self.assertEqual(result.scene_key, "coffee_shop")
             self.assertIn("wearing a dark blazer", result.scene_prompt)
-            self.assertIn("lifting a coffee cup", result.motion_prompt)
+            self.assertIn("lifting the paper cup", result.motion_prompt)
 
     def test_is_selfie_request_detects_mode_or_scene_fields(self) -> None:
         service = SelfiePromptService(
@@ -104,6 +108,7 @@ class TestSelfiePromptService(unittest.TestCase):
         self.assertTrue(service.is_selfie_request({"mode": "selfie"}))
         self.assertTrue(service.is_selfie_request({"scene_key": "bedroom_late_night"}))
         self.assertTrue(service.is_selfie_request({"scene_prompt": "coffee shop daylight"}))
+        self.assertFalse(service.is_selfie_request({"mode": "companion_moment", "moment_scene_key": "lunch_table_food"}))
         self.assertFalse(service.is_selfie_request({"prompt": "please send a selfie"}))
         self.assertFalse(service.is_selfie_request({"prompt": "draw a market chart"}))
 
@@ -128,6 +133,52 @@ class TestSelfiePromptService(unittest.TestCase):
             self.assertTrue(state["latest_selfie_path"].endswith("latest_selfie.jpg"))
             self.assertIn("/selfie_history/", result.image_path)
             self.assertEqual(len(client.calls), 4)
+
+    def test_generate_companion_moment_uses_candid_prompt_for_food_scene(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service = CompanionMomentService(
+                SelfiePromptConfig(
+                    media_root=root / "persona",
+                    bootstrap_count=3,
+                )
+            )
+            client = FakeImageClient(root / "source")
+
+            result = service.generate_moment(
+                {
+                    "mode": "companion_moment",
+                    "moment_scene_key": "lunch_table_food",
+                },
+                client,
+            )
+
+            self.assertEqual(result.scene_key, "lunch_table_food")
+            self.assertIn("roast meat shop table in Tanjong Pagar", result.prompt_used)
+            self.assertIn("imperfect framing", result.prompt_used)
+            self.assertEqual(client.calls[-1]["image_input"], "")
+
+    def test_generate_companion_moment_uses_reference_for_candid_in_frame_scene(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = SelfiePromptConfig(
+                media_root=root / "persona",
+                bootstrap_count=3,
+            )
+            service = CompanionMomentService(config)
+            client = FakeImageClient(root / "source")
+
+            result = service.generate_moment(
+                {
+                    "mode": "companion_moment",
+                    "moment_scene_key": "desk_midday_candid",
+                },
+                client,
+            )
+
+            self.assertEqual(result.scene_key, "desk_midday_candid")
+            self.assertIn("sitting at a desk in the office", result.prompt_used)
+            self.assertTrue(client.calls[-1]["image_input"].startswith("data:image/"))
 
 
 if __name__ == "__main__":
