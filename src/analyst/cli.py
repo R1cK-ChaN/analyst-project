@@ -7,6 +7,7 @@ import json
 import mimetypes
 from pathlib import Path
 import shutil
+import sys
 from urllib.parse import urlparse
 
 from analyst.contracts import format_epoch
@@ -20,8 +21,6 @@ from analyst.delivery.sales_chat import (
     split_into_bubbles,
 )
 from analyst.memory import build_chat_context, build_sales_context, record_chat_interaction, record_sales_interaction
-from analyst.ingestion.scrapers.oecd import OECDClient
-from analyst.ingestion.sources import OECDIngestionClient, render_oecd_series_configs
 from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
 from analyst.tools import build_image_gen_tool, build_live_photo_tool
 from analyst.tools._image_gen import GeneratedImage, ImageGenConfig, SeedreamImageClient
@@ -96,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     oecd_structure = subparsers.add_parser("oecd-structure")
     oecd_structure.add_argument("--dataflow", required=True)
-    oecd_structure.add_argument("--agency-id", default=OECDClient.DEFAULT_AGENCY_ID)
+    oecd_structure.add_argument("--agency-id", default="OECD.SDD.STES")
     oecd_structure.add_argument("--version", default="latest")
 
     oecd_generate = subparsers.add_parser("oecd-generate-configs")
@@ -179,27 +178,40 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def format_calendar_event(event: StoredEventRecord) -> str:
-    stars = {"high": "***", "medium": "**", "low": "*"}.get(event.importance, "*")
-    actual = event.actual or "-"
-    forecast = event.forecast or "-"
-    previous = event.previous or "-"
-    dt = format_epoch(event.timestamp)
-    source = event.source.upper()
+def _record_field(record: dict[str, object] | object, field: str, default: object = "") -> object:
+    if isinstance(record, dict):
+        return record.get(field, default)
+    return getattr(record, field, default)
+
+
+def format_calendar_event(event: StoredEventRecord | dict[str, object]) -> str:
+    importance = str(_record_field(event, "importance", ""))
+    stars = {"high": "***", "medium": "**", "low": "*"}.get(importance, "*")
+    actual = str(_record_field(event, "actual", "") or "-")
+    forecast = str(_record_field(event, "forecast", "") or "-")
+    previous = str(_record_field(event, "previous", "") or "-")
+    timestamp = _record_field(event, "timestamp", 0)
+    dt = format_epoch(int(timestamp)) if isinstance(timestamp, (int, float)) else str(_record_field(event, "datetime_utc", "-"))
+    source = str(_record_field(event, "source", "")).upper()
     return (
-        f"{dt}  {event.country:>2} {stars:>3}  [{source:<12}]  "
-        f"{event.indicator:<40}  A:{actual:<8} F:{forecast:<8} P:{previous}"
+        f"{dt}  {str(_record_field(event, 'country', '')):>2} {stars:>3}  [{source:<12}]  "
+        f"{str(_record_field(event, 'indicator', '')):<40}  A:{actual:<8} F:{forecast:<8} P:{previous}"
     )
 
 
-def format_news_headline(article: NewsArticleRecord) -> str:
-    dt = format_epoch(article.timestamp)
-    impact = article.impact_level.upper()
-    country = article.country or "--"
-    subject = f"  [{article.subject}]" if article.subject else ""
+def format_news_headline(article: NewsArticleRecord | dict[str, object]) -> str:
+    timestamp = _record_field(article, "timestamp", None)
+    if isinstance(timestamp, (int, float)):
+        dt = format_epoch(int(timestamp))
+    else:
+        dt = str(_record_field(article, "published_at_local", _record_field(article, "published_at", "-")))
+    impact = str(_record_field(article, "impact_level", "")).upper()
+    country = str(_record_field(article, "country", "") or "--")
+    subject_value = str(_record_field(article, "subject", "") or "")
+    subject = f"  [{subject_value}]" if subject_value else ""
     return (
-        f"{dt}  {country:>2} [{impact:<8}]  [{article.source_feed:<20}]  "
-        f"{article.title}{subject}"
+        f"{dt}  {country:>2} [{impact:<8}]  [{str(_record_field(article, 'source_feed', '')):<20}]  "
+        f"{str(_record_field(article, 'title', ''))}{subject}"
     )
 
 
@@ -577,95 +589,85 @@ def _run_sales_chat(args: argparse.Namespace) -> int:
 
 
 def _run_rag(args: argparse.Namespace) -> int:
-    from analyst.rag.config import RAGConfig
-    from analyst.rag.embeddings import Embedder
-    from analyst.rag.vector_store import VectorStore
-    from analyst.rag.bridge import MacroIngestionBridge
+    from analyst.macro_data.cli import main as macro_data_main
 
-    cfg = RAGConfig.from_env()
-    store = VectorStore(cfg)
-    store.init_collection()
-    embedder = Embedder(cfg)
-    bridge = MacroIngestionBridge(store, embedder, cfg)
-
-    if args.rag_command == "calibrate":
-        result = bridge.calibrate()
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
-    if args.rag_command == "sync":
-        result = bridge.sync()
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
-    if args.rag_command == "status":
-        result = bridge.status()
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
-    return 2
+    return macro_data_main(["rag", args.rag_command])
 
 
 def _run_oecd_dataflows(args: argparse.Namespace) -> int:
-    ingestion = OECDIngestionClient()
-    dataflows = ingestion.list_catalog_dataflows(
-        query=args.query,
-        agency_prefix=args.agency_prefix,
-        limit=args.limit,
-    )
-    if not dataflows:
-        print("No OECD dataflows found.")
-        return 0
-    for dataflow in dataflows:
-        print(f"{dataflow.agency_id}\t{dataflow.id}\t{dataflow.version}\t{dataflow.name}")
-    return 0
+    from analyst.macro_data.cli import main as macro_data_main
+
+    argv = ["oecd-dataflows", "--limit", str(args.limit), "--agency-prefix", args.agency_prefix]
+    if args.query is not None:
+        argv.extend(["--query", args.query])
+    return macro_data_main(argv)
 
 
 def _run_oecd_structure(args: argparse.Namespace) -> int:
-    ingestion = OECDIngestionClient()
-    summary = ingestion.get_structure_summary(
-        args.dataflow,
-        agency_id=args.agency_id,
-        version=args.version,
+    from analyst.macro_data.cli import main as macro_data_main
+
+    return macro_data_main(
+        [
+            "oecd-structure",
+            "--dataflow",
+            args.dataflow,
+            "--agency-id",
+            args.agency_id,
+            "--version",
+            args.version,
+        ]
     )
-    print(json.dumps(asdict(summary), ensure_ascii=False, indent=2, sort_keys=True))
-    return 0
 
 
 def _run_oecd_generate_configs(args: argparse.Namespace) -> int:
-    ingestion = OECDIngestionClient()
-    configs = ingestion.generate_catalog_series_configs(
-        dataflow_ids=args.dataflows,
-        agency_id=args.agency_id,
-        query=args.query,
-        agency_prefix=args.agency_prefix,
-        dataflow_limit=args.dataflow_limit,
-        series_per_dataflow=args.series_per_dataflow,
-    )
-    if not configs:
-        print("generated_oecd_series = {}")
-        return 0
-    print(render_oecd_series_configs(configs))
-    return 0
+    from analyst.macro_data.cli import main as macro_data_main
+
+    argv = [
+        "oecd-generate-configs",
+        "--agency-prefix",
+        args.agency_prefix,
+        "--dataflow-limit",
+        str(args.dataflow_limit),
+        "--series-per-dataflow",
+        str(args.series_per_dataflow),
+    ]
+    if args.agency_id is not None:
+        argv.extend(["--agency-id", args.agency_id])
+    if args.query is not None:
+        argv.extend(["--query", args.query])
+    for dataflow in args.dataflows or []:
+        argv.extend(["--dataflow", dataflow])
+    return macro_data_main(argv)
 
 
 def _run_oecd_refresh_catalog(args: argparse.Namespace) -> int:
-    from analyst.storage import SQLiteEngineStore
+    from analyst.macro_data.cli import main as macro_data_main
 
-    store = SQLiteEngineStore(db_path=Path(args.db_path) if args.db_path else None)
-    ingestion = OECDIngestionClient()
-    stats = ingestion.refresh_catalog(
-        store,
-        dataflow_ids=args.dataflows,
-        agency_id=args.agency_id,
-        query=args.query,
-        agency_prefix=args.agency_prefix,
-        dataflow_limit=args.dataflow_limit,
-        latest_observations=args.latest_observations,
-        sleep_seconds=args.sleep_seconds,
-    )
-    print(json.dumps({stats.source: stats.count}, ensure_ascii=False, sort_keys=True))
-    return 0
+    argv = [
+        "oecd-refresh-catalog",
+        "--agency-prefix",
+        args.agency_prefix,
+        "--dataflow-limit",
+        str(args.dataflow_limit),
+        "--latest-observations",
+        str(args.latest_observations),
+        "--sleep-seconds",
+        str(args.sleep_seconds),
+    ]
+    if args.agency_id is not None:
+        argv.extend(["--agency-id", args.agency_id])
+    if args.query is not None:
+        argv.extend(["--query", args.query])
+    if args.db_path is not None:
+        argv.extend(["--db-path", args.db_path])
+    for dataflow in args.dataflows or []:
+        argv.extend(["--dataflow", dataflow])
+    return macro_data_main(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "ask":
@@ -742,12 +744,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "news-refresh":
         app = build_live_engine_app()
-        result = app.engine.ingestion.refresh_news(category=args.category)
+        result = app.refresh_news(category=args.category)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     if args.command == "news-latest":
         app = build_live_engine_app()
-        articles = app.engine.store.list_recent_news(
+        articles = app.latest_news(
             limit=args.limit,
             impact_level=args.impact,
             feed_category=args.category,
@@ -760,7 +762,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "news-search":
         app = build_live_engine_app()
-        articles = app.engine.store.search_news(args.query, limit=args.limit)
+        articles = app.search_news(args.query, limit=args.limit)
         if not articles:
             print("No matching news articles found.")
         else:

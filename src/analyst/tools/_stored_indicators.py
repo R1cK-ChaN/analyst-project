@@ -6,7 +6,10 @@ import logging
 from typing import Any
 
 from analyst.engine.live_types import AgentTool
+from analyst.macro_data import MacroDataClient
 from analyst.storage import SQLiteEngineStore
+
+from ._macro_data import MacroDataOperationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +49,17 @@ class IndicatorHistoryHandler:
         }
 
 
-def build_indicator_history_tool(store: SQLiteEngineStore) -> AgentTool:
+def build_indicator_history_tool(
+    store: SQLiteEngineStore | None = None,
+    *,
+    data_client: MacroDataClient | None = None,
+) -> AgentTool:
     """Factory: create a get_indicator_history AgentTool."""
-    handler = IndicatorHistoryHandler(store)
+    handler = MacroDataOperationHandler(
+        "get_indicator_history",
+        data_client=data_client,
+        store=store,
+    )
     return AgentTool(
         name="get_indicator_history",
         description=(

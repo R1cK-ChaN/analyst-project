@@ -1425,7 +1425,8 @@ class GovReportIngestionClient:
         now_epoch_ms = int(now_dt.timestamp() * 1000)
         for item in items:
             try:
-                url_hash = hashlib.sha256(item.url.encode("utf-8")).hexdigest()
+                canonical = canonicalize_url(item.url)
+                url_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
                 published_precision = item.published_precision or _infer_publish_precision(item.published_at)
                 try:
                     if published_precision == "exact" and item.published_at:

@@ -7,6 +7,9 @@ from typing import Any
 
 from analyst.engine.live_types import AgentTool
 from analyst.ingestion.scrapers import NYFedRatesClient
+from analyst.macro_data import MacroDataClient
+
+from ._macro_data import MacroDataOperationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +63,9 @@ class ReferenceRatesHandler:
         }
 
 
-def build_reference_rates_tool() -> AgentTool:
+def build_reference_rates_tool(*, data_client: MacroDataClient | None = None) -> AgentTool:
     """Factory: create a fetch_reference_rates AgentTool."""
-    handler = ReferenceRatesHandler()
+    handler = MacroDataOperationHandler("fetch_reference_rates", data_client=data_client)
     return AgentTool(
         name="fetch_reference_rates",
         description=(

@@ -2,12 +2,14 @@
 
 ## Status Update
 
-As of March 7, 2026, this migration plan has been partially implemented.
+As of March 12, 2026, this migration plan has been partially implemented.
 
 What is now true:
 
 - `analyst-project/` is a standalone Python project
 - the live implementation is under `src/analyst/`
+- a standalone sibling macro-data service now exists at `/home/rick/Desktop/analyst/macro-data-service`
+- the agent/runtime side now talks through a dedicated macro-data client boundary and can consume the external service over HTTP
 - local demo data lives under `data/demo/`
 - smoke tests live under `tests/`
 - the standalone project no longer imports from the sibling `information/` repo at runtime
@@ -17,6 +19,7 @@ What remains true:
 
 - the sibling `information/` and `agent_maxwell/` repos are still useful reference material
 - the current standalone implementation is still an early product slice, not a production system
+- `analyst-project` still carries a compatibility copy of the service-side modules while cutover is completed
 
 For the current implementation snapshot, see `00-overview/Implementation_Status.md`.
 
@@ -87,7 +90,8 @@ Analyst Product Layer
 
 Reusable Foundations
 ├── agent_maxwell/             generic agent framework
-└── information/               generic ingestion and grounding systems
+├── information/               generic ingestion and grounding systems
+└── macro-data-service/        standalone service for ingestion, storage, retrieval, and macro-data APIs
 ```
 
 Design rule:
@@ -95,6 +99,7 @@ Design rule:
 - generic capabilities stay in the current repos
 - Analyst-specific workflows move into product-owned modules
 - only mature, reusable abstractions get pushed back down into foundations
+- service consumers should use the macro-data API/client boundary rather than importing ingestion/storage/RAG internals directly
 
 ---
 

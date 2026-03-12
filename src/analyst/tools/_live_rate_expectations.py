@@ -7,6 +7,9 @@ from typing import Any
 
 from analyst.engine.live_types import AgentTool
 from analyst.ingestion.scrapers import RateProbabilityClient
+from analyst.macro_data import MacroDataClient
+
+from ._macro_data import MacroDataOperationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +65,9 @@ class RateExpectationsHandler:
         return output
 
 
-def build_rate_expectations_tool() -> AgentTool:
+def build_rate_expectations_tool(*, data_client: MacroDataClient | None = None) -> AgentTool:
     """Factory: create a fetch_rate_expectations AgentTool."""
-    handler = RateExpectationsHandler()
+    handler = MacroDataOperationHandler("fetch_rate_expectations", data_client=data_client)
     return AgentTool(
         name="fetch_rate_expectations",
         description=(

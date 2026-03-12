@@ -1,6 +1,6 @@
 # Analyst — Implementation Status
 
-**Status date:** March 10, 2026 (updated after image generation, live-photo tooling, and media delivery)
+**Status date:** March 12, 2026 (updated after macro-data service extraction and agent HTTP integration verification)
 
 This document is the current implementation snapshot for `analyst-project/`.
 
@@ -24,6 +24,10 @@ The old split folders such as `analyst-runtime/`, `analyst-information/`, `analy
 
 The sibling `information/` repo is currently reference material only. The standalone project does not import it at runtime.
 
+The macro-data stack now also has a standalone sibling codebase at `/home/rick/Desktop/analyst/macro-data-service`.
+
+`analyst-project` now prefers talking to that service over HTTP when `ANALYST_MACRO_DATA_BASE_URL` is set, and falls back to an in-process compatibility adapter only when the external endpoint is unset.
+
 ---
 
 ## Implemented Now
@@ -33,9 +37,25 @@ The sibling `information/` repo is currently reference material only. The standa
 - installable project metadata in `pyproject.toml`
 - package entrypoint in `src/analyst/__main__.py`
 - CLI in `src/analyst/cli.py`
+- compatibility macro-data CLI in `src/analyst/macro_data/cli.py`
 - Telegram bot entrypoint in `src/analyst/delivery/bot.py`
 - `analyst-telegram` console script in `pyproject.toml`
+- `analyst-macro-data` console script in `pyproject.toml`
 - top-level app factory in `src/analyst/app.py`
+
+### Macro-data service split
+
+Implemented now:
+
+- standalone sibling service repo at `/home/rick/Desktop/analyst/macro-data-service`
+- service-side packages extracted there: `src/analyst/macro_data/`, `src/analyst/ingestion/`, `src/analyst/storage/`, `src/analyst/rag/`
+- `src/analyst/macro_data/client.py` in `analyst-project` now prefers `HttpMacroDataClient` when `ANALYST_MACRO_DATA_BASE_URL` is configured
+- end-to-end HTTP verification test in `tests/test_macro_data_integration.py`
+
+Current limitation:
+
+- the service repo is not yet independently versioned with a remote git origin
+- `analyst-project` still retains transitional local copies of the service-side modules for compatibility and local fallback
 
 ### Shared contracts
 
@@ -85,6 +105,7 @@ Implemented in `src/analyst/engine/`:
 - regime-summary note generation (demo)
 - pre-market briefing generation (demo)
 - **live engine** (`live_service.py`): `LiveAnalystEngine` with OpenRouter LLM backend
+- `LiveAnalystEngine` now reads macro-data through the shared `MacroDataClient` boundary instead of directly depending on local ingestion/storage/RAG internals for its macro-data tools
 - **agent loop** (`agent_loop.py`): turn-bounded Python tool-calling loop with optional conversation history
 - **LLM provider** (`live_provider.py`): OpenRouter chat completions adapter with configurable model
 - **prompts** (`live_prompts.py`): Chinese-language institutional macro analyst system/user prompts
@@ -160,6 +181,7 @@ Implemented in `src/analyst/tools/` — 13 tool builders across 12 files:
   - if SeedDance video generation fails after a selfie still was generated, the tool falls back to that still image; if video generation succeeds but Apple packaging is unavailable, the tool still returns a motion video result
   - `build_optional_live_photo_tool()` registers whenever SeedDance is configured; unsupported runtimes log that they are running in motion-video mode
 - both `LiveAnalystEngine._build_tools()` and `build_sales_tools()` now use `ToolKit` to assemble their tool lists, with universal tools (web search, live calendar, web fetch) composed per-agent
+- the live-data, stored-data, and RAG-facing tool builders can now proxy through the `MacroDataClient` seam instead of binding directly to local storage or retriever implementations
 - the sales agent's `ToolKit` includes all 13 tools when live-photo generation is configured (6 live data + 3 universal + live calendar + portfolio sync + image generation + live-photo generation); otherwise the motion tool is omitted without breaking startup
 - adding future universal tools follows the same pattern: create `_new_tool.py` with handler + `build_*_tool()` factory, export from `__init__.py`, agents opt in via `kit.add()`
 
@@ -414,6 +436,10 @@ Done:
 - client/thread sales context is injected into the agent loop before free-text replies
 - deployed to Contabo VPS via rsync, running as background process
 
+### Verification added in this update
+
+- `tests/test_macro_data_integration.py`: starts the extracted `macro-data-service` as a separate process, points `analyst-project` to it over localhost HTTP, and verifies recent-release and news queries through `HttpMacroDataClient`
+
 Missing:
 
 - real WeCom integration (account, self-built app, callback endpoint)
@@ -481,6 +507,16 @@ For reference only:
 From `analyst-project/`:
 
 ```bash
+# Preferred decoupled path
+cd /home/rick/Desktop/analyst/macro-data-service
+python -m venv .venv
+. .venv/bin/activate
+pip install -e .
+macro-data-service serve --host 127.0.0.1 --port 8765
+
+export ANALYST_MACRO_DATA_BASE_URL=http://127.0.0.1:8765
+export ANALYST_MACRO_DATA_API_TOKEN=
+
 # Demo commands (no API keys needed)
 PYTHONPATH=src python3 -m analyst regime
 PYTHONPATH=src python3 -m analyst route "帮我写一段关于今晚非农数据的客户消息"

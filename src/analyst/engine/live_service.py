@@ -5,15 +5,15 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 from analyst.contracts import Event, Importance, RegimeScore, RegimeState, ResearchNote, epoch_to_datetime, format_epoch_iso, utc_now
-from analyst.ingestion import IngestionOrchestrator
+from analyst.macro_data import MacroDataClient, coerce_macro_data_client
 from analyst.memory import build_research_context
-from analyst.storage import NewsArticleRecord, SQLiteEngineStore, StoredEventRecord
+from analyst.storage import SQLiteEngineStore
 
 from analyst.tools import (
     ToolKit,
@@ -43,23 +43,28 @@ def clamp_unit_interval(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-def event_to_contract(event: StoredEventRecord) -> Event:
+def _value(event: dict[str, Any], key: str, default: Any = None) -> Any:
+    return event.get(key, default)
+
+
+def event_to_contract(event: dict[str, Any]) -> Event:
+    importance = str(_value(event, "importance", "medium"))
     return Event(
-        event_id=event.event_id,
-        timestamp=epoch_to_datetime(event.timestamp),
-        source=event.source,
+        event_id=str(_value(event, "event_id", "")),
+        timestamp=epoch_to_datetime(int(_value(event, "timestamp", 0))),
+        source=str(_value(event, "source", "")),
         source_type="calendar_event",
-        category=event.category,
-        title=f"{event.country} {event.indicator}",
+        category=str(_value(event, "category", "")),
+        title=f"{_value(event, 'country', '')} {_value(event, 'indicator', '')}",
         summary=(
-            f"实际 {event.actual or '待公布'}，预期 {event.forecast or '未知'}，前值 {event.previous or '未知'}。"
+            f"实际 {_value(event, 'actual') or '待公布'}，预期 {_value(event, 'forecast') or '未知'}，前值 {_value(event, 'previous') or '未知'}。"
         ),
-        country=event.country,
-        importance=Importance(event.importance if event.importance in Importance._value2member_map_ else "medium"),
-        actual=event.actual,
-        forecast=event.forecast,
-        previous=event.previous,
-        surprise=str(event.surprise) if event.surprise is not None else None,
+        country=str(_value(event, "country", "")),
+        importance=Importance(importance if importance in Importance._value2member_map_ else "medium"),
+        actual=_value(event, "actual"),
+        forecast=_value(event, "forecast"),
+        previous=_value(event, "previous"),
+        surprise=str(_value(event, "surprise")) if _value(event, "surprise") is not None else None,
     )
 
 
@@ -76,34 +81,43 @@ class LiveAnalystEngine:
         store: SQLiteEngineStore,
         *,
         provider: LLMProvider | None = None,
-        ingestion: IngestionOrchestrator | None = None,
+        data_client: MacroDataClient | None = None,
+        ingestion: Any | None = None,
         config: LiveEngineConfig | None = None,
         retriever: Any = None,
     ) -> None:
         self.store = store
         self.provider = provider
-        self.ingestion = ingestion or IngestionOrchestrator(store)
+        self.data_client = coerce_macro_data_client(
+            data_client=data_client,
+            store=store,
+            ingestion=ingestion,
+            retriever=retriever,
+        )
         self.config = config or LiveEngineConfig()
-        self.retriever = retriever
         self._last_calendar_refresh: float = 0.0
 
     def _ensure_calendar_fresh(self, *, max_age_seconds: int = 3600) -> None:
         if time.time() - self._last_calendar_refresh < max_age_seconds:
             return
         try:
-            self.ingestion.refresh_calendar()
+            self.data_client.invoke("refresh_calendar", {})
             self._last_calendar_refresh = time.time()
         except Exception:
             logger.warning("Auto-refresh of calendar data failed", exc_info=True)
 
     def refresh_all_sources(self) -> dict[str, int]:
-        return self.ingestion.refresh_all()
+        result = self.data_client.invoke("refresh_all_sources", {})
+        return {str(key): int(value) for key, value in result.items() if isinstance(value, (int, float))}
 
     def run_schedule(self) -> None:
-        self.ingestion.run_schedule()
+        self.data_client.invoke("run_schedule", {})
 
     def generate_flash_commentary(self, indicator_keyword: str | None = None) -> ResearchNote:
-        trigger_event = self.store.latest_released_event(indicator_keyword=indicator_keyword)
+        trigger_event = self.data_client.invoke(
+            "get_latest_released_event",
+            {"indicator_keyword": indicator_keyword},
+        ).get("event")
         if trigger_event is None:
             raise RuntimeError("No released calendar event available. Run `refresh --once` first.")
         baseline_regime = self._baseline_regime(trigger_event)
@@ -114,14 +128,14 @@ class LiveAnalystEngine:
         )
         return self._finalize_note(
             note_type="flash_commentary",
-            title=f"数据快评 | {trigger_event.country} {trigger_event.indicator}",
+            title=f"数据快评 | {trigger_event['country']} {trigger_event['indicator']}",
             markdown=result.final_text,
             trigger_event=trigger_event,
             metadata={"mode": "flash", "indicator_keyword": indicator_keyword or ""},
         )
 
     def generate_morning_briefing(self) -> ResearchNote:
-        upcoming_events = self.store.list_upcoming_events(limit=5)
+        upcoming_events = self.data_client.invoke("get_upcoming_calendar", {"limit": 5}).get("events", [])
         baseline_regime = self._baseline_regime()
         prompt = self._with_research_context(briefing_prompt(self._render_event_lines(upcoming_events), baseline_regime))
         result = self._loop().run(system_prompt=SYSTEM_PROMPT, user_prompt=prompt, tools=self._build_tools())
@@ -134,7 +148,10 @@ class LiveAnalystEngine:
         )
 
     def generate_after_market_wrap(self) -> ResearchNote:
-        recent_events = self.store.list_recent_events(limit=5, days=1, released_only=True)
+        recent_events = self.data_client.invoke(
+            "get_recent_releases",
+            {"limit": 5, "days": 1},
+        ).get("events", [])
         baseline_regime = self._baseline_regime()
         prompt = self._with_research_context(wrap_prompt(self._render_event_lines(recent_events), baseline_regime))
         result = self._loop().run(system_prompt=SYSTEM_PROMPT, user_prompt=prompt, tools=self._build_tools())
@@ -177,7 +194,7 @@ class LiveAnalystEngine:
         note_type: str,
         title: str,
         markdown: str,
-        trigger_event: StoredEventRecord | None,
+        trigger_event: dict[str, Any] | None,
         metadata: dict[str, Any],
     ) -> ResearchNote:
         baseline_regime = self._baseline_regime(trigger_event)
@@ -224,13 +241,55 @@ class LiveAnalystEngine:
             tags=["ws1", note_type],
         )
 
+    def list_calendar_events(
+        self,
+        *,
+        scope: str,
+        country: str | None = None,
+        category: str | None = None,
+        importance: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        if scope == "today":
+            operation = "get_today_calendar"
+            arguments = {"country": country, "category": category, "importance": importance}
+        elif scope == "upcoming":
+            operation = "get_upcoming_calendar"
+            arguments = {"limit": limit}
+        elif scope == "recent":
+            operation = "get_recent_releases"
+            arguments = {
+                "limit": limit,
+                "days": 7,
+                "country": country,
+                "category": category,
+                "importance": importance,
+            }
+        elif scope == "week":
+            # Until the service exposes an explicit week-range query, approximate with recent+upcoming.
+            upcoming = self.data_client.invoke("get_upcoming_calendar", {"limit": limit}).get("events", [])
+            recent = self.data_client.invoke(
+                "get_recent_releases",
+                {"limit": limit, "days": 7, "country": country, "category": category, "importance": importance},
+            ).get("events", [])
+            return (recent + upcoming)[:limit]
+        else:
+            operation = "get_today_calendar"
+            arguments = {"country": country, "category": category, "importance": importance}
+        if operation in {"get_upcoming_calendar"}:
+            payload = self.data_client.invoke(operation, arguments)
+        else:
+            self._ensure_calendar_fresh()
+            payload = self.data_client.invoke(operation, arguments)
+        return list(payload.get("events", []))
+
     def _build_tools(self) -> list[AgentTool]:
         kit = ToolKit()
         kit.add(build_web_search_tool())
         kit.add(build_web_fetch_tool())
         kit.add(AgentTool(
             name="get_recent_releases",
-            description="Retrieve recent released macro events from the local SQLite store.",
+            description="Retrieve recent released macro events from the macro-data service.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -245,7 +304,7 @@ class LiveAnalystEngine:
         ))
         kit.add(AgentTool(
             name="get_upcoming_calendar",
-            description="Retrieve upcoming scheduled macro events from the local SQLite store.",
+            description="Retrieve upcoming scheduled macro events from the macro-data service.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -256,13 +315,13 @@ class LiveAnalystEngine:
         ))
         kit.add(AgentTool(
             name="get_market_snapshot",
-            description="Retrieve the latest cross-asset market snapshot from the local SQLite store.",
+            description="Retrieve the latest cross-asset market snapshot from the macro-data service.",
             parameters={"type": "object", "properties": {}},
             handler=self._tool_market_snapshot,
         ))
         kit.add(AgentTool(
             name="get_recent_fed_comms",
-            description="Retrieve recent Fed communications from the local SQLite store.",
+            description="Retrieve recent Fed communications from the macro-data service.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -287,7 +346,7 @@ class LiveAnalystEngine:
         ))
         kit.add(AgentTool(
             name="get_latest_regime_state",
-            description="Retrieve the latest persisted macro regime state.",
+            description="Retrieve the latest persisted macro regime state from the agent store.",
             parameters={"type": "object", "properties": {}},
             handler=self._tool_latest_regime_state,
         ))
@@ -330,7 +389,7 @@ class LiveAnalystEngine:
         ))
         kit.add(AgentTool(
             name="get_recent_news",
-            description="Retrieve recent news articles ranked by time-decay and impact. Supports filtering by impact level, feed category, finance category, country, and asset class.",
+            description="Retrieve recent news articles from the macro-data service, ranked by time-decay and impact.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -348,7 +407,7 @@ class LiveAnalystEngine:
         ))
         kit.add(AgentTool(
             name="search_news",
-            description="Search news articles by keyword using full-text search, ranked by time-decay and impact.",
+            description="Search news articles in the macro-data service by keyword, ranked by time-decay and impact.",
             parameters={
                 "type": "object",
                 "required": ["query"],
@@ -363,15 +422,14 @@ class LiveAnalystEngine:
             },
             handler=self._tool_search_news,
         ))
-        if self.retriever is not None:
-            kit.add(build_rag_search_tool(self.retriever))
-        kit.add(build_live_calendar_tool(self.store))
-        kit.add(build_live_news_tool())
-        kit.add(build_article_tool())
-        kit.add(build_live_markets_tool())
-        kit.add(build_country_indicators_tool())
-        kit.add(build_reference_rates_tool())
-        kit.add(build_rate_expectations_tool())
+        kit.add(build_rag_search_tool(data_client=self.data_client))
+        kit.add(build_live_calendar_tool(data_client=self.data_client))
+        kit.add(build_live_news_tool(data_client=self.data_client))
+        kit.add(build_article_tool(data_client=self.data_client))
+        kit.add(build_live_markets_tool(data_client=self.data_client))
+        kit.add(build_country_indicators_tool(data_client=self.data_client))
+        kit.add(build_reference_rates_tool(data_client=self.data_client))
+        kit.add(build_rate_expectations_tool(data_client=self.data_client))
         kit.add(build_portfolio_risk_tool(self.store))
         kit.add(build_portfolio_holdings_tool(self.store))
         kit.add(build_portfolio_sync_tool(self.store))
@@ -394,73 +452,20 @@ class LiveAnalystEngine:
         )
 
     def _tool_recent_releases(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        events = self.store.list_recent_events(
-            limit=int(arguments.get("limit", 10)),
-            days=int(arguments.get("days", 7)),
-            released_only=True,
-            importance=arguments.get("importance"),
-            country=arguments.get("country"),
-            category=arguments.get("category"),
-        )
-        return {"events": [self._stored_event_to_dict(event) for event in events]}
+        return self.data_client.invoke("get_recent_releases", arguments)
 
     def _tool_upcoming_calendar(self, arguments: dict[str, Any]) -> dict[str, Any]:
         self._ensure_calendar_fresh()
-        events = self.store.list_upcoming_events(limit=int(arguments.get("limit", 10)))
-        return {"events": [self._stored_event_to_dict(event) for event in events]}
+        return self.data_client.invoke("get_upcoming_calendar", arguments)
 
     def _tool_market_snapshot(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        del arguments
-        prices = self.store.latest_market_prices()
-        return {
-            "prices": [
-                {
-                    "symbol": price.symbol,
-                    "name": price.name,
-                    "asset_class": price.asset_class,
-                    "price": price.price,
-                    "change_pct": price.change_pct,
-                    "timestamp": price.timestamp,
-                    "datetime_utc": format_epoch_iso(price.timestamp),
-                }
-                for price in prices
-            ]
-        }
+        return self.data_client.invoke("get_market_snapshot", arguments)
 
     def _tool_recent_fed_comms(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        communications = self.store.list_recent_central_bank_comms(
-            days=int(arguments.get("days", 14)),
-            limit=int(arguments.get("limit", 5)),
-        )
-        return {
-            "communications": [
-                {
-                    "title": communication.title,
-                    "timestamp": communication.timestamp,
-                    "published_at": format_epoch_iso(communication.timestamp),
-                    "speaker": communication.speaker,
-                    "content_type": communication.content_type,
-                    "summary": communication.summary,
-                    "url": communication.url,
-                }
-                for communication in communications
-            ]
-        }
+        return self.data_client.invoke("get_recent_fed_comms", arguments)
 
     def _tool_indicator_history(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        series_id = str(arguments["series_id"])
-        observations = self.store.get_indicator_history(series_id, limit=int(arguments.get("limit", 12)))
-        return {
-            "series_id": series_id,
-            "observations": [
-                {
-                    "date": observation.date,
-                    "value": observation.value,
-                    "metadata": observation.metadata,
-                }
-                for observation in observations
-            ],
-        }
+        return self.data_client.invoke("get_indicator_history", arguments)
 
     def _tool_latest_regime_state(self, arguments: dict[str, Any]) -> dict[str, Any]:
         del arguments
@@ -471,118 +476,21 @@ class LiveAnalystEngine:
 
     def _tool_today_calendar(self, arguments: dict[str, Any]) -> dict[str, Any]:
         self._ensure_calendar_fresh()
-        events = self.store.list_today_events(
-            importance=arguments.get("importance"),
-            country=arguments.get("country"),
-            category=arguments.get("category"),
-        )
-        return {"events": [self._stored_event_to_dict(event) for event in events]}
+        return self.data_client.invoke("get_today_calendar", arguments)
 
     def _tool_indicator_trend(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        keyword = str(arguments["indicator_keyword"])
-        limit = int(arguments.get("limit", 12))
-        events = self.store.list_indicator_releases(indicator_keyword=keyword, limit=limit)
-        return {
-            "indicator_keyword": keyword,
-            "releases": [
-                {
-                    "timestamp": event.timestamp,
-                    "datetime_utc": format_epoch_iso(event.timestamp),
-                    "country": event.country,
-                    "indicator": event.indicator,
-                    "actual": event.actual,
-                    "forecast": event.forecast,
-                    "previous": event.previous,
-                    "surprise": event.surprise,
-                }
-                for event in events
-            ],
-        }
+        return self.data_client.invoke("get_indicator_trend", arguments)
 
     def _tool_surprise_summary(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        days = int(arguments.get("days", 14))
-        events = self.store.list_recent_events(limit=200, days=days, released_only=True)
-        by_category: dict[str, list[float]] = {}
-        for event in events:
-            if event.surprise is not None:
-                by_category.setdefault(event.category, []).append(event.surprise)
-        summary = []
-        for category, surprises in sorted(by_category.items()):
-            beats = sum(1 for s in surprises if s > 0)
-            misses = sum(1 for s in surprises if s < 0)
-            avg = round(sum(surprises) / len(surprises), 4) if surprises else 0.0
-            summary.append({
-                "category": category,
-                "count": len(surprises),
-                "beats": beats,
-                "misses": misses,
-                "avg_surprise": avg,
-            })
-        return {"summary": summary}
+        return self.data_client.invoke("get_surprise_summary", arguments)
 
     def _tool_recent_news(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        articles = self.store.get_news_context(
-            days=int(arguments.get("days", 3)),
-            limit=int(arguments.get("limit", 15)),
-            impact_level=arguments.get("impact_level"),
-            feed_category=arguments.get("feed_category"),
-            finance_category=arguments.get("finance_category"),
-            country=arguments.get("country"),
-            asset_class=arguments.get("asset_class"),
-            display_timezone=arguments.get("timezone"),
-        )
-        return {"articles": articles}
+        return self.data_client.invoke("get_recent_news", arguments)
 
     def _tool_search_news(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        articles = self.store.get_news_context(
-            query=str(arguments["query"]),
-            days=int(arguments.get("days", 7)),
-            limit=int(arguments.get("limit", 15)),
-            country=arguments.get("country"),
-            asset_class=arguments.get("asset_class"),
-            display_timezone=arguments.get("timezone"),
-        )
-        return {"articles": articles}
+        return self.data_client.invoke("search_news", arguments)
 
-    def _news_article_to_dict(self, article: NewsArticleRecord) -> dict[str, Any]:
-        desc = article.description
-        if len(desc) > 500:
-            desc = desc[:500] + "..."
-        return {
-            "source_feed": article.source_feed,
-            "title": article.title,
-            "url": article.url,
-            "timestamp": article.timestamp,
-            "published_at": format_epoch_iso(article.timestamp),
-            "description": desc,
-            "impact_level": article.impact_level,
-            "finance_category": article.finance_category,
-            "country": article.country,
-            "asset_class": article.asset_class,
-            "subject": article.subject,
-            "event_type": article.event_type,
-        }
-
-    def _stored_event_to_dict(self, event: StoredEventRecord) -> dict[str, Any]:
-        d: dict[str, Any] = {
-            "source": event.source,
-            "event_id": event.event_id,
-            "timestamp": event.timestamp,
-            "datetime_utc": format_epoch_iso(event.timestamp),
-            "country": event.country,
-            "indicator": event.indicator,
-            "category": event.category,
-            "importance": event.importance,
-            "actual": event.actual,
-            "forecast": event.forecast,
-            "previous": event.previous,
-            "surprise": event.surprise,
-        }
-        if event.indicator_id:
-            d["indicator_id"] = event.indicator_id
-        return d
-
-    def _baseline_regime(self, trigger_event: StoredEventRecord | None = None) -> dict[str, Any]:
+    def _baseline_regime(self, trigger_event: dict[str, Any] | None = None) -> dict[str, Any]:
         latest_snapshot = self.store.latest_regime_snapshot()
         if latest_snapshot is not None:
             baseline = dict(latest_snapshot.regime_json)
@@ -603,45 +511,51 @@ class LiveAnalystEngine:
                     "a_shares": "A股更依赖国内政策和北向资金节奏。",
                     "hk_stocks": "港股对美债利率和美元方向更敏感。",
                     "us_equities": "美股估值仍受利率路径影响。",
-                    "commodities": "大宗走势取决于增长和美元的相对强弱。",
-                    "crypto": "加密资产继续交易全球流动性和风险偏好。",
-                },
-                "last_updated": utc_now().isoformat(),
-                "trigger": trigger_event.indicator if trigger_event else "baseline",
-            }
+                "commodities": "大宗走势取决于增长和美元的相对强弱。",
+                "crypto": "加密资产继续交易全球流动性和风险偏好。",
+            },
+            "last_updated": utc_now().isoformat(),
+            "trigger": trigger_event["indicator"] if trigger_event else "baseline",
+        }
 
-        recent_events = self.store.list_recent_events(limit=6, days=30, released_only=True)
+        recent_events = self.data_client.invoke(
+            "get_recent_releases",
+            {"limit": 6, "days": 30},
+        ).get("events", [])
         for event in recent_events:
-            if event.category == "inflation" and event.surprise is not None:
-                if event.surprise > 0:
+            category = str(event.get("category") or "")
+            surprise = event.get("surprise")
+            if category == "inflation" and surprise is not None:
+                if surprise > 0:
                     baseline["fed_hawkishness"] = clamp_unit_interval(float(baseline["fed_hawkishness"]) + 0.12)
                     baseline["risk_appetite"] = clamp_unit_interval(float(baseline["risk_appetite"]) - 0.08)
                     baseline["inflation_trend"] = "accelerating"
-                elif event.surprise < 0:
+                elif surprise < 0:
                     baseline["fed_hawkishness"] = clamp_unit_interval(float(baseline["fed_hawkishness"]) - 0.08)
                     baseline["risk_appetite"] = clamp_unit_interval(float(baseline["risk_appetite"]) + 0.05)
                     baseline["inflation_trend"] = "decelerating"
-            elif event.category == "growth" and event.surprise is not None:
-                if event.surprise > 0:
+            elif category == "growth" and surprise is not None:
+                if surprise > 0:
                     baseline["growth_momentum"] = clamp_unit_interval(float(baseline["growth_momentum"]) + 0.1)
-                elif event.surprise < 0:
+                elif surprise < 0:
                     baseline["growth_momentum"] = clamp_unit_interval(float(baseline["growth_momentum"]) - 0.1)
                     baseline["risk_appetite"] = clamp_unit_interval(float(baseline["risk_appetite"]) - 0.05)
-            elif event.category == "policy":
-                summary_text = json.dumps(event.raw_json, ensure_ascii=True)
+            elif category == "policy":
+                summary_text = json.dumps(event.get("raw_json", {}), ensure_ascii=True)
                 if "support" in summary_text.lower() or "liquidity" in summary_text.lower():
                     baseline["liquidity_conditions"] = "easing"
                     baseline["risk_appetite"] = clamp_unit_interval(float(baseline["risk_appetite"]) + 0.04)
 
-        market_snapshot = {price.symbol: price for price in self.store.latest_market_prices()}
+        market_prices = self.data_client.invoke("get_market_snapshot", {}).get("prices", [])
+        market_snapshot = {price["symbol"]: price for price in market_prices}
         vix = market_snapshot.get("^VIX")
         ten_year = market_snapshot.get("^TNX")
         dollar = market_snapshot.get("DX-Y.NYB")
-        if vix and vix.price >= 20:
+        if vix and float(vix["price"]) >= 20:
             baseline["risk_appetite"] = clamp_unit_interval(float(baseline["risk_appetite"]) - 0.1)
-        if ten_year and ten_year.price >= 4.5:
+        if ten_year and float(ten_year["price"]) >= 4.5:
             baseline["fed_hawkishness"] = clamp_unit_interval(float(baseline["fed_hawkishness"]) + 0.08)
-        if dollar and dollar.change_pct and dollar.change_pct > 0.5:
+        if dollar and dollar.get("change_pct") and float(dollar["change_pct"]) > 0.5:
             baseline["risk_appetite"] = clamp_unit_interval(float(baseline["risk_appetite"]) - 0.05)
 
         risk_appetite = float(baseline["risk_appetite"])
@@ -653,9 +567,9 @@ class LiveAnalystEngine:
             baseline["regime_label"] = "neutral"
 
         if trigger_event:
-            baseline["trigger"] = trigger_event.indicator
+            baseline["trigger"] = trigger_event["indicator"]
             baseline["dominant_narrative"] = (
-                f"最新主线围绕 {trigger_event.country} {trigger_event.indicator} 展开，"
+                f"最新主线围绕 {trigger_event['country']} {trigger_event['indicator']} 展开，"
                 "市场继续在增长韧性与政策路径重定价之间寻找平衡。"
             )
         baseline["last_updated"] = utc_now().isoformat()
@@ -666,7 +580,7 @@ class LiveAnalystEngine:
         self,
         markdown: str,
         fallback: dict[str, Any],
-        trigger_event: StoredEventRecord | None,
+        trigger_event: dict[str, Any] | None,
     ) -> dict[str, Any]:
         payload = dict(fallback)
         matches = re.findall(r"```json\s*(\{.*?\})\s*```", markdown, flags=re.DOTALL)
@@ -695,23 +609,23 @@ class LiveAnalystEngine:
             **dict(payload.get("cross_asset_implications", {})),
         }
         payload["last_updated"] = utc_now().isoformat()
-        payload["trigger"] = payload.get("trigger") or (trigger_event.indicator if trigger_event else "regime_refresh")
+        payload["trigger"] = payload.get("trigger") or (trigger_event["indicator"] if trigger_event else "regime_refresh")
         return payload
 
     def _strip_json_blocks(self, markdown: str) -> str:
         return re.sub(r"```json\s*\{.*?\}\s*```", "", markdown, flags=re.DOTALL)
 
-    def _render_event_lines(self, events: list[StoredEventRecord]) -> str:
+    def _render_event_lines(self, events: list[dict[str, Any]]) -> str:
         if not events:
             return "- 暂无事件。"
         return "\n".join(
-            f"- {format_epoch_iso(event.timestamp)} | {event.country} {event.indicator} | 实际 {event.actual or '待公布'} | "
-            f"预期 {event.forecast or '未知'} | 前值 {event.previous or '未知'}"
+            f"- {format_epoch_iso(int(event['timestamp']))} | {event['country']} {event['indicator']} | 实际 {event.get('actual') or '待公布'} | "
+            f"预期 {event.get('forecast') or '未知'} | 前值 {event.get('previous') or '未知'}"
             for event in events
         )
 
     def _with_research_context(self, prompt: str) -> str:
-        context = build_research_context(self.store)
+        context = build_research_context(self.store, data_client=self.data_client)
         if not context:
             return prompt
         return f"## 已知研究上下文\n{context}\n\n{prompt}"
@@ -748,7 +662,8 @@ class LiveAnalystEngine:
         )
 
     def _regime_to_contract(self, regime_json: dict[str, Any]) -> RegimeState:
-        evidence_events = [event_to_contract(event) for event in self.store.list_recent_events(limit=3, days=7, released_only=True)]
+        evidence_payload = self.data_client.invoke("get_recent_releases", {"limit": 3, "days": 7})
+        evidence_events = [event_to_contract(event) for event in evidence_payload.get("events", [])]
         scores = [
             RegimeScore(
                 axis="risk_appetite",

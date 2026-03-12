@@ -47,18 +47,26 @@ JSON_FORMAT_INSTRUCTIONS = """JSON 必须包含这些字段:
 """
 
 
-def flash_prompt(trigger_event: StoredEventRecord, baseline_regime: dict[str, object]) -> str:
+def _event_field(trigger_event: StoredEventRecord | dict[str, object], field: str, default: object = "") -> object:
+    if isinstance(trigger_event, dict):
+        return trigger_event.get(field, default)
+    return getattr(trigger_event, field, default)
+
+
+def flash_prompt(trigger_event: StoredEventRecord | dict[str, object], baseline_regime: dict[str, object]) -> str:
+    timestamp = _event_field(trigger_event, "timestamp", 0)
+    event_time = format_epoch_iso(int(timestamp)) if isinstance(timestamp, (int, float)) else str(_event_field(trigger_event, "datetime_utc", "-"))
     return f"""任务: 生成一篇数据快评。
 
 触发事件:
-- 国家: {trigger_event.country}
-- 指标: {trigger_event.indicator}
-- 时间: {format_epoch_iso(trigger_event.timestamp)}
-- 重要性: {trigger_event.importance}
-- 实际值: {trigger_event.actual or "待公布"}
-- 预期值: {trigger_event.forecast or "未知"}
-- 前值: {trigger_event.previous or "未知"}
-- 惊喜值: {trigger_event.surprise if trigger_event.surprise is not None else "未知"}
+- 国家: {_event_field(trigger_event, "country", "")}
+- 指标: {_event_field(trigger_event, "indicator", "")}
+- 时间: {event_time}
+- 重要性: {_event_field(trigger_event, "importance", "")}
+- 实际值: {_event_field(trigger_event, "actual", "") or "待公布"}
+- 预期值: {_event_field(trigger_event, "forecast", "") or "未知"}
+- 前值: {_event_field(trigger_event, "previous", "") or "未知"}
+- 惊喜值: {_event_field(trigger_event, "surprise", None) if _event_field(trigger_event, "surprise", None) is not None else "未知"}
 
 当前基线宏观状态:
 {baseline_regime}

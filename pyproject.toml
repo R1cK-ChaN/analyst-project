@@ -29,6 +29,7 @@ dependencies = [
 
 [project.scripts]
 analyst-cli = "analyst.cli:main"
+analyst-macro-data = "analyst.macro_data.cli:main"
 analyst-telegram = "analyst.delivery.bot:main"
 
 [tool.setuptools]

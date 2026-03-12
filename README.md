@@ -2,17 +2,19 @@
 
 Standalone Analyst product scaffold. This folder now contains its own installable Python package under `src/analyst/` and can run without importing from the sibling `information/` repo.
 
-Current status on March 10, 2026:
+Current status on March 12, 2026:
 
-- the live WS1 engine is implemented under `src/analyst/engine/`, `src/analyst/storage/`, and `src/analyst/ingestion/`
+- the live WS1 engine is implemented under `src/analyst/engine/` with a dedicated macro-data client boundary under `src/analyst/macro_data/`
+- the service-side macro-data stack has been extracted into a standalone sibling codebase at `/home/rick/Desktop/analyst/macro-data-service`
 - local live commands now cover refresh, flash commentary, briefing, wrap, regime refresh, calendar inspection, and news inspection
 - the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, TradingEconomics, yfinance, and macro-finance RSS news ingestion
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
 - the memory layer records all chat messages and extracts 17 client profile dimensions that accumulate across conversations, including emotional trend tracking, stress level monitoring, and personal facts memory (up to 20 facts with recency-refresh dedup)
-- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 13 tool builders (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation); both LiveAnalystEngine and the sales agent assemble from it
+- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 13 tool builders (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation); both LiveAnalystEngine and the sales agent assemble from it, and the macro-data-facing tools now proxy through the shared client boundary
 - a round sub-agent layer is implemented for research, sales, and runtime-assisted content generation, with scoped memory, recursion prevention, and SQLite audit logging of each run
 - the portfolio package supports CSV import and live broker sync via an extensible adapter layer (IBKR, Longbridge 长桥, Tiger 老虎), with EWMA risk pipeline, VIX regime signals, and agent-actionable tools
 - the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention), full tool access, time-of-day awareness, absence awareness, typing simulation between multi-bubble messages, inbound user-image understanding, static image generation via Volcengine Seedream with photo delivery and AI watermark disabled by default, and optional motion-selfie/live-photo generation via Seedance with Telegram video delivery
+- the standalone HTTP communication path between `analyst-project` and `macro-data-service` is covered by an end-to-end integration test
 - China-specific ingestion, live end-to-end provider verification, and WeCom delivery are still pending
 
 ## What's Inside
@@ -73,13 +75,14 @@ analyst-project/
 │   ├── cli.py                      Local CLI entrypoint
 │   ├── contracts.py                Shared product contracts
 │   ├── env.py                      Multi-file .env resolver
+│   ├── macro_data/                 Macro-data client boundary + local compatibility service
 │   ├── information/                Local information layer using bundled demo data
 │   ├── runtime/                    Runtime and prompt profiles
 │   ├── tools/                      13 agent tools — ToolKit builder + live data scrapers + web search/fetch + calendar + portfolio sync + image gen + live photo
 │   ├── engine/                     Engine service boundary + live engine + agent loop + OpenRouter
-│   ├── storage/                    SQLite store (market state, research artifacts, trader state, sales memory)
+│   ├── storage/                    Transitional local SQLite store and agent-owned memory/trader state
 │   ├── memory/                     Client profile extraction (17 dimensions), emotional memory, personal facts, context builders
-│   ├── ingestion/                  Source adapters (Investing.com, ForexFactory, TradingEconomics, FRED, Fed RSS, yfinance, RSS news)
+│   ├── ingestion/                  Transitional local source adapters retained behind the macro-data boundary
 │   ├── delivery/                   Telegram bot (陈襄) with group chat, time awareness, typing simulation, image gen + photo/video delivery + sales chat agent + formatters
 │   └── integration/                Message routing
 │
@@ -156,6 +159,17 @@ python3 -m unittest discover -s tests -v
 Quick local usage:
 
 ```bash
+# Standalone macro-data service (preferred decoupled path)
+cd /home/rick/Desktop/analyst/macro-data-service
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+macro-data-service serve --host 127.0.0.1 --port 8765
+
+# In another shell, point analyst-project at the service
+export ANALYST_MACRO_DATA_BASE_URL=http://127.0.0.1:8765
+export ANALYST_MACRO_DATA_API_TOKEN=
+
 # Demo commands (no API keys needed)
 PYTHONPATH=src python3 -m analyst regime
 PYTHONPATH=src python3 -m analyst route "帮我写一段关于今晚非农数据的客户消息"
@@ -184,6 +198,9 @@ PYTHONPATH=src python3 -m analyst news-latest --limit 10 --category centralbanks
 PYTHONPATH=src python3 -m analyst news-search "Fed" --limit 10
 PYTHONPATH=src python3 -m analyst news-feeds --category markets
 
+# Transitional compatibility: local in-process macro-data CLI still exists
+PYTHONPATH=src python3 -m analyst.macro_data.cli serve --host 127.0.0.1 --port 8765
+
 # Telegram bot
 ANALYST_TELEGRAM_TOKEN=your-token PYTHONPATH=src python3 -m analyst.delivery.bot
 ```
@@ -191,7 +208,8 @@ ANALYST_TELEGRAM_TOKEN=your-token PYTHONPATH=src python3 -m analyst.delivery.bot
 This validates the current standalone implementation:
 
 - bundled demo data + demo engine path
-- WS1 live engine: SQLite store, ingestion adapters, calendar/news query surface, agent loop, OpenRouter provider
+- WS1 live engine: macro-data client boundary, calendar/news query surface, agent loop, OpenRouter provider
+- extracted service communication: standalone `macro-data-service` HTTP API verified against the agent via `tests/test_macro_data_integration.py`
 - sub-agent execution: scoped tag extraction uses word-boundary matching, memory retrieval respects punctuation boundaries, and both success and error runs are audited with preserved scope tags
 - unified tools layer: ToolKit composable builder + 13 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + Volcengine image generation + Seedance motion/live-photo generation)
 - portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime signals, agent-actionable tools
@@ -205,6 +223,7 @@ This validates the current standalone implementation:
 Current implementation status:
 
 - `00-overview/Implementation_Status.md`
+- `docs/macro_data_service.md`
 
 Live code:
 

@@ -6,7 +6,10 @@ import logging
 from typing import Any
 
 from analyst.engine.live_types import AgentTool
+from analyst.macro_data import MacroDataClient
 from analyst.storage import SQLiteEngineStore
+
+from ._macro_data import MacroDataOperationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +54,17 @@ class StoredNewsHandler:
         }
 
 
-def build_stored_news_tool(store: SQLiteEngineStore) -> AgentTool:
+def build_stored_news_tool(
+    store: SQLiteEngineStore | None = None,
+    *,
+    data_client: MacroDataClient | None = None,
+) -> AgentTool:
     """Factory: create a search_news AgentTool backed by the stored news archive."""
-    handler = StoredNewsHandler(store)
+    handler = MacroDataOperationHandler(
+        "search_news",
+        data_client=data_client,
+        store=store,
+    )
     return AgentTool(
         name="search_news",
         description=(

@@ -12,7 +12,10 @@ from analyst.ingestion.sources import (
     InvestingCalendarClient,
     TradingEconomicsCalendarClient,
 )
+from analyst.macro_data import MacroDataClient
 from analyst.storage import SQLiteEngineStore, StoredEventRecord
+
+from ._macro_data import MacroDataOperationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +88,17 @@ class LiveCalendarHandler:
         return result
 
 
-def build_live_calendar_tool(store: SQLiteEngineStore) -> AgentTool:
+def build_live_calendar_tool(
+    store: SQLiteEngineStore | None = None,
+    *,
+    data_client: MacroDataClient | None = None,
+) -> AgentTool:
     """Factory: create a fetch_live_calendar AgentTool."""
-    handler = LiveCalendarHandler(store)
+    handler = MacroDataOperationHandler(
+        "fetch_live_calendar",
+        data_client=data_client,
+        store=store,
+    )
     return AgentTool(
         name="fetch_live_calendar",
         description=(

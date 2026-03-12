@@ -16,11 +16,11 @@ from ._stored_research import build_research_search_tool
 from ._web_fetch import FetchPageConfig, build_web_fetch_tool
 from ._web_search import WebSearchConfig, build_web_search_tool
 
-def build_rag_search_tool(retriever):  # noqa: ANN001
+def build_rag_search_tool(retriever=None, *, data_client=None):  # noqa: ANN001
     """Lazy wrapper — avoids importing openai/pymilvus at module load."""
     from ._rag_search import build_rag_search_tool as _build
 
-    return _build(retriever)
+    return _build(retriever, data_client=data_client)
 
 
 __all__ = [

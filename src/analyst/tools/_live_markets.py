@@ -7,6 +7,9 @@ from typing import Any
 
 from analyst.engine.live_types import AgentTool
 from analyst.ingestion.scrapers import TradingEconomicsMarketsClient
+from analyst.macro_data import MacroDataClient
+
+from ._macro_data import MacroDataOperationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +50,9 @@ class LiveMarketsHandler:
         }
 
 
-def build_live_markets_tool() -> AgentTool:
+def build_live_markets_tool(*, data_client: MacroDataClient | None = None) -> AgentTool:
     """Factory: create a fetch_live_markets AgentTool."""
-    handler = LiveMarketsHandler()
+    handler = MacroDataOperationHandler("fetch_live_markets", data_client=data_client)
     return AgentTool(
         name="fetch_live_markets",
         description=(

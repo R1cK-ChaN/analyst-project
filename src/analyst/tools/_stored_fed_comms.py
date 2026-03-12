@@ -7,7 +7,10 @@ from typing import Any
 
 from analyst.contracts import format_epoch_iso
 from analyst.engine.live_types import AgentTool
+from analyst.macro_data import MacroDataClient
 from analyst.storage import SQLiteEngineStore
+
+from ._macro_data import MacroDataOperationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +61,17 @@ class FedCommsHandler:
         }
 
 
-def build_fed_comms_tool(store: SQLiteEngineStore) -> AgentTool:
+def build_fed_comms_tool(
+    store: SQLiteEngineStore | None = None,
+    *,
+    data_client: MacroDataClient | None = None,
+) -> AgentTool:
     """Factory: create a get_fed_communications AgentTool."""
-    handler = FedCommsHandler(store)
+    handler = MacroDataOperationHandler(
+        "get_fed_communications",
+        data_client=data_client,
+        store=store,
+    )
     return AgentTool(
         name="get_fed_communications",
         description=(

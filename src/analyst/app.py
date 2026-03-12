@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from analyst.contracts import ChannelMessage, InteractionMode, RegimeState, ResearchNote
-from analyst.storage.sqlite import StoredEventRecord
 from analyst.delivery import WeComFormatter
 from analyst.engine import AnalystEngine, LiveAnalystEngine
 from analyst.engine.live_types import LLMProvider
 from analyst.ingestion import IngestionOrchestrator
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.integration import AnalystIntegrationService
+from analyst.macro_data import LocalMacroDataService, coerce_macro_data_client
 from analyst.runtime import TemplateAgentRuntime
 from analyst.storage import SQLiteEngineStore
 
@@ -75,33 +76,44 @@ class LiveAnalystApplication:
         category: str | None = None,
         importance: str | None = None,
         limit: int = 20,
-    ) -> list[StoredEventRecord]:
-        store = self.engine.store
-        if scope == "today":
-            return store.list_today_events(
-                limit=limit, importance=importance, country=country, category=category,
-            )
-        if scope == "upcoming":
-            return store.list_upcoming_events(
-                limit=limit, importance=importance, country=country, category=category,
-            )
-        if scope == "recent":
-            return store.list_recent_events(
-                limit=limit, days=7, released_only=True,
-                importance=importance, country=country, category=category,
-            )
-        if scope == "week":
-            from datetime import datetime, timedelta, timezone
-            today = datetime.now(timezone.utc).date()
-            start_of_week = today - timedelta(days=today.weekday())
-            end_of_week = start_of_week + timedelta(days=6)
-            date_from = int(datetime(start_of_week.year, start_of_week.month, start_of_week.day, tzinfo=timezone.utc).timestamp())
-            date_to = int(datetime(end_of_week.year, end_of_week.month, end_of_week.day, 23, 59, 59, tzinfo=timezone.utc).timestamp())
-            return store.list_events_in_range(
-                date_from=date_from, date_to=date_to, limit=limit,
-                importance=importance, country=country, category=category,
-            )
-        return store.list_today_events(limit=limit)
+    ) -> list[dict[str, object]]:
+        return self.engine.list_calendar_events(
+            scope=scope,
+            country=country,
+            category=category,
+            importance=importance,
+            limit=limit,
+        )
+
+    def refresh_news(self, *, category: str | None = None) -> dict[str, Any]:
+        return self.engine.data_client.invoke("refresh_news", {"category": category})
+
+    def latest_news(
+        self,
+        *,
+        limit: int = 20,
+        impact_level: str | None = None,
+        feed_category: str | None = None,
+    ) -> list[dict[str, Any]]:
+        payload = self.engine.data_client.invoke(
+            "get_recent_news",
+            {
+                "limit": limit,
+                "impact_level": impact_level,
+                "feed_category": feed_category,
+            },
+        )
+        return list(payload.get("articles", []))
+
+    def search_news(self, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        payload = self.engine.data_client.invoke(
+            "search_news",
+            {
+                "query": query,
+                "limit": limit,
+            },
+        )
+        return list(payload.get("articles", []))
 
 
 def build_demo_app(data_dir: Path | None = None) -> AnalystApplication:
@@ -119,18 +131,33 @@ def build_live_engine_app(
     provider: LLMProvider | None = None,
 ) -> LiveAnalystApplication:
     store = SQLiteEngineStore(db_path=db_path)
-    ingestion = IngestionOrchestrator(store)
+    macro_data_client = coerce_macro_data_client(
+        data_client=None,
+        store=store,
+        ingestion=IngestionOrchestrator(store),
+        retriever=_build_optional_retriever(),
+    )
+    engine = LiveAnalystEngine(
+        store=store,
+        provider=provider,
+        data_client=macro_data_client,
+    )
+    return LiveAnalystApplication(engine=engine)
 
-    # Graceful RAG init — if Milvus unavailable, engine works without it.
-    retriever = None
+
+def _build_optional_retriever():
     try:
         from analyst.rag import MacroRetriever
 
-        retriever = MacroRetriever.from_env()
+        return MacroRetriever.from_env()
     except Exception:
-        pass
+        return None
 
-    engine = LiveAnalystEngine(
-        store=store, provider=provider, ingestion=ingestion, retriever=retriever
+
+def build_local_macro_data_service(db_path: Path | None = None) -> LocalMacroDataService:
+    store = SQLiteEngineStore(db_path=db_path)
+    return LocalMacroDataService(
+        store=store,
+        ingestion=IngestionOrchestrator(store),
+        retriever=_build_optional_retriever(),
     )
-    return LiveAnalystApplication(engine=engine)

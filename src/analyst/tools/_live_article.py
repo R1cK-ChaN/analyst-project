@@ -14,6 +14,9 @@ from analyst.ingestion.scrapers import (
     ReutersArticleClient,
     WSJArticleClient,
 )
+from analyst.macro_data import MacroDataClient
+
+from ._macro_data import MacroDataOperationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -157,9 +160,9 @@ class ArticleHandler:
         }
 
 
-def build_article_tool() -> AgentTool:
+def build_article_tool(*, data_client: MacroDataClient | None = None) -> AgentTool:
     """Factory: create a fetch_article AgentTool."""
-    handler = ArticleHandler()
+    handler = MacroDataOperationHandler("fetch_article", data_client=data_client)
     return AgentTool(
         name="fetch_article",
         description=(

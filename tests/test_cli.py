@@ -269,7 +269,7 @@ class SalesChatCLITest(unittest.TestCase):
                 name="Composite leading indicators",
             )
         ]
-        with patch("analyst.cli.OECDIngestionClient", return_value=fake_ingestion):
+        with patch("analyst.macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
             with redirect_stdout(output):
                 rc = main(["oecd-dataflows", "--limit", "1"])
 
@@ -292,7 +292,7 @@ class SalesChatCLITest(unittest.TestCase):
             code_counts={"REF_AREA": 2},
             defaults={"FREQ": "M"},
         )
-        with patch("analyst.cli.OECDIngestionClient", return_value=fake_ingestion):
+        with patch("analyst.macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
             with redirect_stdout(output):
                 rc = main(["oecd-structure", "--dataflow", "DSD_STES@DF_CLI"])
 
@@ -316,7 +316,7 @@ class SalesChatCLITest(unittest.TestCase):
                 filters={"REF_AREA": "USA", "FREQ": "M"},
             )
         }
-        with patch("analyst.cli.OECDIngestionClient", return_value=fake_ingestion):
+        with patch("analyst.macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
             with redirect_stdout(output):
                 rc = main(["oecd-generate-configs", "--dataflow-limit", "1", "--series-per-dataflow", "1"])
 
@@ -330,7 +330,7 @@ class SalesChatCLITest(unittest.TestCase):
         fake_ingestion = Mock()
         fake_ingestion.refresh_catalog.return_value = Mock(source="oecd_catalog", count=12)
         fake_store = Mock()
-        with patch("analyst.cli.OECDIngestionClient", return_value=fake_ingestion):
+        with patch("analyst.macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
             with patch("analyst.storage.SQLiteEngineStore", return_value=fake_store):
                 with redirect_stdout(output):
                     rc = main(["oecd-refresh-catalog", "--dataflow-limit", "1", "--sleep-seconds", "0"])

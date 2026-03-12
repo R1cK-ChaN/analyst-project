@@ -2,81 +2,27 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from analyst.engine.live_types import AgentTool
+from analyst.macro_data import MacroDataClient
+
+from ._macro_data import MacroDataOperationHandler
 
 if TYPE_CHECKING:
     from analyst.rag.retriever import MacroRetriever
 
 
-def build_rag_search_tool(retriever: MacroRetriever) -> AgentTool:
-    def handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        from analyst.rag.models import MacroMode
-
-        query = str(arguments.get("query") or "")
-        if not query.strip():
-            return {"error": "query is required"}
-
-        mode_str = str(arguments.get("mode") or "QA").upper()
-        try:
-            mode = MacroMode(mode_str)
-        except ValueError:
-            mode = MacroMode.QA
-
-        filters: dict[str, Any] = {}
-        for key in (
-            "country",
-            "indicator_group",
-            "impact_level",
-            "content_type",
-            "source_type",
-        ):
-            val = arguments.get(key)
-            if val:
-                filters[key] = [val] if isinstance(val, str) else val
-
-        days = arguments.get("days")
-        if days:
-            from datetime import datetime, timedelta, timezone
-
-            cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
-            filters["updated_after"] = cutoff.isoformat()
-
-        limit = arguments.get("limit")
-        limit_int = int(limit) if limit else None
-
-        result = retriever.retrieve(query, mode, filters=filters, limit=limit_int)
-
-        evidences = []
-        for e in result.get("evidences", []):
-            evidences.append({
-                "chunk_id": e.chunk_id,
-                "text": e.text,
-                "source_type": e.source_type,
-                "source_id": e.source_id,
-                "section_path": e.section_path,
-                "content_type": e.content_type,
-                "country": e.country,
-                "indicator_group": e.indicator_group,
-                "impact_level": e.impact_level,
-                "data_source": e.data_source,
-                "updated_at": e.updated_at,
-                "scores": e.scores,
-            })
-
-        return {
-            "evidences": evidences,
-            "stats": {
-                "total_candidates": result.get("candidates_total", 0),
-                "fused": result.get("deduped_total", 0),
-                "final_k": result.get("final_k", 0),
-                "coverage": result.get("coverage_counts", {}),
-                "coverage_ok": result.get("coverage_ok", False),
-                "timing_ms": result.get("timing_ms", 0),
-            },
-        }
-
+def build_rag_search_tool(
+    retriever: MacroRetriever | None = None,
+    *,
+    data_client: MacroDataClient | None = None,
+) -> AgentTool:
+    handler = MacroDataOperationHandler(
+        "search_knowledge_base",
+        data_client=data_client,
+        retriever=retriever,
+    )
     return AgentTool(
         name="search_knowledge_base",
         description=(

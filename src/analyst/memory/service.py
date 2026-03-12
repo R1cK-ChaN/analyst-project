@@ -4,13 +4,13 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
+from analyst.macro_data import MacroDataClient
 from analyst.storage import (
     ClientProfileRecord,
     DeliveryQueueRecord,
     GroupMemberRecord,
     GroupMessageRecord,
     SQLiteEngineStore,
-    StoredEventRecord,
 )
 
 from .profile import ClientProfileUpdate, extract_client_profile_update, merge_client_profile_updates
@@ -20,13 +20,17 @@ from .render import RenderBudget, render_context_sections, trim_text
 def build_research_context(
     store: SQLiteEngineStore,
     *,
+    data_client: MacroDataClient | None = None,
     budget: RenderBudget | None = None,
 ) -> str:
     limits = budget or RenderBudget(total_chars=4500)
     snapshots = store.list_recent_regime_snapshots(limit=3)
     notes = store.list_recent_generated_notes(limit=3)
     observations = store.list_recent_analytical_observations(limit=4)
-    recent_events = store.list_recent_events(limit=18, days=14, released_only=True)
+    if data_client is None:
+        recent_events: list[Any] = store.list_recent_events(limit=18, days=14, released_only=True)
+    else:
+        recent_events = data_client.invoke("get_recent_releases", {"limit": 18, "days": 14}).get("events", [])
 
     sections: list[tuple[str, list[str]]] = []
 
@@ -475,11 +479,11 @@ def _render_delivery_history(deliveries: list[DeliveryQueueRecord], *, limits: R
     return lines
 
 
-def _render_surprise_patterns(events: list[StoredEventRecord], *, limits: RenderBudget) -> list[str]:
+def _render_surprise_patterns(events: list[Any], *, limits: RenderBudget) -> list[str]:
     by_category: dict[str, list[float]] = defaultdict(list)
     for event in events:
-        surprise = event.surprise
-        category = event.category
+        surprise = event["surprise"] if isinstance(event, dict) else event.surprise
+        category = event["category"] if isinstance(event, dict) else event.category
         if surprise is None or not category:
             continue
         by_category[category].append(float(surprise))

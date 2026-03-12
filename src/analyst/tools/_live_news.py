@@ -15,6 +15,9 @@ from analyst.ingestion.scrapers import (
     TradingEconomicsNewsClient,
     WSJNewsClient,
 )
+from analyst.macro_data import MacroDataClient
+
+from ._macro_data import MacroDataOperationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +95,9 @@ class LiveNewsHandler:
         ]
 
 
-def build_live_news_tool() -> AgentTool:
+def build_live_news_tool(*, data_client: MacroDataClient | None = None) -> AgentTool:
     """Factory: create a fetch_live_news AgentTool."""
-    handler = LiveNewsHandler()
+    handler = MacroDataOperationHandler("fetch_live_news", data_client=data_client)
     return AgentTool(
         name="fetch_live_news",
         description=(

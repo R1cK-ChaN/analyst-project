@@ -7,6 +7,9 @@ from typing import Any
 
 from analyst.engine.live_types import AgentTool
 from analyst.ingestion.scrapers import TradingEconomicsIndicatorsClient
+from analyst.macro_data import MacroDataClient
+
+from ._macro_data import MacroDataOperationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +57,9 @@ class CountryIndicatorsHandler:
         }
 
 
-def build_country_indicators_tool() -> AgentTool:
+def build_country_indicators_tool(*, data_client: MacroDataClient | None = None) -> AgentTool:
     """Factory: create a fetch_country_indicators AgentTool."""
-    handler = CountryIndicatorsHandler()
+    handler = MacroDataOperationHandler("fetch_country_indicators", data_client=data_client)
     return AgentTool(
         name="fetch_country_indicators",
         description=(
