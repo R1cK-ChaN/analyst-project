@@ -44,6 +44,15 @@ class CapabilityRegistryTest(unittest.TestCase):
         self.assertIn("research_lookup", tool_names)
         self.assertIn("portfolio_analyst", tool_names)
 
+    def test_companion_surface_builds_declared_sub_agent_when_provider_present(self) -> None:
+        tools = build_capability_tools(
+            "companion",
+            store=MagicMock(),
+            provider=MagicMock(),
+        )
+        tool_names = {tool.name for tool in tools}
+        self.assertIn("research_agent", tool_names)
+
 
 if __name__ == "__main__":
     unittest.main()

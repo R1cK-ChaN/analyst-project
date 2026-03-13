@@ -108,6 +108,65 @@ CONTENT_SUB_AGENT_TOOL_BUILDERS: dict[str, tuple[Callable[[], AgentTool], ...]] 
     ),
 }
 
+COMPANION_SUB_AGENT_NAMES = ("research_agent",)
+
+
+@dataclass(frozen=True)
+class EngineToolSpec:
+    name: str
+    description: str
+    handler_factory: Callable[[OpenRouterAnalystEngine | Any], Callable[[dict[str, object]], str]]
+    parameters: dict[str, Any] = field(
+        default_factory=lambda: {"type": "object", "properties": {}, "required": []}
+    )
+
+
+USER_CHAT_STATIC_TOOL_BUILDERS: tuple[Callable[[], AgentTool | None], ...] = (
+    build_web_search_tool,
+    build_web_fetch_tool,
+    build_image_gen_tool,
+    build_live_news_tool,
+    build_article_tool,
+    build_live_markets_tool,
+    build_country_indicators_tool,
+    build_reference_rates_tool,
+    build_rate_expectations_tool,
+    build_vix_regime_tool,
+)
+
+USER_CHAT_OPTIONAL_TOOL_BUILDERS: tuple[Callable[[], AgentTool | None], ...] = (
+    build_optional_live_photo_tool,
+)
+
+USER_CHAT_STORE_TOOL_BUILDERS: tuple[Callable[[SQLiteEngineStore], AgentTool | None], ...] = (
+    build_live_calendar_tool,
+    build_portfolio_risk_tool,
+    build_portfolio_holdings_tool,
+    build_portfolio_sync_tool,
+    build_stored_news_tool,
+    build_fed_comms_tool,
+    build_indicator_history_tool,
+    build_research_search_tool,
+)
+
+USER_CHAT_ENGINE_TOOL_SPECS: tuple[EngineToolSpec, ...] = (
+    EngineToolSpec(
+        name="get_regime_summary",
+        description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
+        handler_factory=lambda engine: lambda arguments: engine.get_regime_summary().body_markdown,
+    ),
+    EngineToolSpec(
+        name="get_calendar",
+        description="Fetch upcoming economic data releases from local cache. For live/real-time calendar data, prefer fetch_live_calendar instead.",
+        handler_factory=lambda engine: lambda arguments: _render_engine_calendar(engine),
+    ),
+    EngineToolSpec(
+        name="get_premarket_briefing",
+        description="Fetch the pre-market briefing including overnight highlights and today's key data.",
+        handler_factory=lambda engine: lambda arguments: engine.build_premarket_briefing().body_markdown,
+    ),
+)
+
 
 @dataclass(frozen=True)
 class CapabilityBuildContext:
@@ -122,7 +181,12 @@ class CapabilitySurfaceSpec:
     native_tool_names: tuple[str, ...] = ()
     shared_mcp_tool_names: tuple[str, ...] = ()
     sub_agent_names: tuple[str, ...] = ()
-    build_tools: Callable[[CapabilityBuildContext], list[AgentTool]] = field(default=lambda _context: [])
+    static_tool_builders: tuple[Callable[[], AgentTool | None], ...] = ()
+    optional_tool_builders: tuple[Callable[[], AgentTool | None], ...] = ()
+    store_tool_builders: tuple[Callable[[SQLiteEngineStore], AgentTool | None], ...] = ()
+    engine_tool_specs: tuple[EngineToolSpec, ...] = ()
+    append_sub_agents: Callable[[list[AgentTool], CapabilityBuildContext], list[AgentTool]] | None = None
+    build_tools: Callable[[CapabilityBuildContext], list[AgentTool]] | None = None
 
 
 def _build_companion_capabilities(context: CapabilityBuildContext) -> list[AgentTool]:
@@ -131,84 +195,52 @@ def _build_companion_capabilities(context: CapabilityBuildContext) -> list[Agent
     )
 
 
-def _build_user_chat_capabilities(context: CapabilityBuildContext) -> list[AgentTool]:
-    engine = context.engine
+def _append_user_chat_sub_agents(parent_tools: list[AgentTool], context: CapabilityBuildContext) -> list[AgentTool]:
+    if context.provider is None:
+        return []
+    from analyst.engine.sub_agent_specs import build_user_sub_agents
 
-    if engine is None:
-        return _build_companion_capabilities(context)
+    return build_user_sub_agents(parent_tools, context.provider, context.store)
 
-    def get_regime(arguments: dict[str, object]) -> str:
-        del arguments
-        note = engine.get_regime_summary()
-        return note.body_markdown
 
-    def get_calendar(arguments: dict[str, object]) -> str:
-        del arguments
-        items = engine.get_calendar(limit=5)
-        if not items:
-            return "No upcoming calendar events."
-        return "\n".join(
-            f"- {item.indicator} ({item.country}) | "
-            f"预期 {item.expected or '待定'} | 前值 {item.previous or '未知'} | {item.notes}"
-            for item in items
-        )
+def _render_engine_calendar(engine: OpenRouterAnalystEngine | Any) -> str:
+    items = engine.get_calendar(limit=5)
+    if not items:
+        return "No upcoming calendar events."
+    return "\n".join(
+        f"- {item.indicator} ({item.country}) | "
+        f"预期 {item.expected or '待定'} | 前值 {item.previous or '未知'} | {item.notes}"
+        for item in items
+    )
 
-    def get_premarket(arguments: dict[str, object]) -> str:
-        del arguments
-        note = engine.build_premarket_briefing()
-        return note.body_markdown
 
+def _build_declared_surface(spec: CapabilitySurfaceSpec, context: CapabilityBuildContext) -> list[AgentTool]:
     kit = ToolKit()
-    kit.add(build_web_search_tool())
-    kit.add(build_web_fetch_tool())
-    kit.add(build_image_gen_tool())
-    live_photo_tool = build_optional_live_photo_tool()
-    if live_photo_tool is not None:
-        kit.add(live_photo_tool)
-    kit.add(
-        AgentTool(
-            name="get_regime_summary",
-            description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_regime,
-        )
-    )
-    kit.add(
-        AgentTool(
-            name="get_calendar",
-            description="Fetch upcoming economic data releases from local cache. For live/real-time calendar data, prefer fetch_live_calendar instead.",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_calendar,
-        )
-    )
-    kit.add(
-        AgentTool(
-            name="get_premarket_briefing",
-            description="Fetch the pre-market briefing including overnight highlights and today's key data.",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_premarket,
-        )
-    )
-    kit.add(build_live_news_tool())
-    kit.add(build_article_tool())
-    kit.add(build_live_markets_tool())
-    kit.add(build_country_indicators_tool())
-    kit.add(build_reference_rates_tool())
-    kit.add(build_rate_expectations_tool())
+    for builder in spec.static_tool_builders:
+        tool = builder()
+        if tool is not None:
+            kit.add(tool)
+    for builder in spec.optional_tool_builders:
+        tool = builder()
+        if tool is not None:
+            kit.add(tool)
+    if context.engine is not None:
+        for tool_spec in spec.engine_tool_specs:
+            kit.add(
+                AgentTool(
+                    name=tool_spec.name,
+                    description=tool_spec.description,
+                    parameters=tool_spec.parameters,
+                    handler=tool_spec.handler_factory(context.engine),
+                )
+            )
     if context.store is not None:
-        kit.add(build_live_calendar_tool(context.store))
-        kit.add(build_portfolio_risk_tool(context.store))
-        kit.add(build_portfolio_holdings_tool(context.store))
-        kit.add(build_portfolio_sync_tool(context.store))
-        kit.add(build_stored_news_tool(context.store))
-        kit.add(build_fed_comms_tool(context.store))
-        kit.add(build_indicator_history_tool(context.store))
-        kit.add(build_research_search_tool(context.store))
-    kit.add(build_vix_regime_tool())
-    if context.provider is not None:
-        from analyst.engine.sub_agent_specs import build_user_sub_agents
-
-        for sa_tool in build_user_sub_agents(kit.to_list(), context.provider, context.store):
+        for builder in spec.store_tool_builders:
+            tool = builder(context.store)
+            if tool is not None:
+                kit.add(tool)
+    if spec.append_sub_agents is not None:
+        for sa_tool in spec.append_sub_agents(kit.to_list(), context):
             kit.add(sa_tool)
     return kit.to_list()
 
@@ -226,7 +258,7 @@ CAPABILITY_MATRIX: dict[str, CapabilitySurfaceSpec] = {
         surface_id="companion",
         native_tool_names=CLAUDE_CODE_NATIVE_TOOL_NAMES,
         shared_mcp_tool_names=COMPANION_SHARED_MCP_TOOL_NAMES,
-        sub_agent_names=("research_agent",),
+        sub_agent_names=COMPANION_SUB_AGENT_NAMES,
         build_tools=_build_companion_capabilities,
     ),
     "user_chat": CapabilitySurfaceSpec(
@@ -234,7 +266,11 @@ CAPABILITY_MATRIX: dict[str, CapabilitySurfaceSpec] = {
         native_tool_names=CLAUDE_CODE_NATIVE_TOOL_NAMES,
         shared_mcp_tool_names=USER_CHAT_SHARED_MCP_TOOL_NAMES,
         sub_agent_names=tuple(USER_SUB_AGENT_PARENT_TOOL_NAMES),
-        build_tools=_build_user_chat_capabilities,
+        static_tool_builders=USER_CHAT_STATIC_TOOL_BUILDERS,
+        optional_tool_builders=USER_CHAT_OPTIONAL_TOOL_BUILDERS,
+        store_tool_builders=USER_CHAT_STORE_TOOL_BUILDERS,
+        engine_tool_specs=USER_CHAT_ENGINE_TOOL_SPECS,
+        append_sub_agents=_append_user_chat_sub_agents,
     ),
     "content_runtime": CapabilitySurfaceSpec(
         surface_id="content_runtime",
@@ -260,7 +296,13 @@ def build_capability_tools(
     provider: LLMProvider | None = None,
 ) -> list[AgentTool]:
     context = CapabilityBuildContext(engine=engine, store=store, provider=provider)
-    return get_capability_surface(surface_id).build_tools(context)
+    spec = get_capability_surface(surface_id)
+    if spec.build_tools is not None:
+        tools = spec.build_tools(context)
+    else:
+        tools = _build_declared_surface(spec, context)
+    _validate_surface_sub_agents(spec, tools, provider=provider)
+    return tools
 
 
 def build_content_runtime_tools(
@@ -269,3 +311,26 @@ def build_content_runtime_tools(
     store: SQLiteEngineStore | None = None,
 ) -> list[AgentTool]:
     return build_capability_tools("content_runtime", provider=provider, store=store)
+
+
+def _validate_surface_sub_agents(
+    spec: CapabilitySurfaceSpec,
+    tools: list[AgentTool],
+    *,
+    provider: LLMProvider | None,
+) -> None:
+    if provider is None or not spec.sub_agent_names:
+        return
+    tool_names = {
+        name
+        for tool in tools
+        for name in (getattr(tool, "name", ""),)
+        if isinstance(name, str) and name.strip()
+    }
+    if not tool_names:
+        return
+    missing = [name for name in spec.sub_agent_names if name not in tool_names]
+    if missing:
+        raise RuntimeError(
+            f"Capability surface {spec.surface_id} declared missing sub-agents: {', '.join(missing)}"
+        )

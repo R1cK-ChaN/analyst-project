@@ -33,7 +33,7 @@ from analyst.information import AnalystInformationService, FileBackedInformation
 
 from .capabilities import (
     CLAUDE_CODE_NATIVE_TOOL_NAMES,
-    COMPANION_SHARED_MCP_TOOL_NAMES as USER_SHARED_MCP_TOOL_NAMES,
+    COMPANION_SHARED_MCP_TOOL_NAMES,
     USER_CHAT_SHARED_MCP_TOOL_NAMES,
     build_capability_tools,
     build_content_runtime_tools,
@@ -53,6 +53,8 @@ USER_MODEL_KEYS = (
     "LLM_MODEL",
 )
 USER_DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
+# Backward-compatible alias retained for existing imports; companion is the actual surface name.
+USER_SHARED_MCP_TOOL_NAMES = COMPANION_SHARED_MCP_TOOL_NAMES
 class ChatPersonaMode(str, Enum):
     COMPANION = "companion"
 
