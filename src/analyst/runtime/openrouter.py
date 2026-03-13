@@ -4,7 +4,8 @@ from dataclasses import dataclass
 
 from analyst.engine import AgentRunRequest, build_agent_executor
 from analyst.engine.agent_loop import AgentLoopConfig
-from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider, build_llm_provider_from_env
+from analyst.engine.backends.factory import build_llm_provider_from_env
+from analyst.engine.backends.openrouter import OpenRouterConfig, OpenRouterProvider
 from analyst.engine.live_types import AgentTool, LLMProvider
 
 from .prompts import get_prompt_profile

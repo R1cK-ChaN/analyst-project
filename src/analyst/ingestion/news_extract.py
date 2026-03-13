@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 
-from analyst.engine.live_provider import build_llm_provider_from_env
+from analyst.engine.backends.factory import build_llm_provider_from_env
 from analyst.engine.live_types import ConversationMessage
 from analyst.ingestion.news_classify import classify
 

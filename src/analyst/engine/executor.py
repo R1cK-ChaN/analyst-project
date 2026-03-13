@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .agent_loop import AgentLoopConfig, PythonAgentLoop
-from .live_provider import ClaudeCodeProvider, build_llm_provider_from_env
+from .backends import ClaudeCodeProvider, build_llm_provider_from_env
 from .live_types import (
     AgentLoopResult,
     AgentTool,

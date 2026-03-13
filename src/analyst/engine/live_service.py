@@ -35,7 +35,7 @@ from analyst.tools import (
 
 from .agent_loop import AgentLoopConfig, PythonAgentLoop
 from .live_prompts import SYSTEM_PROMPT, briefing_prompt, flash_prompt, regime_prompt, wrap_prompt
-from .live_provider import build_llm_provider_from_env
+from .backends import build_llm_provider_from_env
 from .live_types import AgentTool, LLMProvider
 
 

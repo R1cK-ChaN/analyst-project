@@ -44,7 +44,7 @@ if str(_PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 from analyst.engine import AgentExecutor  # noqa: E402
-from analyst.engine.live_provider import OpenRouterConfig  # noqa: E402
+from analyst.engine.backends.openrouter import OpenRouterConfig  # noqa: E402
 from analyst.engine.live_types import AgentTool  # noqa: E402
 from analyst.contracts import utc_now  # noqa: E402
 from analyst.env import get_env_value  # noqa: E402
@@ -106,7 +106,7 @@ from .companion_reminders import (  # noqa: E402
 from .companion_schedule import (  # noqa: E402
     apply_companion_schedule_update,
 )
-from .user_chat import (  # noqa: E402
+from analyst.runtime.chat import (  # noqa: E402
     UserChatReply,
     build_companion_services,
     generate_chat_reply,

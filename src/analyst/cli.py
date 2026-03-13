@@ -16,8 +16,8 @@ from analyst.delivery.companion_schedule import (
     build_companion_schedule_context,
 )
 from analyst.delivery.companion_reminders import apply_companion_reminder_update
-from analyst.delivery.user_chat import build_companion_services, generate_chat_reply, split_into_bubbles
 from analyst.memory import build_chat_context, record_chat_interaction
+from analyst.runtime.chat import build_companion_services, generate_chat_reply, split_into_bubbles
 from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
 from analyst.tools import build_image_gen_tool, build_live_photo_tool
 from analyst.tools._image_gen import GeneratedImage, ImageGenConfig, SeedreamImageClient
