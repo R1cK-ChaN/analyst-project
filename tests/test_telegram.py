@@ -11,6 +11,8 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
+import runpy
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -34,6 +36,7 @@ from analyst.contracts import (
 from analyst.delivery.telegram import MAX_TELEGRAM_MESSAGE_LENGTH, TelegramFormatter, _truncate_body
 from analyst.engine import AnalystEngine
 from analyst.engine.live_types import AgentLoopResult, AgentTool, ConversationMessage
+from analyst.env import clear_env_cache
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.integration import AnalystIntegrationService, detect_mode
 from analyst.runtime import TemplateAgentRuntime
@@ -242,6 +245,17 @@ class TestBuildApplication(unittest.TestCase):
             command_names,
             [{"start"}, {"help"}, {"checkins_on"}, {"checkins_off"}],
         )
+
+    def test_module_entrypoint_invokes_main(self) -> None:
+        with patch("analyst.env.DEFAULT_ENV_FILES", ()):
+            with patch.dict("os.environ", {}, clear=False):
+                os.environ.pop("ANALYST_TELEGRAM_TOKEN", None)
+                clear_env_cache()
+                with self.assertLogs(level="ERROR") as logs:
+                    with self.assertRaises(SystemExit) as cm:
+                        runpy.run_module("analyst.delivery.bot", run_name="__main__")
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("ANALYST_TELEGRAM_TOKEN environment variable is not set", "\n".join(logs.output))
 
 
 class TestChatPersonaRouting(unittest.TestCase):
