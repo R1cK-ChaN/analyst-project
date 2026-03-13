@@ -113,6 +113,11 @@ from analyst.runtime.chat import (  # noqa: E402
     generate_proactive_companion_reply,
     split_into_bubbles,
 )
+from analyst.runtime.conversation_service import (  # noqa: E402
+    persist_companion_turn,
+    run_companion_turn,
+    run_proactive_companion_turn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +209,6 @@ async def _send_companion_proactive_message(
     chat_id = _telegram_chat_id_from_channel(state.channel)
     if chat_id is None:
         return
-    profile = store.get_client_profile(state.client_id)
     lifestyle_state = _refresh_companion_lifestyle_state(
         store,
         client_id=state.client_id,
@@ -212,22 +216,17 @@ async def _send_companion_proactive_message(
         thread_id=state.thread_id,
         now=now,
     )
-    memory_context = build_chat_context(
+    reply = await asyncio.to_thread(
+        run_proactive_companion_turn,
+        kind=kind,
         store=store,
         client_id=state.client_id,
         channel_id=state.channel,
         thread_id=state.thread_id,
-        query="",
-        current_user_text="",
-        persona_mode="companion",
-    )
-    reply = await asyncio.to_thread(
-        generate_proactive_companion_reply,
-        kind=kind,
         agent_loop=agent_loop,
-        memory_context=memory_context,
-        preferred_language=profile.preferred_language,
         companion_local_context=_companion_local_context(store, lifestyle_state, now),
+        memory_context_builder=build_chat_context,
+        proactive_reply_generator=generate_proactive_companion_reply,
     )
     apply_companion_schedule_update(
         store,
@@ -429,6 +428,10 @@ async def _chat_reply(
     context: ContextTypes.DEFAULT_TYPE,
     agent_loop: AgentExecutor,
     tools: list[AgentTool],
+    store: SQLiteEngineStore | None = None,
+    client_id: str = "",
+    channel_id: str = "",
+    group_id: str = "",
     memory_context: str = "",
     preferred_language: str = "",
     group_context: str = "",
@@ -445,19 +448,42 @@ async def _chat_reply(
     history = _get_history(context, is_group=is_group, thread_id=thread_id)
 
     try:
-        with bind_request_image(attached_image):
+        if store is not None and client_id and channel_id:
             result = await asyncio.to_thread(
-                generate_chat_reply,
-                user_text,
+                run_companion_turn,
+                user_text=user_text,
                 history=history,
                 agent_loop=agent_loop,
                 tools=tools,
-                memory_context=memory_context,
-                preferred_language=preferred_language,
+                store=store,
+                client_id=client_id,
+                channel_id=channel_id,
+                thread_id=thread_id,
+                query=user_text,
+                current_user_text=history_text or user_text,
                 group_context=group_context,
+                group_id=group_id if is_group else "",
                 user_content=user_content,
                 companion_local_context=companion_local_context,
+                attached_image=attached_image,
+                memory_context_builder=build_chat_context,
+                group_memory_context_builder=build_group_chat_context,
+                reply_generator=generate_chat_reply,
             )
+        else:
+            with bind_request_image(attached_image):
+                result = await asyncio.to_thread(
+                    generate_chat_reply,
+                    user_text,
+                    history=history,
+                    agent_loop=agent_loop,
+                    tools=tools,
+                    memory_context=memory_context,
+                    preferred_language=preferred_language,
+                    group_context=group_context,
+                    user_content=user_content,
+                    companion_local_context=companion_local_context,
+                )
         response_text = result.text
         profile_update = result.profile_update
         media = result.media
@@ -726,33 +752,15 @@ def _make_message_handler(
 
         await update.effective_chat.send_action(ChatAction.TYPING)
         reply_started = asyncio.get_running_loop().time()
-        if in_group and group_id:
-            # Three-layer context: group messages + speaker memory + participant model
-            memory_context = build_group_chat_context(
-                store=store,
-                group_id=group_id,
-                thread_id=thread_id,
-                speaker_user_id=user_id,
-                persona_mode="companion",
-            )
-        else:
-            memory_context = build_chat_context(
-                store=store,
-                client_id=user_id,
-                channel_id=channel_id,
-                thread_id=thread_id,
-                query=llm_text,
-                current_user_text=history_user_text,
-                persona_mode="companion",
-            )
-        profile = store.get_client_profile(user_id)
         reply = await _chat_reply(
             llm_text,
             context,
             agent_loop,
             tools,
-            memory_context=memory_context,
-            preferred_language=profile.preferred_language,
+            store=store,
+            client_id=user_id,
+            channel_id=channel_id,
+            group_id=group_id,
             group_context=group_context_str,
             is_group=in_group,
             thread_id=thread_id,
@@ -769,33 +777,20 @@ def _make_message_handler(
             history = _get_history(context, is_group=in_group, thread_id=thread_id)
             if history and history[-1]["role"] == "assistant":
                 history[-1]["content"] = rendered_reply_text
-        apply_companion_schedule_update(
-            store,
-            reply.schedule_update,
-            now=now_utc,
-            routine_state=str(getattr(companion_lifestyle_state, "routine_state", "") or ""),
-            user_text=history_user_text,
-        )
-        if not in_group:
-            apply_companion_reminder_update(
-                store,
-                reply.reminder_update,
-                client_id=user_id,
-                channel_id=channel_id,
-                thread_id=thread_id,
-                now=now_utc,
-                preferred_language=profile.preferred_language,
-            )
-        record_chat_interaction(
+        persist_companion_turn(
             store=store,
             client_id=user_id,
             channel_id=channel_id,
             thread_id=thread_id,
             user_text=history_user_text,
             assistant_text=rendered_reply_text,
-            assistant_profile_update=reply.profile_update,
-            tool_audit=reply.tool_audit,
-            persona_mode="companion",
+            reply=reply,
+            now=now_utc,
+            routine_state=str(getattr(companion_lifestyle_state, "routine_state", "") or ""),
+            apply_reminders=not in_group,
+            schedule_updater=apply_companion_schedule_update,
+            reminder_updater=apply_companion_reminder_update,
+            interaction_recorder=record_chat_interaction,
         )
         updated_profile = store.get_client_profile(user_id)
         if not in_group:

@@ -18,6 +18,7 @@ from analyst.delivery.companion_schedule import (
 from analyst.delivery.companion_reminders import apply_companion_reminder_update
 from analyst.memory import build_chat_context, record_chat_interaction
 from analyst.runtime.chat import build_companion_services, generate_chat_reply, split_into_bubbles
+from analyst.runtime.conversation_service import persist_companion_turn, run_companion_turn
 from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
 from analyst.tools import build_image_gen_tool, build_live_photo_tool
 from analyst.tools._image_gen import GeneratedImage, ImageGenConfig, SeedreamImageClient
@@ -466,47 +467,35 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
     history: list[dict[str, str]] = []
 
     def handle_turn(user_text: str) -> None:
-        memory_context = build_chat_context(
+        reply = run_companion_turn(
+            user_text=user_text,
+            history=history,
+            agent_loop=agent_loop,
+            tools=tools,
             store=store,
             client_id=args.client_id,
             channel_id=args.channel_id,
             thread_id=args.thread_id,
             query=user_text,
             current_user_text=user_text,
-            persona_mode="companion",
-        )
-        profile = store.get_client_profile(args.client_id)
-        reply = generate_chat_reply(
-            user_text,
-            history=history,
-            agent_loop=agent_loop,
-            tools=tools,
-            memory_context=memory_context,
-            preferred_language=profile.preferred_language,
             companion_local_context=build_companion_schedule_context(store),
+            memory_context_builder=build_chat_context,
+            reply_generator=generate_chat_reply,
         )
-        apply_companion_schedule_update(store, reply.schedule_update, user_text=user_text)
-        apply_companion_reminder_update(
-            store,
-            reply.reminder_update,
-            client_id=args.client_id,
-            channel_id=args.channel_id,
-            thread_id=args.thread_id,
-            preferred_language=profile.preferred_language,
-        )
-        history.append({"role": "user", "content": user_text})
-        history.append({"role": "assistant", "content": reply.text})
-        record_chat_interaction(
+        persist_companion_turn(
             store=store,
             client_id=args.client_id,
             channel_id=args.channel_id,
             thread_id=args.thread_id,
             user_text=user_text,
             assistant_text=reply.text,
-            assistant_profile_update=reply.profile_update,
-            tool_audit=reply.tool_audit,
-            persona_mode="companion",
+            reply=reply,
+            schedule_updater=apply_companion_schedule_update,
+            reminder_updater=apply_companion_reminder_update,
+            interaction_recorder=record_chat_interaction,
         )
+        history.append({"role": "user", "content": user_text})
+        history.append({"role": "assistant", "content": reply.text})
         bubbles = split_into_bubbles(reply.text)
         for bubble in bubbles:
             print(f"\nassistant> {bubble}")
