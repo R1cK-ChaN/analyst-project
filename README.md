@@ -11,13 +11,13 @@ Current status on March 13, 2026:
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
 - the memory layer records all chat messages and extracts 17 client profile dimensions that accumulate across conversations, including emotional trend tracking, stress level monitoring, and personal facts memory (up to 20 facts with recency-refresh dedup)
 - a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 13 tool builders (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation); both LiveAnalystEngine and the user chat agent assemble from it, and a shared MCP bridge now exposes a safe read-only subset of analyst-owned tools to Claude Code native turns
-- the execution layer is now split between product-owned host-loop orchestration and provider-native execution: OpenRouter/Anthropic models run through the Python tool-calling loop, while Claude Code can run as a native agent and still access selected analyst tools via the local MCP bridge; chat orchestration now lives under `src/analyst/runtime/chat.py`, backend imports are fronted through `src/analyst/engine/backends/`, and `src/analyst/delivery/user_chat.py` remains as a compatibility facade for legacy callers
+- the execution layer is now split between product-owned host-loop orchestration and provider-native execution: OpenRouter/Anthropic models run through the Python tool-calling loop, while Claude Code can run as a native agent and still access selected analyst tools via the local MCP bridge; the layered conversation stack now lives under `src/analyst/runtime/` (`chat.py`, `conversation_service.py`, `environment_adapter.py`, `platform/telegram.py`, and `capabilities.py`), backend imports are fronted through `src/analyst/engine/backends/`, and `src/analyst/delivery/user_chat.py` remains as a compatibility facade for legacy callers
 - a round sub-agent layer is implemented for research, sales, and runtime-assisted content generation, with scoped memory, recursion prevention, and SQLite audit logging of each run
 - the portfolio package supports CSV import and live broker sync via an extensible adapter layer (IBKR, Longbridge 长桥, Tiger 老虎), with EWMA risk pipeline, VIX regime signals, and agent-actionable tools
 - the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention), full tool access, time-of-day awareness, absence awareness, typing simulation between multi-bubble messages, inbound user-image understanding, static image generation via Volcengine Seedream with photo delivery and AI watermark disabled by default, optional motion-selfie/live-photo generation via Seedance with Telegram video delivery, and an env-gated Claude Code native-agent path that can use built-in web tools plus shared analyst MCP tools
 - the standalone HTTP communication path between `analyst-project` and `macro-data-service` is covered by an end-to-end integration test
 - the oversized production modules in storage, delivery, and ingestion have been reconstructed into feature-specific modules behind compatibility facades, so external imports and entrypoints remain stable while the implementation is split by responsibility
-- targeted regression coverage for the refactor passed locally (`221 passed` across OECD, gov reports, Telegram, memory, companion check-ins, and news ingestion), the decoupling follow-up suites passed locally (`241 passed` across chat runtime, Telegram, CLI, news ingestion, WS1 engine, and Claude Code integration paths), and the live scraper integration suite in `tests/test_scrapers.py -m live -v` passed against real endpoints on March 13, 2026
+- targeted regression coverage for the refactor passed locally (`221 passed` across OECD, gov reports, Telegram, memory, companion check-ins, and news ingestion), the architecture follow-up suites for the layered runtime and capability registry passed locally (environment adapter, conversation service, Telegram platform policy, and declarative capability registry), and the live scraper integration suite in `tests/test_scrapers.py -m live -v` passed against real endpoints on March 13, 2026
 - China-specific ingestion, live end-to-end provider verification, and WeCom delivery are still pending
 
 ## What's Inside
@@ -80,7 +80,7 @@ analyst-project/
 │   ├── env.py                      Multi-file .env resolver
 │   ├── macro_data/                 Macro-data client boundary + local compatibility service
 │   ├── information/                Local information layer using bundled demo data
-│   ├── runtime/                    Runtime and prompt profiles, including chat orchestration in `runtime/chat.py`
+│   ├── runtime/                    Runtime and prompt profiles, including chat orchestration, environment adapters, platform policy, and capability registry
 │   ├── tools/                      13 agent tools — ToolKit builder + live data scrapers + web search/fetch + calendar + portfolio sync + image gen + live photo
 │   ├── mcp/                        Local MCP bridge exposing selected analyst-owned tools to Claude Code
 │   ├── engine/                     Engine service boundary + live engine + executor layer + host loop + provider adapters, with backend namespace in `engine/backends/`
@@ -238,7 +238,7 @@ This validates the current standalone implementation:
 - portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime signals, agent-actionable tools
 - WeCom and Telegram formatters
 - Telegram agent bot with persona (陈襄), group chat support, 13 host-loop tools, inbound image reading from user photos/image documents, Seedream image generation with AI watermark disabled by default and photo delivery, Seedance motion-selfie delivery as Telegram video, and Claude Code native-agent support behind `ANALYST_CLAUDE_CODE_USE_NATIVE_AGENT=1`
-- user chat runtime with client profile tracking and conversation recording, now centered in `src/analyst/runtime/chat.py` with a legacy `delivery/user_chat.py` facade
+- user chat runtime with client profile tracking and conversation recording, now layered across `src/analyst/runtime/chat.py`, `conversation_service.py`, `environment_adapter.py`, `platform/telegram.py`, and `capabilities.py`, with a legacy `delivery/user_chat.py` facade
 - integration router
 
 ## Source Of Truth

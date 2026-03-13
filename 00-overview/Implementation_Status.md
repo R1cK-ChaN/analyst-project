@@ -116,6 +116,12 @@ Implemented in `src/analyst/engine/`:
 - **LLM/backends namespace** (`engine/backends/`): import-stable backend entrypoints for OpenRouter/Anthropic chat completions and the Claude Code CLI adapter
   - `live_provider.py` remains as the compatibility implementation module while new internal imports target `engine/backends/`
   - Claude Code now supports both host-loop-compatible `complete()` calls and native-agent `complete_native()` calls
+- **runtime stack** (`runtime/`): layered conversation runtime and platform adapters
+  - `chat.py`: prompt assembly, execution planning, reply post-processing, and public chat/runtime helpers
+  - `conversation_service.py`: one-turn orchestration for context hydration, runtime invocation, and persistence
+  - `environment_adapter.py`: normalized `ConversationInput` / `ProactiveConversationInput` contracts plus CLI/Telegram builders
+  - `platform/telegram.py`: Telegram-specific turn preparation, persistence policy, and proactive scheduling rules
+  - `capabilities.py`: declarative capability registry for host tools, native tool sets, MCP scopes, and sub-agent tool matrices
 - **prompts** (`live_prompts.py`): Chinese-language institutional macro analyst system/user prompts
 - **type contracts** (`live_types.py`): Protocol-based `LLMProvider`, `AgentTool`, conversation types
 - live flash commentary (数据快评), morning briefing (早盘速递), after-market wrap (收盘点评)
@@ -319,6 +325,10 @@ Implemented in `src/analyst/delivery/`:
   - structured sales-memory persistence after each free-text interaction via `record_user_interaction()`
   - 17 client profile dimensions extracted and accumulated across conversations (including emotional trend, stress level, and personal facts)
 - chat runtime (`runtime/chat.py`): standalone chat execution layer with tool wiring, client profile management, conversation history, time injection, role-specific shared MCP tool lists, capability overlays, turn-execution planning, and media extraction from tool results
+- conversation service (`runtime/conversation_service.py`): shared one-turn orchestration for context building, reply generation, and persistence
+- environment adapters (`runtime/environment_adapter.py`): normalized conversation input contracts for CLI, Telegram, and proactive turns
+- Telegram platform policy (`runtime/platform/telegram.py`): Telegram-specific turn preparation, persistence policy, and proactive-checkin rules separated from `delivery/bot.py`
+- capability registry (`runtime/capabilities.py`): declarative registry for companion/user-chat/content-runtime surfaces, MCP scopes, native tool names, and sub-agent tool assignments
 - compatibility facade (`delivery/user_chat.py`): legacy import surface that now forwards to `runtime/chat.py` while preserving existing callers and tests
 - compliance disclaimers (formatter layer, kept for other consumers)
 - calendar reply formatting
@@ -467,6 +477,10 @@ Done:
 - host-loop tools for live data access depending on Seedance configuration: `fetch_live_calendar`, `get_live_article`, `get_live_markets`, `get_live_news`, `get_live_indicators`, `get_live_rates`, `get_live_rate_expectations`, `web_search`, `web_fetch`, `sync_portfolio_from_broker`, `generate_image`, optional `generate_live_photo`, plus regime/calendar/briefing tools
 - Claude Code native-agent mode can additionally use built-in web tools plus shared analyst MCP tools when `ANALYST_CLAUDE_CODE_USE_NATIVE_AGENT=1`
 - chat runtime (`runtime/chat.py`): standalone execution layer with `build_user_chat_tools()` factory, client profile management, conversation history, capability overlays, turn-execution planning, and media extraction from tool results
+- conversation service (`runtime/conversation_service.py`): shared one-turn lifecycle so CLI and Telegram both route through the same runtime contract
+- environment adapters (`runtime/environment_adapter.py`): `ConversationInput` / `ProactiveConversationInput` contracts for transport normalization
+- Telegram platform policy (`runtime/platform/telegram.py`): Telegram-specific turn preparation, reminder/check-in policy, and persistence helpers
+- capability registry (`runtime/capabilities.py`): declarative companion/user-chat/content-runtime capability matrix consumed by `runtime/chat.py` and `engine/sub_agent_specs.py`
 - compatibility facade (`delivery/user_chat.py`): legacy import path retained while delivery and CLI call the runtime layer directly
 - per-user conversation history (12 recent messages retrieved for continuity)
 - command handlers: `/start`, `/help`, `/regime`, `/calendar`, `/premarket`
