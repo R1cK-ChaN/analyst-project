@@ -20,6 +20,40 @@ COMPANION_SCHEDULE_FLOW_FIELDS = (
     "current_plan",
     "next_plan",
 )
+_USER_DIRECTED_SCHEDULE_PATTERNS = (
+    "meet",
+    "meeting up",
+    "catch up",
+    "hang out",
+    "come over",
+    "see you",
+    "see me",
+    "pick me up",
+    "pick you up",
+    "change your",
+    "reschedule your",
+    "let's meet",
+    "lets meet",
+    "见面",
+    "碰头",
+    "约饭",
+    "约一下",
+    "线下",
+    "来找我",
+    "接我",
+    "接你",
+    "陪我",
+    "改成",
+    "改吃",
+    "改一下你的",
+)
+_USER_REMINDER_PATTERNS = (
+    "remind me",
+    "set a reminder",
+    "提醒我",
+    "记得提醒我",
+    "到时候叫我",
+)
 
 
 def companion_schedule_local_now(now: datetime | None = None) -> datetime:
@@ -31,6 +65,13 @@ def companion_schedule_local_now(now: datetime | None = None) -> datetime:
 
 def companion_schedule_date(now: datetime | None = None) -> str:
     return companion_schedule_local_now(now).date().isoformat()
+
+
+def _user_controls_companion_schedule(user_text: str) -> bool:
+    lowered = str(user_text or "").casefold()
+    if not lowered:
+        return False
+    return any(token in lowered for token in (*_USER_DIRECTED_SCHEDULE_PATTERNS, *_USER_REMINDER_PATTERNS))
 
 
 def ensure_companion_daily_schedule(
@@ -83,6 +124,7 @@ def apply_companion_schedule_update(
     *,
     now: datetime | None = None,
     routine_state: str = "",
+    user_text: str = "",
 ) -> CompanionDailyScheduleRecord:
     local_now = companion_schedule_local_now(now)
     schedule = ensure_companion_daily_schedule(
@@ -91,6 +133,8 @@ def apply_companion_schedule_update(
         routine_state=routine_state,
     )
     if not update.has_changes():
+        return schedule
+    if _user_controls_companion_schedule(user_text):
         return schedule
 
     updates: dict[str, str] = {}

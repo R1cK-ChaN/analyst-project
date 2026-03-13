@@ -51,6 +51,7 @@ from .sqlite_records import (
     CompanionCheckInStateRecord,
     CompanionLifestyleStateRecord,
     CompanionDailyScheduleRecord,
+    CompanionReminderRecord,
     ConversationMessageRecord,
     DeliveryQueueRecord,
     GroupProfileRecord,
@@ -451,6 +452,130 @@ class SQLiteMemoryMixin:
                 revision_note=revision_note,
                 last_explicit_update_at=last_explicit_update_at,
             )
+
+    def create_companion_reminder(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        reminder_text: str,
+        due_at: str,
+        timezone_name: str = "Asia/Singapore",
+        metadata: dict[str, Any] | None = None,
+    ) -> CompanionReminderRecord:
+        created_at = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            self._ensure_conversation_thread_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                timestamp=created_at,
+            )
+            cursor = connection.execute(
+                """
+                INSERT INTO companion_reminders (
+                    client_id,
+                    channel,
+                    thread_id,
+                    reminder_text,
+                    due_at,
+                    timezone_name,
+                    status,
+                    sent_at,
+                    metadata_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', '', ?, ?)
+                """,
+                (
+                    client_id,
+                    channel,
+                    thread_id,
+                    reminder_text,
+                    due_at,
+                    timezone_name,
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+                    created_at,
+                ),
+            )
+            reminder_id = int(cursor.lastrowid)
+        return CompanionReminderRecord(
+            reminder_id=reminder_id,
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+            reminder_text=reminder_text,
+            due_at=due_at,
+            timezone_name=timezone_name,
+            status="pending",
+            created_at=created_at,
+            sent_at="",
+            metadata=metadata or {},
+        )
+
+    def list_due_companion_reminders(
+        self,
+        *,
+        now_iso: str,
+        limit: int = 20,
+    ) -> list[CompanionReminderRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM companion_reminders
+                WHERE status = 'pending'
+                  AND due_at <= ?
+                ORDER BY due_at ASC, id ASC
+                LIMIT ?
+                """,
+                (now_iso, limit),
+            ).fetchall()
+        return [self._row_to_companion_reminder(row) for row in rows]
+
+    def mark_companion_reminder_sent(
+        self,
+        *,
+        reminder_id: int,
+        sent_at: str,
+    ) -> CompanionReminderRecord | None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                UPDATE companion_reminders
+                SET status = 'sent', sent_at = ?
+                WHERE id = ? AND status = 'pending'
+                """,
+                (sent_at, reminder_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM companion_reminders WHERE id = ? LIMIT 1",
+                (reminder_id,),
+            ).fetchone()
+        return self._row_to_companion_reminder(row) if row is not None else None
+
+    def list_companion_reminders(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        status: str = "",
+        limit: int = 20,
+    ) -> list[CompanionReminderRecord]:
+        query = """
+            SELECT * FROM companion_reminders
+            WHERE client_id = ? AND channel = ? AND thread_id = ?
+        """
+        params: list[Any] = [client_id, channel, thread_id]
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [self._row_to_companion_reminder(row) for row in rows]
 
     def get_last_user_message_at(
         self,
@@ -1106,6 +1231,24 @@ class SQLiteMemoryMixin:
             last_explicit_update_at=row["last_explicit_update_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+        )
+
+    def _row_to_companion_reminder(
+        self,
+        row: sqlite3.Row,
+    ) -> CompanionReminderRecord:
+        return CompanionReminderRecord(
+            reminder_id=int(row["id"]),
+            client_id=row["client_id"],
+            channel=row["channel"],
+            thread_id=row["thread_id"],
+            reminder_text=row["reminder_text"],
+            due_at=row["due_at"],
+            timezone_name=row["timezone_name"],
+            status=row["status"],
+            created_at=row["created_at"],
+            sent_at=row["sent_at"],
+            metadata=json.loads(row["metadata_json"]),
         )
 
     def _get_companion_lifestyle_state_in_connection(

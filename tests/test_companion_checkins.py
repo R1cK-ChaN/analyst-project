@@ -165,6 +165,37 @@ class CompanionCheckInStoreTest(unittest.TestCase):
 
 
 class CompanionCheckInJobTest(unittest.IsolatedAsyncioTestCase):
+    async def test_job_sends_due_user_reminder_even_without_checkins(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "test.db")
+            store.create_companion_reminder(
+                client_id="u1",
+                channel="telegram:123",
+                thread_id="main",
+                reminder_text="drink water",
+                due_at=utc_now().isoformat(),
+                metadata={"preferred_language": "en"},
+            )
+            context = SimpleNamespace(
+                job=SimpleNamespace(data={"store": store, "agent_loop": MagicMock()}),
+                bot=MagicMock(),
+            )
+
+            with patch("analyst.delivery.bot._send_bot_bubbles", new=AsyncMock()) as send_mock:
+                await _run_companion_checkins_job(context)
+
+            reminders = store.list_companion_reminders(
+                client_id="u1",
+                channel="telegram:123",
+                thread_id="main",
+                limit=5,
+            )
+            self.assertEqual(reminders[0].status, "sent")
+            self.assertTrue(reminders[0].sent_at)
+            send_mock.assert_awaited_once()
+            deliveries = store.list_recent_deliveries(client_id="u1", channel="telegram:123", thread_id="main", limit=1)
+            self.assertEqual(deliveries[0].source_type, "companion_reminder")
+
     async def test_job_sends_due_checkin_and_marks_state_sent(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             store = SQLiteEngineStore(db_path=Path(td) / "test.db")

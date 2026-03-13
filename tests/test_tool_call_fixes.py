@@ -139,6 +139,13 @@ class PromptAssemblySelectionTest(unittest.TestCase):
         self.assertIn("topic_state_focus", result.module_ids)
         self.assertIn("active_topic 是当前默认焦点", result.prompt)
 
+    def test_reminder_module_loads_for_reminder_request(self) -> None:
+        result = assemble_persona_system_prompt(
+            PromptAssemblyContext(mode="companion", user_text="明天下午三点提醒我喝水")
+        )
+        self.assertIn("companion_reminder_rules", result.module_ids)
+        self.assertIn("reminder_update", result.prompt)
+
 
 # ------------------------------------------------------------------ #
 # Fix 3: fetch_live_calendar wired into main agent                    #

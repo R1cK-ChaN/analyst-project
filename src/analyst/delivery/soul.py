@@ -271,6 +271,7 @@ COMPANION_BOUNDARIES_MODULE = PromptModule(
 - 绝对不要主动聊金融、市场、投资、宏观、交易、行情，也不要把话题往盘面和工作上带。
 - 如果用户直接问市场，可以凭你的背景轻轻接一句，但必须克制、简短、非服务化；不要展开成行情解读、研究输出、交易建议或盘中陪看。
 - 涉及实时价格、新闻、具体交易动作时，不要装作在做市场服务；不要给明确指令或时效性判断。
+- 你不会和用户在线下真正见面。不要答应碰头、约饭、接送、去对方家里或办公室，也不要因为用户要求改自己的现实行程。
 - 不要装得太完美。允许一点疲惫、无聊、懒散、随手感，但不要戏精。
 """,
 )
@@ -314,17 +315,31 @@ COMPANION_PROACTIVE_MODULE = PromptModule(
 """,
 )
 
+COMPANION_REMINDER_MODULE = PromptModule(
+    module_id="companion_reminder_rules",
+    body="""\
+如果用户要你在某个具体时间提醒他做事：
+- 正常聊天确认，但不要改你的 own schedule。
+- 在结尾追加 <reminder_update>{...}</reminder_update>。
+- reminder_update 只可包含 reminder_text, due_at, timezone_name。
+- due_at 必须是带时区的完整 ISO datetime；相对时间按当前 Asia/Singapore 时间换算。
+""",
+)
+
 COMPANION_PROFILE_UPDATE_MODULE = PromptModule(
     module_id="companion_profile_update",
     body="""\
 最终回复格式：
 先给用户可见内容。最后可以另起一行追加：
+<reminder_update>{...}</reminder_update>
 <schedule_update>{...}</schedule_update>
 <profile_update>{...}</profile_update>
 
 规则：
+- 如果不是在帮用户设提醒，就不要输出 <reminder_update>。
+- reminder_update 用来提醒用户自己的事，不是改你的行程。
 - 如果今天自己的安排没有新信息或没有明确改动，就不要输出 <schedule_update>。
-- <schedule_update> 必须放在 <profile_update> 前面。
+- 如果 reminder_update 和 schedule_update 都有，顺序必须是 reminder_update → schedule_update → profile_update。
 - schedule_update 可用字段：revision_mode, morning_plan, lunch_plan, afternoon_plan, dinner_plan, evening_plan, current_plan, next_plan, revision_note
 - revision_mode 只能是 "set" 或 "revise"。
 - 已经存在的时段安排，只有在明确改计划时才用 "revise" 覆盖；否则保持原样。
@@ -365,6 +380,7 @@ MODE_MODULES: dict[str, dict[str, PromptModule]] = {
         COMPANION_SCHEDULE_CONSISTENCY_MODULE.module_id: COMPANION_SCHEDULE_CONSISTENCY_MODULE,
         COMPANION_EMOTIONAL_SUPPORT_MODULE.module_id: COMPANION_EMOTIONAL_SUPPORT_MODULE,
         COMPANION_PROACTIVE_MODULE.module_id: COMPANION_PROACTIVE_MODULE,
+        COMPANION_REMINDER_MODULE.module_id: COMPANION_REMINDER_MODULE,
         COMPANION_PROFILE_UPDATE_MODULE.module_id: COMPANION_PROFILE_UPDATE_MODULE,
     },
 }
@@ -523,6 +539,21 @@ def _user_text_needs_media_rules(user_text: str) -> bool:
     )
 
 
+def _user_text_needs_reminder_rules(user_text: str) -> bool:
+    lowered = user_text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "remind me",
+            "set a reminder",
+            "reminder",
+            "提醒我",
+            "记得提醒我",
+            "到时候叫我",
+        )
+    )
+
+
 def _optional_module_ids(context: PromptAssemblyContext) -> tuple[str, ...]:
     mode = resolve_prompt_mode(context.mode)
     module_ids: list[str] = []
@@ -541,6 +572,8 @@ def _optional_module_ids(context: PromptAssemblyContext) -> tuple[str, ...]:
         module_ids.append("companion_proactive")
     if mode == "companion" and context.companion_local_context:
         module_ids.append("companion_schedule_consistency")
+    if mode == "companion" and _user_text_needs_reminder_rules(context.user_text):
+        module_ids.append("companion_reminder_rules")
     if mode == "companion" and _user_text_needs_media_rules(context.user_text):
         module_ids.append("companion_media_rules")
     return _dedupe_module_ids(module_ids)

@@ -15,6 +15,7 @@ from analyst.delivery.companion_schedule import (
     companion_schedule_date,
 )
 from analyst.memory import (
+    extract_embedded_reminder_update,
     CompanionScheduleUpdate,
     extract_embedded_schedule_update,
     split_reply_and_profile_update,
@@ -37,6 +38,20 @@ class CompanionScheduleParsingTest(unittest.TestCase):
         self.assertEqual(profile_update.to_dict()["notes"], None)
         self.assertEqual(schedule_update.dinner_plan, "beef rice")
         self.assertEqual(schedule_update.normalized_revision_mode(), "set")
+
+    def test_reply_strips_reminder_update_and_parses_payload(self) -> None:
+        raw = (
+            "好，我到时候提醒你。"
+            "<reminder_update>{\"reminder_text\":\"drink water\",\"due_at\":\"2026-03-12T15:00:00+08:00\",\"timezone_name\":\"Asia/Singapore\"}</reminder_update>"
+            "<profile_update>{}</profile_update>"
+        )
+
+        visible, _ = split_reply_and_profile_update(raw)
+        reminder_update = extract_embedded_reminder_update(raw)
+
+        self.assertEqual(visible, "好，我到时候提醒你。")
+        self.assertEqual(reminder_update.reminder_text, "drink water")
+        self.assertEqual(reminder_update.due_at, "2026-03-12T15:00:00+08:00")
 
 
 class CompanionScheduleStoreTest(unittest.TestCase):
@@ -90,6 +105,36 @@ class CompanionScheduleStoreTest(unittest.TestCase):
                 schedule_date=companion_schedule_date(now),
             )
             self.assertEqual(same_day.lunch_plan, "roasted pork rice")
+
+    def test_user_meetup_request_does_not_change_companion_schedule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = SQLiteEngineStore(db_path=Path(tmpdir) / "engine.db")
+            now = datetime(2026, 3, 12, 4, 0, tzinfo=timezone.utc)
+
+            apply_companion_schedule_update(
+                store,
+                CompanionScheduleUpdate(
+                    revision_mode="set",
+                    lunch_plan="beef rice",
+                ),
+                now=now,
+                routine_state="lunch",
+            )
+
+            blocked = apply_companion_schedule_update(
+                store,
+                CompanionScheduleUpdate(
+                    revision_mode="revise",
+                    lunch_plan="sushi",
+                    current_plan="meeting user at lunch",
+                ),
+                now=now,
+                routine_state="lunch",
+                user_text="那我们明天中午见面吧，你改成寿司",
+            )
+
+            self.assertEqual(blocked.lunch_plan, "beef rice")
+            self.assertEqual(blocked.current_plan, "")
 
     def test_schedule_context_renders_existing_day_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

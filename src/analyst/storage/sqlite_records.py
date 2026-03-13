@@ -323,6 +323,20 @@ class CompanionDailyScheduleRecord:
     updated_at: str
 
 @dataclass(frozen=True)
+class CompanionReminderRecord:
+    reminder_id: int
+    client_id: str
+    channel: str
+    thread_id: str
+    reminder_text: str
+    due_at: str
+    timezone_name: str
+    status: str
+    created_at: str
+    sent_at: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+@dataclass(frozen=True)
 class ConversationMessageRecord:
     message_id: int
     client_id: str
@@ -449,4 +463,3 @@ class DocumentBlobRecord:
 class DocumentExtraRecord:
     document_id: str
     extra_json: dict[str, Any]
-

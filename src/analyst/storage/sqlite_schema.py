@@ -51,6 +51,7 @@ from .sqlite_records import (
     CompanionCheckInStateRecord,
     CompanionLifestyleStateRecord,
     CompanionDailyScheduleRecord,
+    CompanionReminderRecord,
     ConversationMessageRecord,
     DeliveryQueueRecord,
     GroupProfileRecord,
@@ -581,6 +582,25 @@ class SQLiteSchemaMixin:
                 """
             )
             connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS companion_reminders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    reminder_text TEXT NOT NULL,
+                    due_at TEXT NOT NULL,
+                    timezone_name TEXT NOT NULL DEFAULT 'Asia/Singapore',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    sent_at TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (client_id, channel, thread_id)
+                        REFERENCES conversation_threads(client_id, channel, thread_id)
+                )
+                """
+            )
+            connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_analytical_observations_created ON analytical_observations(id DESC)"
             )
             connection.execute(
@@ -603,6 +623,9 @@ class SQLiteSchemaMixin:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_companion_checkin_due ON companion_checkin_state(enabled, pending_due_at)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_companion_reminders_due ON companion_reminders(status, due_at)"
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_companion_lifestyle_updated ON companion_lifestyle_state(updated_at DESC)"

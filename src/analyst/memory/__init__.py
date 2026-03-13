@@ -1,12 +1,15 @@
 from .profile import (
+    CompanionReminderUpdate,
     CompanionScheduleUpdate,
     ClientProfileUpdate,
     extract_client_profile_update,
     extract_embedded_profile_update,
+    extract_embedded_reminder_update,
     extract_embedded_schedule_update,
     merge_client_profile_updates,
     split_reply_and_profile_update,
     strip_embedded_profile_update,
+    strip_embedded_reminder_update,
     strip_embedded_schedule_update,
 )
 from .render import RenderBudget, sub_agent_budget
@@ -24,6 +27,7 @@ from .subagent import build_subagent_memory
 
 __all__ = [
     "ClientProfileUpdate",
+    "CompanionReminderUpdate",
     "CompanionScheduleUpdate",
     "RenderBudget",
     "build_chat_context",
@@ -34,6 +38,7 @@ __all__ = [
     "build_trading_context",
     "extract_client_profile_update",
     "extract_embedded_profile_update",
+    "extract_embedded_reminder_update",
     "extract_embedded_schedule_update",
     "merge_client_profile_updates",
     "record_chat_interaction",
@@ -41,6 +46,7 @@ __all__ = [
     "refresh_group_member_public_inference",
     "split_reply_and_profile_update",
     "strip_embedded_profile_update",
+    "strip_embedded_reminder_update",
     "strip_embedded_schedule_update",
     "sub_agent_budget",
 ]

@@ -101,6 +101,10 @@ from .bot_media import (  # noqa: E402
     _summarize_user_message,
     _render_image_instruction,
 )
+from .companion_reminders import (  # noqa: E402
+    apply_companion_reminder_update,
+    render_companion_reminder_message,
+)
 from .companion_schedule import (  # noqa: E402
     apply_companion_schedule_update,
 )
@@ -282,13 +286,59 @@ async def _send_companion_proactive_message(
     )
 
 
+async def _send_companion_user_reminder(
+    *,
+    store: SQLiteEngineStore,
+    bot: Any,
+    reminder: Any,
+) -> None:
+    chat_id = _telegram_chat_id_from_channel(reminder.channel)
+    if chat_id is None:
+        return
+    text = render_companion_reminder_message(reminder)
+    bubbles = split_into_bubbles(text)
+    await _send_bot_bubbles(bot, chat_id=chat_id, bubbles=bubbles)
+    sent_at = utc_now().isoformat()
+    store.append_conversation_message(
+        client_id=reminder.client_id,
+        channel=reminder.channel,
+        thread_id=reminder.thread_id,
+        role="assistant",
+        content=text,
+        metadata={"reminder_id": reminder.reminder_id, "channel": reminder.channel},
+    )
+    store.enqueue_delivery(
+        client_id=reminder.client_id,
+        channel=reminder.channel,
+        thread_id=reminder.thread_id,
+        source_type="companion_reminder",
+        content_rendered=text,
+        status="delivered",
+        delivered_at=sent_at,
+        metadata={"reminder_id": reminder.reminder_id, "due_at": reminder.due_at},
+    )
+    store.mark_companion_reminder_sent(reminder_id=reminder.reminder_id, sent_at=sent_at)
+
+
 async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     job_data = getattr(context.job, "data", {}) or {}
     store: SQLiteEngineStore | None = job_data.get("store")
     agent_loop: PythonAgentLoop | None = job_data.get("agent_loop")
-    if store is None or agent_loop is None:
+    if store is None:
         return
     now = utc_now()
+    due_reminders = store.list_due_companion_reminders(now_iso=now.isoformat(), limit=20)
+    for reminder in due_reminders:
+        try:
+            await _send_companion_user_reminder(
+                store=store,
+                bot=context.bot,
+                reminder=reminder,
+            )
+        except Exception:
+            logger.exception("Failed to send companion reminder")
+    if agent_loop is None:
+        return
     due_states = store.list_due_companion_checkins(now_iso=now.isoformat(), limit=10)
     for state in due_states:
         if state.pending_kind in {"follow_up", "inactivity"} and not _is_within_checkin_send_window(now):
@@ -761,7 +811,18 @@ def _make_message_handler(
                 reply.schedule_update,
                 now=now_utc,
                 routine_state=str(getattr(companion_lifestyle_state, "routine_state", "") or ""),
+                user_text=history_user_text,
             )
+            if not in_group:
+                apply_companion_reminder_update(
+                    store,
+                    reply.reminder_update,
+                    client_id=user_id,
+                    channel_id=channel_id,
+                    thread_id=thread_id,
+                    now=now_utc,
+                    preferred_language=profile.preferred_language,
+                )
             record_chat_interaction(
                 store=store,
                 client_id=user_id,

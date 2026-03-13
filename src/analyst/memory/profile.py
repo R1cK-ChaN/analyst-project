@@ -119,6 +119,26 @@ class CompanionScheduleUpdate:
         return "revise" if str(self.revision_mode or "").strip().lower() == "revise" else "set"
 
 
+@dataclass(frozen=True)
+class CompanionReminderUpdate:
+    reminder_text: str | None = None
+    due_at: str | None = None
+    timezone_name: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "CompanionReminderUpdate":
+        if not isinstance(payload, dict):
+            return cls()
+        return cls(
+            reminder_text=_clean_scalar(payload.get("reminder_text")),
+            due_at=_clean_scalar(payload.get("due_at")),
+            timezone_name=_clean_scalar(payload.get("timezone_name")),
+        )
+
+    def has_changes(self) -> bool:
+        return bool(self.reminder_text and self.due_at)
+
+
 _WATCHLIST_PATTERNS = {
     "fed": re.compile(r"(?:\b(?:fed|fomc|powell)\b|美联储|联储)", re.IGNORECASE),
     "cpi": re.compile(r"(?:\b(?:cpi|inflation)\b|通胀)", re.IGNORECASE),
@@ -203,6 +223,10 @@ _SCHEDULE_UPDATE_PATTERN = re.compile(
     r"<schedule_update>\s*(\{.*?\})\s*</schedule_update>",
     re.DOTALL | re.IGNORECASE,
 )
+_REMINDER_UPDATE_PATTERN = re.compile(
+    r"<reminder_update>\s*(\{.*?\})\s*</reminder_update>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 def extract_client_profile_update(text: str) -> ClientProfileUpdate:
@@ -280,8 +304,24 @@ def extract_embedded_schedule_update(text: str) -> CompanionScheduleUpdate:
     return CompanionScheduleUpdate.from_dict(decoded)
 
 
+def extract_embedded_reminder_update(text: str) -> CompanionReminderUpdate:
+    matches = _REMINDER_UPDATE_PATTERN.findall(text)
+    if not matches:
+        return CompanionReminderUpdate()
+    raw_payload = matches[-1]
+    try:
+        decoded = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return CompanionReminderUpdate()
+    return CompanionReminderUpdate.from_dict(decoded)
+
+
+def strip_embedded_reminder_update(text: str) -> str:
+    return _REMINDER_UPDATE_PATTERN.sub("", text).strip()
+
+
 def strip_embedded_schedule_update(text: str) -> str:
-    return _SCHEDULE_UPDATE_PATTERN.sub("", text).strip()
+    return _SCHEDULE_UPDATE_PATTERN.sub("", strip_embedded_reminder_update(text)).strip()
 
 
 def strip_embedded_profile_update(text: str) -> str:
