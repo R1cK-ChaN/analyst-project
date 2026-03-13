@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.delivery.sales_chat import _extract_media, _extract_tool_audit
+from analyst.delivery.user_chat import _extract_media, _extract_tool_audit
 from analyst.engine.live_types import ConversationMessage, ToolCall
 from analyst.tools._image_gen import ImageGenConfig
 from analyst.tools._live_photo import (
@@ -326,7 +326,7 @@ class TestLivePhotoToolAvailability(unittest.TestCase):
             self.assertIsNotNone(tool)
 
 
-class TestSalesChatMediaExtraction(unittest.TestCase):
+class TestUserChatMediaExtraction(unittest.TestCase):
     def test_extract_media_returns_video_item_for_live_photo_results(self) -> None:
         messages = [
             ConversationMessage(

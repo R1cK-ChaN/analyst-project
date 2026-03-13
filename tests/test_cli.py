@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from analyst.cli import main
-from analyst.delivery.sales_chat import SalesChatReply
+from analyst.delivery.user_chat import UserChatReply
 from analyst.engine.live_types import AgentTool
 from analyst.ingestion.scrapers.oecd import OECDDataflow, OECDStructureSummary
 from analyst.ingestion.sources import OECDSeriesConfig
@@ -20,7 +20,7 @@ from analyst.memory import ClientProfileUpdate
 from analyst.memory import CompanionScheduleUpdate
 
 
-class SalesChatCLITest(unittest.TestCase):
+class UserChatCLITest(unittest.TestCase):
     def test_companion_chat_once_prints_reply_and_records_interaction(self) -> None:
         fake_store = Mock()
         output = io.StringIO()
@@ -29,7 +29,7 @@ class SalesChatCLITest(unittest.TestCase):
             with patch("analyst.cli.build_chat_context", return_value="memory block"):
                 with patch(
                     "analyst.cli.generate_chat_reply",
-                    return_value=SalesChatReply(
+                    return_value=UserChatReply(
                         text="先别急，今晚数据出来再看。",
                         profile_update=ClientProfileUpdate(confidence="中"),
                     ),
@@ -53,7 +53,7 @@ class SalesChatCLITest(unittest.TestCase):
                 with patch("analyst.cli.build_companion_schedule_context", return_value="schedule block"):
                     with patch(
                         "analyst.cli.generate_chat_reply",
-                        return_value=SalesChatReply(
+                        return_value=UserChatReply(
                             text="中午我应该去吃牛肉饭。",
                             profile_update=ClientProfileUpdate(),
                             schedule_update=CompanionScheduleUpdate(

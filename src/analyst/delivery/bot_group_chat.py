@@ -11,7 +11,7 @@ from .bot_constants import (
     MAX_GROUP_CONTEXT_CHARS,
     MAX_GROUP_CONTEXT_MESSAGES,
 )
-from .sales_chat import SPLIT_MARKER, split_into_bubbles
+from .user_chat import SPLIT_MARKER, split_into_bubbles
 
 def _is_group_chat(update: Update) -> bool:
     """Check if the message is from a group or supergroup chat."""

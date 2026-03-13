@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from enum import Enum
 from pathlib import Path
-from zoneinfo import ZoneInfo
 from typing import Any
 
 from analyst.agents import RoleDependencies, RolePromptContext, get_role_spec
@@ -43,8 +42,6 @@ from analyst.tools import (
     build_web_fetch_tool,
     build_web_search_tool,
 )
-from analyst.tools._live_calendar import build_live_calendar_tool
-from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.memory import (
     ClientProfileUpdate,
     CompanionReminderUpdate,
@@ -55,14 +52,8 @@ from analyst.memory import (
 )
 from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
 from analyst.storage import SQLiteEngineStore
-
-from .soul import PromptAssemblyContext, assemble_persona_system_prompt
-
-
-class ChatPersonaMode(str, Enum):
-    SALES = "sales"
-    COMPANION = "companion"
-
+from analyst.tools._live_calendar import build_live_calendar_tool
+from analyst.information import AnalystInformationService, FileBackedInformationRepository
 
 COMPANION_MODEL_KEYS = (
     "ANALYST_COMPANION_OPENROUTER_MODEL",
@@ -71,14 +62,14 @@ COMPANION_MODEL_KEYS = (
     "LLM_MODEL",
 )
 COMPANION_DEFAULT_MODEL = "google/gemini-3-flash-preview"
-SALES_MODEL_KEYS = (
+USER_MODEL_KEYS = (
     "ANALYST_TELEGRAM_OPENROUTER_MODEL",
     "ANALYST_OPENROUTER_MODEL",
     "LLM_MODEL",
 )
-SALES_DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
+USER_DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
 CLAUDE_CODE_NATIVE_TOOL_NAMES = ("WebSearch", "WebFetch")
-COMPANION_SHARED_MCP_TOOL_NAMES = (
+USER_SHARED_MCP_TOOL_NAMES = (
     *BASE_SHARED_MCP_TOOL_NAMES,
     "fetch_live_calendar",
     "search_news",
@@ -86,11 +77,15 @@ COMPANION_SHARED_MCP_TOOL_NAMES = (
     "get_indicator_history",
     "search_research_notes",
 )
-SALES_SHARED_MCP_TOOL_NAMES = (
-    *COMPANION_SHARED_MCP_TOOL_NAMES,
+USER_CHAT_SHARED_MCP_TOOL_NAMES = (
+    *USER_SHARED_MCP_TOOL_NAMES,
     "get_portfolio_risk",
     "get_portfolio_holdings",
 )
+
+
+class ChatPersonaMode(str, Enum):
+    COMPANION = "companion"
 
 
 @dataclass(frozen=True)
@@ -112,16 +107,12 @@ class ChatReply:
     tool_audit: list[dict[str, Any]] = field(default_factory=list)
 
 
-SalesChatReply = ChatReply
+UserChatReply = ChatReply
 
 
 def resolve_chat_persona_mode(value: str | ChatPersonaMode | None = None) -> ChatPersonaMode:
-    if isinstance(value, ChatPersonaMode):
-        return value
-    lowered = str(value or ChatPersonaMode.COMPANION.value).strip().lower()
-    if lowered == ChatPersonaMode.COMPANION.value:
-        return ChatPersonaMode.COMPANION
-    return ChatPersonaMode.SALES
+    del value
+    return ChatPersonaMode.COMPANION
 
 
 def build_companion_tools() -> list[AgentTool]:
@@ -139,14 +130,18 @@ def _build_configured_companion_tools(
 
 
 def build_chat_tools(
-    engine: OpenRouterAnalystEngine,
+    engine: OpenRouterAnalystEngine | Any | None = None,
     store: SQLiteEngineStore | None = None,
     provider: LLMProvider | None = None,
     *,
-    persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
+    persona_mode: str | ChatPersonaMode | None = None,
 ) -> list[AgentTool]:
-    resolved_mode = resolve_chat_persona_mode(persona_mode)
-    if resolved_mode is ChatPersonaMode.COMPANION:
+    normalized_mode = (
+        persona_mode.value
+        if isinstance(persona_mode, ChatPersonaMode)
+        else str(persona_mode or "").strip().lower()
+    )
+    if normalized_mode == ChatPersonaMode.COMPANION.value or engine is None:
         return _build_configured_companion_tools(store=store, provider=provider)
 
     def get_regime(arguments: dict[str, object]) -> str:
@@ -174,24 +169,30 @@ def build_chat_tools(
     live_photo_tool = build_optional_live_photo_tool()
     if live_photo_tool is not None:
         kit.add(live_photo_tool)
-    kit.add(AgentTool(
-        name="get_regime_summary",
-        description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
-        parameters={"type": "object", "properties": {}, "required": []},
-        handler=get_regime,
-    ))
-    kit.add(AgentTool(
-        name="get_calendar",
-        description="Fetch upcoming economic data releases from local cache. For live/real-time calendar data, prefer fetch_live_calendar instead.",
-        parameters={"type": "object", "properties": {}, "required": []},
-        handler=get_calendar,
-    ))
-    kit.add(AgentTool(
-        name="get_premarket_briefing",
-        description="Fetch the pre-market briefing including overnight highlights and today's key data.",
-        parameters={"type": "object", "properties": {}, "required": []},
-        handler=get_premarket,
-    ))
+    kit.add(
+        AgentTool(
+            name="get_regime_summary",
+            description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
+            parameters={"type": "object", "properties": {}, "required": []},
+            handler=get_regime,
+        )
+    )
+    kit.add(
+        AgentTool(
+            name="get_calendar",
+            description="Fetch upcoming economic data releases from local cache. For live/real-time calendar data, prefer fetch_live_calendar instead.",
+            parameters={"type": "object", "properties": {}, "required": []},
+            handler=get_calendar,
+        )
+    )
+    kit.add(
+        AgentTool(
+            name="get_premarket_briefing",
+            description="Fetch the pre-market briefing including overnight highlights and today's key data.",
+            parameters={"type": "object", "properties": {}, "required": []},
+            handler=get_premarket,
+        )
+    )
     kit.add(build_live_news_tool())
     kit.add(build_article_tool())
     kit.add(build_live_markets_tool())
@@ -209,60 +210,61 @@ def build_chat_tools(
         kit.add(build_research_search_tool(store))
     kit.add(build_vix_regime_tool())
     if provider is not None:
-        from analyst.engine.sub_agent_specs import build_sales_sub_agents
-        for sa_tool in build_sales_sub_agents(kit.to_list(), provider, store):
+        from analyst.engine.sub_agent_specs import build_user_sub_agents
+
+        for sa_tool in build_user_sub_agents(kit.to_list(), provider, store):
             kit.add(sa_tool)
     return kit.to_list()
 
 
-def build_sales_tools(
-    engine: OpenRouterAnalystEngine,
+def build_user_chat_tools(
+    engine: OpenRouterAnalystEngine | Any | None = None,
     store: SQLiteEngineStore | None = None,
     provider: LLMProvider | None = None,
+    *,
+    persona_mode: str | ChatPersonaMode | None = None,
 ) -> list[AgentTool]:
     return build_chat_tools(
         engine,
         store,
         provider,
-        persona_mode=ChatPersonaMode.SALES,
+        persona_mode=persona_mode,
     )
 
 
 def build_chat_services(
     *,
     db_path: Path | None = None,
-    persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
+    persona_mode: str | ChatPersonaMode | None = None,
 ) -> tuple[AgentExecutor, list[AgentTool], SQLiteEngineStore]:
-    resolved_mode = resolve_chat_persona_mode(persona_mode)
-    if resolved_mode is ChatPersonaMode.COMPANION:
-        return build_companion_services(db_path=db_path)
-
+    del persona_mode
     store = SQLiteEngineStore(db_path=db_path)
     provider = build_llm_provider_from_env(
-        model_keys=SALES_MODEL_KEYS,
-        default_model=SALES_DEFAULT_MODEL,
+        model_keys=USER_MODEL_KEYS,
+        default_model=USER_DEFAULT_MODEL,
     )
     executor = build_agent_executor(
         provider,
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
-        mcp_tool_names=SALES_SHARED_MCP_TOOL_NAMES,
+        mcp_tool_names=USER_CHAT_SHARED_MCP_TOOL_NAMES,
         mcp_db_path=store.db_path,
     )
 
     repository = FileBackedInformationRepository()
     info_service = AnalystInformationService(repository)
     from analyst.engine.sub_agent_specs import build_content_sub_agents
+
     content_tools = build_content_sub_agents(provider, store)
     runtime = OpenRouterAgentRuntime(
         provider=provider,
         config=OpenRouterRuntimeConfig(
-            model_keys=SALES_MODEL_KEYS,
-            default_model=SALES_DEFAULT_MODEL,
+            model_keys=USER_MODEL_KEYS,
+            default_model=USER_DEFAULT_MODEL,
         ),
         tools=content_tools,
     )
     engine = OpenRouterAnalystEngine(info_service=info_service, runtime=runtime)
-    tools = build_chat_tools(engine, store, provider=provider, persona_mode=resolved_mode)
+    tools = build_chat_tools(engine, store, provider=provider)
     return executor, tools, store
 
 
@@ -278,18 +280,18 @@ def build_companion_services(
     executor = build_agent_executor(
         provider,
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
-        mcp_tool_names=COMPANION_SHARED_MCP_TOOL_NAMES,
+        mcp_tool_names=USER_SHARED_MCP_TOOL_NAMES,
         mcp_db_path=store.db_path,
     )
     tools = _build_configured_companion_tools(store=store, provider=provider)
     return executor, tools, store
 
 
-def build_sales_services(
+def build_user_chat_services(
     *,
     db_path: Path | None = None,
 ) -> tuple[AgentExecutor, list[AgentTool], SQLiteEngineStore]:
-    return build_chat_services(db_path=db_path, persona_mode=ChatPersonaMode.SALES)
+    return build_chat_services(db_path=db_path)
 
 
 def _has_cjk(text: str) -> bool:
@@ -326,53 +328,35 @@ def system_prompt_with_memory(
     group_context: str = "",
     proactive_kind: str = "",
     companion_local_context: str = "",
-    persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
+    persona_mode: str | ChatPersonaMode | None = None,
     executor: AgentExecutor | Any | None = None,
     tools: list[AgentTool] | None = None,
     native_tool_names: tuple[str, ...] = (),
     mcp_tool_names: tuple[str, ...] = (),
 ) -> str:
-    resolved_mode = resolve_chat_persona_mode(persona_mode)
+    del persona_mode
     resolved_executor = coerce_agent_executor(executor) if executor is not None else None
     capability_overlay = _build_capability_overlay(
-        persona_mode=resolved_mode,
         executor=resolved_executor,
         tools=tools or [],
         native_tool_names=native_tool_names,
         mcp_tool_names=mcp_tool_names,
     )
-    if resolved_mode is ChatPersonaMode.COMPANION:
-        base_prompt = get_role_spec("companion").build_system_prompt(
-            RolePromptContext(
-                memory_context=memory_context,
-                user_text=user_text,
-                user_lang=user_lang,
-                group_context=group_context,
-                proactive_kind=proactive_kind,
-                companion_local_context=companion_local_context,
-            )
-        )
-        return f"{base_prompt}\n\n{capability_overlay}".strip() if capability_overlay else base_prompt
-    timezone_name = "Asia/Shanghai"
-    now = datetime.now(ZoneInfo(timezone_name))
-    base_prompt = assemble_persona_system_prompt(
-        PromptAssemblyContext(
-            mode=resolved_mode.value,
+    base_prompt = get_role_spec("companion").build_system_prompt(
+        RolePromptContext(
+            memory_context=memory_context,
             user_text=user_text,
             user_lang=user_lang,
-            memory_context=memory_context,
             group_context=group_context,
-            current_time_label=now.strftime("%Y-%m-%d %H:%M %A") + f" ({timezone_name})",
             proactive_kind=proactive_kind,
             companion_local_context=companion_local_context,
         )
-    ).prompt
+    )
     return f"{base_prompt}\n\n{capability_overlay}".strip() if capability_overlay else base_prompt
 
 
 def _build_capability_overlay(
     *,
-    persona_mode: ChatPersonaMode,
     executor: AgentExecutor | None,
     tools: list[AgentTool],
     native_tool_names: tuple[str, ...],
@@ -401,10 +385,8 @@ def _build_capability_overlay(
         lines.append(
             "Use native Claude web tools for open-web lookup. Use shared analyst tools for product-owned market, calendar, archive, or portfolio data."
         )
-    elif persona_mode is ChatPersonaMode.SALES and tool_names:
-        lines.append(
-            "For time-sensitive market or news questions, call the appropriate live tool before answering."
-        )
+    elif tool_names:
+        lines.append("For time-sensitive market or news questions, call the appropriate live tool before answering.")
     return "\n".join(lines)
 
 
@@ -514,7 +496,7 @@ IMAGE_PLACEHOLDER = "[IMAGE]"
 VIDEO_PLACEHOLDER = "[VIDEO]"
 
 
-def normalize_sales_reply(text: str) -> str:
+def normalize_user_reply(text: str) -> str:
     cleaned = (
         text.replace("**", "")
         .replace("__", "")
@@ -847,9 +829,10 @@ def generate_chat_reply(
     group_context: str = "",
     user_content: MessageContent | None = None,
     companion_local_context: str = "",
-    persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
+    persona_mode: str | ChatPersonaMode | None = None,
     native_tool_names: tuple[str, ...] = (),
 ) -> ChatReply:
+    del persona_mode
     executor = coerce_agent_executor(agent_loop)
     history_messages = [
         ConversationMessage(role=message["role"], content=message["content"])
@@ -875,7 +858,6 @@ def generate_chat_reply(
         user_lang=user_lang,
         group_context=group_context,
         companion_local_context=companion_local_context,
-        persona_mode=persona_mode,
         executor=executor,
         tools=active_tools,
         native_tool_names=native_tool_names or native_tool_names_for_turn,
@@ -896,7 +878,7 @@ def generate_chat_reply(
     reminder_update = extract_embedded_reminder_update(result.final_text)
     schedule_update = extract_embedded_schedule_update(result.final_text)
     contains_image_placeholder = IMAGE_PLACEHOLDER in response_text
-    response_text = normalize_sales_reply(response_text)
+    response_text = normalize_user_reply(response_text)
     if not response_text:
         response_text = "嗯"
     media = _extract_media(result.messages)
@@ -968,7 +950,6 @@ def generate_proactive_companion_reply(
                 user_lang=user_lang,
                 proactive_kind=kind,
                 companion_local_context=companion_local_context,
-                persona_mode=ChatPersonaMode.COMPANION,
                 executor=executor,
                 tools=[],
             ),
@@ -980,7 +961,7 @@ def generate_proactive_companion_reply(
     response_text, profile_update = split_reply_and_profile_update(result.final_text)
     reminder_update = extract_embedded_reminder_update(result.final_text)
     schedule_update = extract_embedded_schedule_update(result.final_text)
-    response_text = normalize_sales_reply(response_text)
+    response_text = normalize_user_reply(response_text)
     if not response_text:
         response_text = "在想你今天过得怎么样。"
     return ChatReply(
@@ -993,7 +974,7 @@ def generate_proactive_companion_reply(
     )
 
 
-def generate_sales_reply(
+def generate_user_reply(
     user_text: str,
     *,
     history: list[dict[str, str]] | None,
@@ -1003,7 +984,7 @@ def generate_sales_reply(
     preferred_language: str = "",
     group_context: str = "",
     user_content: MessageContent | None = None,
-) -> SalesChatReply:
+) -> UserChatReply:
     return generate_chat_reply(
         user_text,
         history=history,
@@ -1013,5 +994,4 @@ def generate_sales_reply(
         preferred_language=preferred_language,
         group_context=group_context,
         user_content=user_content,
-        persona_mode=ChatPersonaMode.SALES,
     )

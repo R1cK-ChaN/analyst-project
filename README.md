@@ -10,7 +10,7 @@ Current status on March 13, 2026:
 - the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, TradingEconomics, yfinance, and macro-finance RSS news ingestion
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
 - the memory layer records all chat messages and extracts 17 client profile dimensions that accumulate across conversations, including emotional trend tracking, stress level monitoring, and personal facts memory (up to 20 facts with recency-refresh dedup)
-- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 13 tool builders (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation); both LiveAnalystEngine and the sales agent assemble from it, and a shared MCP bridge now exposes a safe read-only subset of analyst-owned tools to Claude Code native turns
+- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 13 tool builders (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation); both LiveAnalystEngine and the user chat agent assemble from it, and a shared MCP bridge now exposes a safe read-only subset of analyst-owned tools to Claude Code native turns
 - the execution layer is now split between product-owned host-loop orchestration and provider-native execution: OpenRouter/Anthropic models run through the Python tool-calling loop, while Claude Code can run as a native agent and still access selected analyst tools via the local MCP bridge
 - a round sub-agent layer is implemented for research, sales, and runtime-assisted content generation, with scoped memory, recursion prevention, and SQLite audit logging of each run
 - the portfolio package supports CSV import and live broker sync via an extensible adapter layer (IBKR, Longbridge 长桥, Tiger 老虎), with EWMA risk pipeline, VIX regime signals, and agent-actionable tools
@@ -87,7 +87,7 @@ analyst-project/
 │   ├── storage/                    Transitional local SQLite store and agent-owned memory/trader state
 │   ├── memory/                     Client profile extraction (17 dimensions), emotional memory, personal facts, context builders
 │   ├── ingestion/                  Transitional local source adapters retained behind the macro-data boundary
-│   ├── delivery/                   Telegram bot (陈襄) with group chat, time awareness, typing simulation, image gen + photo/video delivery + sales chat agent + formatters
+│   ├── delivery/                   Telegram bot (陈襄) with group chat, time awareness, typing simulation, image gen + photo/video delivery + user chat agent + formatters
 │   └── integration/                Message routing
 │
 ├── data/demo/                      ← LOCAL DEMO DATA
@@ -238,7 +238,7 @@ This validates the current standalone implementation:
 - portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime signals, agent-actionable tools
 - WeCom and Telegram formatters
 - Telegram agent bot with persona (陈襄), group chat support, 13 host-loop tools, inbound image reading from user photos/image documents, Seedream image generation with AI watermark disabled by default and photo delivery, Seedance motion-selfie delivery as Telegram video, and Claude Code native-agent support behind `ANALYST_CLAUDE_CODE_USE_NATIVE_AGENT=1`
-- sales chat agent with client profile tracking and conversation recording
+- user chat agent with client profile tracking and conversation recording
 - integration router
 
 ## Source Of Truth

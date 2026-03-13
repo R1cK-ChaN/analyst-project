@@ -144,7 +144,7 @@ def build_trading_context(
     return render_context_sections(sections, budget=limits)
 
 
-def build_sales_context(
+def build_user_context(
     *,
     store: SQLiteEngineStore,
     client_id: str,
@@ -162,7 +162,7 @@ def build_sales_context(
         thread_id=thread_id,
         limit=limits.max_recent_messages,
     )
-    # Deliveries are client-scoped rather than thread-scoped so sales can avoid
+    # Deliveries are client-scoped rather than thread-scoped so user chat can avoid
     # repeating previously sent research across new threads with the same client.
     relevant_deliveries = store.search_delivery_queue(
         client_id=client_id,
@@ -215,11 +215,11 @@ def build_chat_context(
     thread_id: str,
     query: str,
     current_user_text: str = "",
-    persona_mode: str = "sales",
+    persona_mode: str = "user",
     budget: RenderBudget | None = None,
 ) -> str:
     if str(persona_mode).strip().lower() != "companion":
-        return build_sales_context(
+        return build_user_context(
             store=store,
             client_id=client_id,
             channel_id=channel_id,
@@ -263,7 +263,7 @@ def build_chat_context(
     return render_context_sections(sections, budget=limits)
 
 
-def record_sales_interaction(
+def record_user_interaction(
     *,
     store: SQLiteEngineStore,
     client_id: str,
@@ -278,7 +278,7 @@ def record_sales_interaction(
         extract_client_profile_update(user_text),
         assistant_profile_update or ClientProfileUpdate(),
     )
-    store.record_sales_interaction(
+    store.record_user_interaction(
         client_id=client_id,
         channel=channel_id,
         thread_id=thread_id,
@@ -317,10 +317,10 @@ def record_chat_interaction(
     assistant_text: str,
     assistant_profile_update: ClientProfileUpdate | None = None,
     tool_audit: list[dict[str, Any]] | None = None,
-    persona_mode: str = "sales",
+    persona_mode: str = "user",
 ) -> None:
     if str(persona_mode).strip().lower() != "companion":
-        record_sales_interaction(
+        record_user_interaction(
             store=store,
             client_id=client_id,
             channel_id=channel_id,
@@ -336,7 +336,7 @@ def record_chat_interaction(
         _companion_only_update(extract_client_profile_update(user_text)),
         _companion_only_update(assistant_profile_update or ClientProfileUpdate()),
     )
-    store.record_sales_interaction(
+    store.record_user_interaction(
         client_id=client_id,
         channel=channel_id,
         thread_id=thread_id,
@@ -362,7 +362,7 @@ def build_group_chat_context(
     group_id: str,
     thread_id: str,
     speaker_user_id: str,
-    persona_mode: str = "sales",
+    persona_mode: str = "user",
     budget: RenderBudget | None = None,
 ) -> str:
     """Build group chat context: messages + speaker memory + participants + inferred roles + social graph."""

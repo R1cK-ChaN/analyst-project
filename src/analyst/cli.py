@@ -16,12 +16,7 @@ from analyst.delivery.companion_schedule import (
     build_companion_schedule_context,
 )
 from analyst.delivery.companion_reminders import apply_companion_reminder_update
-from analyst.delivery.sales_chat import (
-    ChatPersonaMode,
-    build_companion_services,
-    generate_chat_reply,
-    split_into_bubbles,
-)
+from analyst.delivery.user_chat import build_companion_services, generate_chat_reply, split_into_bubbles
 from analyst.memory import build_chat_context, record_chat_interaction
 from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
 from analyst.tools import build_image_gen_tool, build_live_photo_tool
@@ -334,7 +329,7 @@ def _run_portfolio_risk(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_sales_profile(store, client_id: str) -> None:
+def _print_user_profile(store, client_id: str) -> None:
     profile = store.get_client_profile(client_id)
     print("\n[profile]")
     print(json.dumps(asdict(profile), ensure_ascii=False, indent=2, sort_keys=True))
@@ -467,7 +462,6 @@ def _run_media_gen(args: argparse.Namespace) -> int:
 
 def _run_companion_chat(args: argparse.Namespace) -> int:
     db_path = Path(args.db_path) if args.db_path else None
-    persona_mode = ChatPersonaMode.COMPANION
     agent_loop, tools, store = build_companion_services(db_path=db_path)
     history: list[dict[str, str]] = []
 
@@ -479,7 +473,7 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
             thread_id=args.thread_id,
             query=user_text,
             current_user_text=user_text,
-            persona_mode=persona_mode.value,
+            persona_mode="companion",
         )
         profile = store.get_client_profile(args.client_id)
         reply = generate_chat_reply(
@@ -490,7 +484,6 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
             memory_context=memory_context,
             preferred_language=profile.preferred_language,
             companion_local_context=build_companion_schedule_context(store),
-            persona_mode=persona_mode,
         )
         apply_companion_schedule_update(store, reply.schedule_update, user_text=user_text)
         apply_companion_reminder_update(
@@ -512,13 +505,13 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
             assistant_text=reply.text,
             assistant_profile_update=reply.profile_update,
             tool_audit=reply.tool_audit,
-            persona_mode=persona_mode.value,
+            persona_mode="companion",
         )
         bubbles = split_into_bubbles(reply.text)
         for bubble in bubbles:
             print(f"\nassistant> {bubble}")
         if args.show_profile:
-            _print_sales_profile(store, args.client_id)
+            _print_user_profile(store, args.client_id)
 
     if args.once:
         handle_turn(args.once)
@@ -545,7 +538,7 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
             print("history cleared")
             continue
         if user_text == "/profile":
-            _print_sales_profile(store, args.client_id)
+            _print_user_profile(store, args.client_id)
             continue
         if user_text == "/memory":
             memory_context = build_chat_context(
@@ -555,7 +548,7 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
                 thread_id=args.thread_id,
                 query="",
                 current_user_text="",
-                persona_mode=persona_mode.value,
+                persona_mode="companion",
             )
             print("\n[memory]")
             print(memory_context or "(empty)")

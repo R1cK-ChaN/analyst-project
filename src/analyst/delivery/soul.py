@@ -81,8 +81,8 @@ TOPIC_STATE_MODULE = PromptModule(
 """,
 )
 
-SALES_IDENTITY_MODULE = PromptModule(
-    module_id="sales_identity",
+USER_IDENTITY_MODULE = PromptModule(
+    module_id="user_identity",
     body="""\
 你叫陈襄。
 
@@ -92,8 +92,8 @@ SALES_IDENTITY_MODULE = PromptModule(
 """,
 )
 
-SALES_MESSAGE_FORMAT_MODULE = PromptModule(
-    module_id="sales_message_format",
+USER_MESSAGE_FORMAT_MODULE = PromptModule(
+    module_id="user_message_format",
     body="""\
 消息格式：
 - 像真人发微信，多条消息之间用 [SPLIT] 隔开。
@@ -103,8 +103,8 @@ SALES_MESSAGE_FORMAT_MODULE = PromptModule(
 """,
 )
 
-SALES_STYLE_MODULE = PromptModule(
-    module_id="sales_style",
+USER_STYLE_MODULE = PromptModule(
+    module_id="user_style",
     body="""\
 聊天方式：
 - 对话主题由对方决定。对方聊废话、生活、情绪、吃喝、关系，你就顺着聊；只有对方主动提市场、数据、投资时才聊金融。
@@ -117,8 +117,8 @@ SALES_STYLE_MODULE = PromptModule(
 """,
 )
 
-SALES_TOOL_USAGE_MODULE = PromptModule(
-    module_id="sales_tool_usage",
+USER_TOOL_USAGE_MODULE = PromptModule(
+    module_id="user_tool_usage",
     body="""\
 工具使用：
 以下情况必须先调工具拿最新数据，不要凭记忆或 sent_content 的旧内容回答：
@@ -135,8 +135,8 @@ SALES_TOOL_USAGE_MODULE = PromptModule(
 """,
 )
 
-SALES_BOUNDARIES_MODULE = PromptModule(
-    module_id="sales_boundaries",
+USER_BOUNDARIES_MODULE = PromptModule(
+    module_id="user_boundaries",
     body="""\
 专业边界：
 - 不编造数据、时间、引用或事件。不确定就先调工具查，查不到就直接说不确定。
@@ -146,8 +146,8 @@ SALES_BOUNDARIES_MODULE = PromptModule(
 """,
 )
 
-SALES_PROFILE_MEMORY_MODULE = PromptModule(
-    module_id="sales_profile_memory",
+USER_PROFILE_MEMORY_MODULE = PromptModule(
+    module_id="user_profile_memory",
     body="""\
 客户上下文只供内部参考：
 - 如果有 personal_facts、watchlist_topics、notes、current_mood、emotional_trend、stress_level 等，可以自然利用，但不要生硬点名画像字段。
@@ -157,8 +157,8 @@ SALES_PROFILE_MEMORY_MODULE = PromptModule(
 """,
 )
 
-SALES_EMOTIONAL_SUPPORT_MODULE = PromptModule(
-    module_id="sales_emotional_support",
+USER_EMOTIONAL_SUPPORT_MODULE = PromptModule(
+    module_id="user_emotional_support",
     body="""\
 情绪支持优先于分析：
 - 对方焦虑、挫败、发泄、疲惫、自嘲时，先接住人，再处理事。
@@ -168,8 +168,8 @@ SALES_EMOTIONAL_SUPPORT_MODULE = PromptModule(
 """,
 )
 
-SALES_PROFILE_UPDATE_MODULE = PromptModule(
-    module_id="sales_profile_update",
+USER_PROFILE_UPDATE_MODULE = PromptModule(
+    module_id="user_profile_update",
     body="""\
 最终回复格式：
 先给用户可见内容。然后另起一行，追加：
@@ -260,7 +260,7 @@ COMPANION_BOUNDARIES_MODULE = PromptModule(
     module_id="companion_boundaries",
     body="""\
 边界：
-- 不要自称分析师、顾问、客服、秘书，也不要把自己聊成 sales agent。
+- 不要自称分析师、顾问、客服、秘书，也不要把自己聊成另一个正式服务角色。
 - 绝对不要主动聊金融、市场、投资、宏观、交易、行情，也不要把话题往盘面和工作上带。
 - 如果用户直接问市场，可以凭你的背景轻轻接一句，但必须克制、简短、非服务化；不要展开成行情解读、研究输出、交易建议或盘中陪看。
 - 涉及实时价格、新闻、具体交易动作时，不要装作在做市场服务；不要给明确指令或时效性判断。
@@ -352,15 +352,15 @@ COMMON_MODULES: dict[str, PromptModule] = {
 }
 
 MODE_MODULES: dict[str, dict[str, PromptModule]] = {
-    "sales": {
-        SALES_IDENTITY_MODULE.module_id: SALES_IDENTITY_MODULE,
-        SALES_MESSAGE_FORMAT_MODULE.module_id: SALES_MESSAGE_FORMAT_MODULE,
-        SALES_STYLE_MODULE.module_id: SALES_STYLE_MODULE,
-        SALES_TOOL_USAGE_MODULE.module_id: SALES_TOOL_USAGE_MODULE,
-        SALES_BOUNDARIES_MODULE.module_id: SALES_BOUNDARIES_MODULE,
-        SALES_PROFILE_MEMORY_MODULE.module_id: SALES_PROFILE_MEMORY_MODULE,
-        SALES_EMOTIONAL_SUPPORT_MODULE.module_id: SALES_EMOTIONAL_SUPPORT_MODULE,
-        SALES_PROFILE_UPDATE_MODULE.module_id: SALES_PROFILE_UPDATE_MODULE,
+    "user": {
+        USER_IDENTITY_MODULE.module_id: USER_IDENTITY_MODULE,
+        USER_MESSAGE_FORMAT_MODULE.module_id: USER_MESSAGE_FORMAT_MODULE,
+        USER_STYLE_MODULE.module_id: USER_STYLE_MODULE,
+        USER_TOOL_USAGE_MODULE.module_id: USER_TOOL_USAGE_MODULE,
+        USER_BOUNDARIES_MODULE.module_id: USER_BOUNDARIES_MODULE,
+        USER_PROFILE_MEMORY_MODULE.module_id: USER_PROFILE_MEMORY_MODULE,
+        USER_EMOTIONAL_SUPPORT_MODULE.module_id: USER_EMOTIONAL_SUPPORT_MODULE,
+        USER_PROFILE_UPDATE_MODULE.module_id: USER_PROFILE_UPDATE_MODULE,
     },
     "companion": {
         COMPANION_IDENTITY_MODULE.module_id: COMPANION_IDENTITY_MODULE,
@@ -379,15 +379,15 @@ MODE_MODULES: dict[str, dict[str, PromptModule]] = {
 }
 
 BASE_MODULE_IDS: dict[str, tuple[str, ...]] = {
-    "sales": (
+    "user": (
         "language_matching",
-        "sales_identity",
-        "sales_message_format",
-        "sales_style",
-        "sales_tool_usage",
+        "user_identity",
+        "user_message_format",
+        "user_style",
+        "user_tool_usage",
         "time_awareness",
-        "sales_boundaries",
-        "sales_profile_update",
+        "user_boundaries",
+        "user_profile_update",
     ),
     "companion": (
         "language_matching",
@@ -452,7 +452,7 @@ TOPIC_STATE_SIGNAL_FIELDS = (
 def resolve_prompt_mode(mode: str) -> str:
     if str(mode).strip().lower() == "companion":
         return "companion"
-    return "sales"
+    return "user"
 
 
 def _module_lookup(mode: str) -> dict[str, PromptModule]:
@@ -611,7 +611,7 @@ def get_persona_system_prompt(mode: str) -> str:
     return assemble_persona_system_prompt(PromptAssemblyContext(mode=mode)).prompt
 
 
-SOUL_SYSTEM_PROMPT = get_persona_system_prompt("sales")
+USER_SYSTEM_PROMPT = get_persona_system_prompt("user")
 COMPANION_SYSTEM_PROMPT = get_persona_system_prompt("companion")
 GROUP_CHAT_ADDENDUM = GROUP_CHAT_MODULE.body
 

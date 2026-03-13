@@ -245,7 +245,7 @@ class TestBuildApplication(unittest.TestCase):
 
 class TestChatPersonaRouting(unittest.TestCase):
     def test_companion_tools_only_expose_media_and_research_delegate(self) -> None:
-        from analyst.delivery.sales_chat import ChatPersonaMode, build_chat_tools, build_companion_services, COMPANION_DEFAULT_MODEL
+        from analyst.delivery.user_chat import ChatPersonaMode, build_chat_tools, build_companion_services, COMPANION_DEFAULT_MODEL
 
         image_tool = AgentTool(name="generate_image", description="", parameters={}, handler=lambda _: {})
         live_tool = AgentTool(name="generate_live_photo", description="", parameters={}, handler=lambda _: {})
@@ -264,13 +264,13 @@ class TestChatPersonaRouting(unittest.TestCase):
         self.assertEqual([tool.name for tool in tools], ["generate_image", "generate_live_photo", "research_agent"])
 
     def test_companion_services_use_companion_default_model(self) -> None:
-        from analyst.delivery.sales_chat import (
+        from analyst.delivery.user_chat import (
             COMPANION_DEFAULT_MODEL,
             build_companion_services,
         )
 
         with patch(
-            "analyst.delivery.sales_chat.build_llm_provider_from_env",
+            "analyst.delivery.user_chat.build_llm_provider_from_env",
             return_value=MagicMock(),
         ) as provider_factory_mock, \
              patch("analyst.agents.companion.companion_agent.build_image_gen_tool", return_value=MagicMock()), \
@@ -283,9 +283,9 @@ class TestChatPersonaRouting(unittest.TestCase):
         self.assertIn("ANALYST_COMPANION_OPENROUTER_MODEL", kwargs["model_keys"])
 
 
-class TestSalesChatClaudeCodeImages(unittest.TestCase):
+class TestUserChatClaudeCodeImages(unittest.TestCase):
     def test_generate_chat_reply_bypasses_tool_loop_for_claude_code_image_analysis(self) -> None:
-        from analyst.delivery.sales_chat import ChatPersonaMode, generate_chat_reply
+        from analyst.delivery.user_chat import ChatPersonaMode, generate_chat_reply
         from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
         from analyst.engine.live_provider import ClaudeCodeConfig, ClaudeCodeProvider
 
@@ -328,7 +328,7 @@ class TestSalesChatClaudeCodeImages(unittest.TestCase):
         self.assertNotIn("--output-format", command)
 
     def test_generate_chat_reply_can_use_native_claude_agent_with_shared_mcp_tools(self) -> None:
-        from analyst.delivery.sales_chat import ChatPersonaMode, generate_chat_reply
+        from analyst.delivery.user_chat import ChatPersonaMode, generate_chat_reply
         from analyst.engine import build_agent_executor
         from analyst.engine.agent_loop import AgentLoopConfig
         from analyst.engine.live_provider import ClaudeCodeConfig, ClaudeCodeProvider
@@ -351,7 +351,7 @@ class TestSalesChatClaudeCodeImages(unittest.TestCase):
                 history=[],
                 agent_loop=executor,
                 tools=[AgentTool(name="generate_image", description="", parameters={}, handler=lambda _: {})],
-                persona_mode=ChatPersonaMode.SALES,
+                persona_mode=ChatPersonaMode.COMPANION,
             )
 
         self.assertEqual(reply.text, "Treasury yields rose after the CPI surprise.")
@@ -402,7 +402,7 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
 
     async def test_companion_prompt_includes_latent_snt_backstory(self) -> None:
         from analyst.delivery.bot import _chat_reply
-        from analyst.delivery.sales_chat import ChatPersonaMode
+        from analyst.delivery.user_chat import ChatPersonaMode
         from analyst.delivery.soul import COMPANION_SYSTEM_PROMPT
 
         self._set_loop_response("晚上好")
@@ -588,7 +588,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         )
         self.mock_store.list_group_messages.return_value = []
         self.mock_store.list_group_members.return_value = []
-        self.mock_store.build_sales_context = MagicMock(return_value="")
+        self.mock_store.build_user_context = MagicMock(return_value="")
 
         self.mock_loop.run.return_value = AgentLoopResult(
             messages=[
@@ -877,7 +877,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
 
     async def test_private_reply_to_photo_uses_referenced_image(self) -> None:
         from analyst.delivery.bot import _make_message_handler
-        from analyst.delivery.sales_chat import SalesChatReply
+        from analyst.delivery.user_chat import UserChatReply
         from analyst.memory import ClientProfileUpdate
 
         handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
@@ -900,7 +900,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
              patch(
                  "analyst.delivery.bot._chat_reply",
                  new=AsyncMock(
-                     return_value=SalesChatReply(
+                     return_value=UserChatReply(
                          text="reply text",
                          profile_update=ClientProfileUpdate(),
                      )
@@ -916,7 +916,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
 
     async def test_group_reply_to_photo_with_mention_uses_referenced_image(self) -> None:
         from analyst.delivery.bot import _make_message_handler
-        from analyst.delivery.sales_chat import SalesChatReply
+        from analyst.delivery.user_chat import UserChatReply
         from analyst.memory import ClientProfileUpdate
 
         mention_entity = MagicMock()
@@ -947,7 +947,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
              patch(
                  "analyst.delivery.bot._chat_reply",
                  new=AsyncMock(
-                     return_value=SalesChatReply(
+                     return_value=UserChatReply(
                          text="reply text",
                          profile_update=ClientProfileUpdate(),
                      )
@@ -963,7 +963,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
 
     async def test_private_chat_sends_and_cleans_up_generated_photo(self) -> None:
         from analyst.delivery.bot import _make_message_handler
-        from analyst.delivery.sales_chat import MediaItem, SalesChatReply
+        from analyst.delivery.user_chat import MediaItem, UserChatReply
         from analyst.memory import ClientProfileUpdate
 
         handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
@@ -979,7 +979,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
              patch(
                  "analyst.delivery.bot._chat_reply",
                  new=AsyncMock(
-                     return_value=SalesChatReply(
+                     return_value=UserChatReply(
                          text="图片来了",
                          profile_update=ClientProfileUpdate(),
                          media=[MediaItem(kind="photo", url=temp_path)],
@@ -993,7 +993,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
 
     async def test_private_chat_sends_and_cleans_up_generated_video(self) -> None:
         from analyst.delivery.bot import _make_message_handler
-        from analyst.delivery.sales_chat import MediaItem, SalesChatReply
+        from analyst.delivery.user_chat import MediaItem, UserChatReply
         from analyst.memory import ClientProfileUpdate
 
         handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
@@ -1012,7 +1012,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
              patch(
                  "analyst.delivery.bot._chat_reply",
                  new=AsyncMock(
-                     return_value=SalesChatReply(
+                     return_value=UserChatReply(
                          text="动态自拍来了",
                          profile_update=ClientProfileUpdate(),
                          media=[
@@ -1104,7 +1104,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
 
     async def test_group_reply_text_uses_telegram_entities_for_mentions(self) -> None:
         from analyst.delivery.bot import _make_message_handler
-        from analyst.delivery.sales_chat import SalesChatReply
+        from analyst.delivery.user_chat import UserChatReply
         from analyst.memory import ClientProfileUpdate
 
         mention_entity = MagicMock()
@@ -1133,7 +1133,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
              patch(
                  "analyst.delivery.bot._chat_reply",
                  new=AsyncMock(
-                     return_value=SalesChatReply(
+                     return_value=UserChatReply(
                          text="@[Alice] please take this one.",
                          profile_update=ClientProfileUpdate(),
                      )
@@ -1180,7 +1180,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
 
     async def test_companion_reply_applies_schedule_update(self) -> None:
         from analyst.delivery.bot import _make_message_handler
-        from analyst.delivery.sales_chat import SalesChatReply
+        from analyst.delivery.user_chat import UserChatReply
         from analyst.memory import ClientProfileUpdate, CompanionScheduleUpdate
 
         handler = _make_message_handler(self.mock_loop, self.mock_tools, self.mock_store)
@@ -1192,7 +1192,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
             with patch(
                 "analyst.delivery.bot._chat_reply",
                 new=AsyncMock(
-                    return_value=SalesChatReply(
+                    return_value=UserChatReply(
                         text="我应该去吃牛肉饭。",
                         profile_update=ClientProfileUpdate(),
                         schedule_update=CompanionScheduleUpdate(

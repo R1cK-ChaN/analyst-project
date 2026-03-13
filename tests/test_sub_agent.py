@@ -16,7 +16,7 @@ from analyst.agents.research.research_agent import build_research_agent_tool, bu
 from analyst.engine.sub_agent import SubAgentSpec, SubAgentHandler, build_sub_agent_tool, _extract_scope_tags
 from analyst.engine.sub_agent_specs import (
     build_research_sub_agents,
-    build_sales_sub_agents,
+    build_user_sub_agents,
     build_content_sub_agents,
 )
 from analyst.memory.render import RenderBudget, sub_agent_budget
@@ -277,8 +277,8 @@ def test_build_research_sub_agents():
         assert "task" in tool.parameters["required"]
 
 
-def test_build_sales_sub_agents():
-    """build_sales_sub_agents should return 2 tools with expected names."""
+def test_build_user_sub_agents():
+    """build_user_sub_agents should return 2 tools with expected names."""
     parent_tools = [
         _dummy_tool("fetch_live_markets"),
         _dummy_tool("fetch_live_news"),
@@ -294,7 +294,7 @@ def test_build_sales_sub_agents():
         _dummy_tool("sync_portfolio_from_broker"),
     ]
     provider = FakeProvider([])
-    tools = build_sales_sub_agents(parent_tools, provider)
+    tools = build_user_sub_agents(parent_tools, provider)
 
     assert len(tools) == 2
     names = {t.name for t in tools}
@@ -673,8 +673,8 @@ def _research_parent_tools() -> list[AgentTool]:
     ]
 
 
-def _sales_parent_tools() -> list[AgentTool]:
-    """Build a tool list with the real tool names from the sales agent."""
+def _user_parent_tools() -> list[AgentTool]:
+    """Build a tool list with the real tool names from the user chat agent."""
     return [
         _dummy_tool("fetch_live_markets"),
         _dummy_tool("fetch_live_news"),
@@ -713,10 +713,10 @@ def test_research_sub_agents_pick_correct_tools():
     assert len(data_handler.spec.tools) == 5
 
 
-def test_sales_sub_agents_pick_correct_tools():
+def test_user_sub_agents_pick_correct_tools():
     """Sales research_lookup should get 8 tools including fetch_live_markets."""
     provider = FakeProvider([])
-    tools = build_sales_sub_agents(_sales_parent_tools(), provider)
+    tools = build_user_sub_agents(_user_parent_tools(), provider)
     by_name = {t.name: t for t in tools}
 
     lookup_handler = by_name["research_lookup"].handler

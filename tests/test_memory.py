@@ -15,21 +15,21 @@ from analyst.memory import (
     build_chat_context,
     build_group_chat_context,
     build_research_context,
-    build_sales_context,
+    build_user_context,
     build_trading_context,
     record_chat_interaction,
-    record_sales_interaction,
+    record_user_interaction,
     refresh_group_member_public_inference,
 )
 from analyst.storage import SQLiteEngineStore
 
 
 class MemoryPipelineTest(unittest.TestCase):
-    def test_sales_context_is_isolated_by_client(self) -> None:
+    def test_user_context_is_isolated_by_client(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="client-a",
                 channel_id="telegram:1",
@@ -37,7 +37,7 @@ class MemoryPipelineTest(unittest.TestCase):
                 user_text="请简单一点，我最近主要看 BTC 和 Fed。",
                 assistant_text="好的，我会更简洁，并优先关注加密和联储。",
             )
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="client-b",
                 channel_id="telegram:2",
@@ -46,14 +46,14 @@ class MemoryPipelineTest(unittest.TestCase):
                 assistant_text="收到，我会优先按 A 股和中长期配置来解释。",
             )
 
-            context_a = build_sales_context(
+            context_a = build_user_context(
                 store=store,
                 client_id="client-a",
                 channel_id="telegram:1",
                 thread_id="main",
                 query="比特币今晚怎么看？",
             )
-            context_b = build_sales_context(
+            context_b = build_user_context(
                 store=store,
                 client_id="client-b",
                 channel_id="telegram:2",
@@ -74,7 +74,7 @@ class MemoryPipelineTest(unittest.TestCase):
             self.assertEqual(messages_count, 4)
             self.assertEqual(deliveries_count, 2)
 
-    def test_sales_uses_delivery_queue_not_raw_research_artifacts(self) -> None:
+    def test_user_context_uses_delivery_queue_not_raw_research_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
@@ -100,14 +100,14 @@ class MemoryPipelineTest(unittest.TestCase):
                 metadata={"artifact_type": raw_artifact.artifact_type},
             )
 
-            context_a = build_sales_context(
+            context_a = build_user_context(
                 store=store,
                 client_id="client-a",
                 channel_id="telegram:1",
                 thread_id="main",
                 query="今晚 CPI 怎么看？",
             )
-            context_b = build_sales_context(
+            context_b = build_user_context(
                 store=store,
                 client_id="client-b",
                 channel_id="telegram:2",
@@ -122,7 +122,7 @@ class MemoryPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="client-a",
                 channel_id="telegram:1",
@@ -154,11 +154,11 @@ class MemoryPipelineTest(unittest.TestCase):
             self.assertEqual(messages[-1].metadata["tool_audit"][0]["tool_name"], "generate_image")
             self.assertEqual(deliveries[0].metadata["tool_audit"][0]["status"], "ok")
 
-    def test_record_sales_interaction_updates_structured_client_profile(self) -> None:
+    def test_record_user_interaction_updates_structured_client_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="client-a",
                 channel_id="telegram:1",
@@ -180,7 +180,7 @@ class MemoryPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="client-a",
                 channel_id="telegram:1",
@@ -192,7 +192,7 @@ class MemoryPipelineTest(unittest.TestCase):
             self.assertEqual(profile.preferred_language, "zh")
             self.assertIn("gold", profile.watchlist_topics)
 
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="client-a",
                 channel_id="telegram:1",
@@ -210,7 +210,7 @@ class MemoryPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="client-a",
                 channel_id="telegram:1",
@@ -233,7 +233,7 @@ class MemoryPipelineTest(unittest.TestCase):
             self.assertEqual(profile.confidence, "medium")
             self.assertIn("sentiment", profile.notes)
 
-            context = build_sales_context(
+            context = build_user_context(
                 store=store,
                 client_id="client-a",
                 channel_id="telegram:1",
@@ -244,11 +244,11 @@ class MemoryPipelineTest(unittest.TestCase):
             self.assertIn("hk_equities", context)
             self.assertIn("current_mood: anxious", context)
 
-    def test_sales_context_uses_delivery_history_for_future_threads(self) -> None:
+    def test_user_context_uses_delivery_history_for_future_threads(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="client-a",
                 channel_id="telegram:1",
@@ -257,7 +257,7 @@ class MemoryPipelineTest(unittest.TestCase):
                 assistant_text="收到，后续会优先按联储和利率主线，并尽量简洁。",
             )
 
-            context = build_sales_context(
+            context = build_user_context(
                 store=store,
                 client_id="client-a",
                 channel_id="telegram:1",
@@ -451,7 +451,7 @@ class MemoryPipelineTest(unittest.TestCase):
             )
 
             # This must not raise TypeError / ValueError.
-            context = build_sales_context(
+            context = build_user_context(
                 store=store,
                 client_id="client-naive",
                 channel_id="telegram:99",
@@ -472,7 +472,7 @@ class MemoryPipelineTest(unittest.TestCase):
                 interaction_increment=1,
             )
 
-            context = build_sales_context(
+            context = build_user_context(
                 store=store,
                 client_id="client-aware",
                 channel_id="telegram:99",
@@ -485,7 +485,7 @@ class MemoryPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="client-pf",
                 channel_id="telegram:1",
@@ -500,7 +500,7 @@ class MemoryPipelineTest(unittest.TestCase):
             profile = store.get_client_profile("client-pf")
             self.assertIn("wife expecting next month", profile.personal_facts)
 
-            context = build_sales_context(
+            context = build_user_context(
                 store=store,
                 client_id="client-pf",
                 channel_id="telegram:1",
@@ -544,7 +544,7 @@ class MemoryPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="client-emo",
                 channel_id="telegram:1",
@@ -561,7 +561,7 @@ class MemoryPipelineTest(unittest.TestCase):
             self.assertEqual(profile.emotional_trend, "declining")
             self.assertEqual(profile.stress_level, "high")
 
-            context = build_sales_context(
+            context = build_user_context(
                 store=store,
                 client_id="client-emo",
                 channel_id="telegram:1",
@@ -656,7 +656,7 @@ class GroupMemoryTest(unittest.TestCase):
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
             # Set up speaker's user memory (from private chat)
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="u1",
                 channel_id="telegram:private",
@@ -796,7 +796,7 @@ class GroupMemoryTest(unittest.TestCase):
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
             # Bob's private chat: he shared sensitive info
-            record_sales_interaction(
+            record_user_interaction(
                 store=store,
                 client_id="bob",
                 channel_id="telegram:private-bob",

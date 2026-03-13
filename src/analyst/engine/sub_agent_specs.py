@@ -85,12 +85,12 @@ def build_research_sub_agents(
     return [build_sub_agent_tool(spec, provider, store, parent_agent="research") for spec in specs]
 
 
-def build_sales_sub_agents(
+def build_user_sub_agents(
     parent_tools: list[AgentTool],
     provider: LLMProvider,
     store: Any | None = None,
 ) -> list[AgentTool]:
-    """Build sub-agent tools for the Sales agent (Telegram bot)."""
+    """Build sub-agent tools for the user chat agent (Telegram bot)."""
     by_name = {t.name: t for t in parent_tools}
 
     specs = [
@@ -101,7 +101,7 @@ def build_sales_sub_agents(
                 "Returns a factual summary with relevant data points."
             ),
             system_prompt=(
-                "You are a research lookup sub-agent for the sales team. Given a question:\n"
+                "You are a research lookup sub-agent for the user chat agent. Given a question:\n"
                 "1. Gather relevant market data, macro indicators, and news\n"
                 "2. Focus on what the client needs to know\n"
                 "3. Produce a clear, factual summary (max 250 words)\n"
@@ -137,7 +137,7 @@ def build_sales_sub_agents(
         ),
     ]
 
-    return [build_sub_agent_tool(spec, provider, store, parent_agent="sales") for spec in specs]
+    return [build_sub_agent_tool(spec, provider, store, parent_agent="user") for spec in specs]
 
 
 def build_content_sub_agents(

@@ -20,8 +20,8 @@ from analyst.delivery.bot import (
     _routine_checkin_kind,
     _run_companion_checkins_job,
 )
-from analyst.delivery.sales_chat import system_prompt_with_memory
-from analyst.delivery.sales_chat import ChatReply
+from analyst.delivery.user_chat import system_prompt_with_memory
+from analyst.delivery.user_chat import ChatReply
 from analyst.memory import ClientProfileUpdate
 from analyst.storage import SQLiteEngineStore
 

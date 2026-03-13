@@ -193,9 +193,9 @@ Implemented in `src/analyst/tools/` — 13 tool builders across 12 files:
   - returns structured JSON with `delivery_video_path` in all successful motion cases, and includes paired Live Photo asset paths / `asset_id` only when Apple packaging is available
   - if SeedDance video generation fails after a selfie still was generated, the tool falls back to that still image; if video generation succeeds but Apple packaging is unavailable, the tool still returns a motion video result
   - `build_optional_live_photo_tool()` registers whenever SeedDance is configured; unsupported runtimes log that they are running in motion-video mode
-- both `LiveAnalystEngine._build_tools()` and `build_sales_tools()` now use `ToolKit` to assemble their tool lists, with universal tools (web search, live calendar, web fetch) composed per-agent
+- both `LiveAnalystEngine._build_tools()` and `build_user_chat_tools()` now use `ToolKit` to assemble their tool lists, with universal tools (web search, live calendar, web fetch) composed per-agent
 - the live-data, stored-data, and RAG-facing tool builders can now proxy through the `MacroDataClient` seam instead of binding directly to local storage or retriever implementations
-- the sales agent's `ToolKit` includes all 13 tools when live-photo generation is configured (6 live data + 3 universal + live calendar + portfolio sync + image generation + live-photo generation); otherwise the motion tool is omitted without breaking startup
+- the user chat agent's `ToolKit` includes all 13 tools when live-photo generation is configured (6 live data + 3 universal + live calendar + portfolio sync + image generation + live-photo generation); otherwise the motion tool is omitted without breaking startup
 - adding future universal tools follows the same pattern: create `_new_tool.py` with handler + `build_*_tool()` factory, export from `__init__.py`, agents opt in via `kit.add()`
 
 ### Storage layer
@@ -246,10 +246,10 @@ Implemented in `src/analyst/memory/`:
 - context builders (`service.py`):
   - `build_research_context()` — regime snapshots + recent notes + observations
   - `build_trading_context()` — positions, decisions, performance
-  - `build_sales_context()` — client interactions + profile for sales agent personalization, including absence awareness (`days_since_last_active` computed from `last_active_at`)
-  - `record_sales_interaction()` — persists raw messages to `conversation_messages` and extracts/accumulates client profile dimensions via LLM
+  - `build_user_context()` — client interactions + profile for user chat agent personalization, including absence awareness (`days_since_last_active` computed from `last_active_at`)
+  - `record_user_interaction()` — persists raw messages to `conversation_messages` and extracts/accumulates client profile dimensions via LLM
 - context rendering (`render.py`): `RenderBudget` for text formatting with character limits
-- conversation recording: every bot reply triggers `record_sales_interaction()`, which stores the raw message exchange and updates the client profile — all chat messages are recorded for later improvement
+- conversation recording: every bot reply triggers `record_user_interaction()`, which stores the raw message exchange and updates the client profile — all chat messages are recorded for later improvement
 - profile accumulation: dimensions build up across conversations — each new interaction can add or refine profile fields without overwriting previous data
 - emotional memory: `emotional_trend` (improving/declining/stable/volatile) and `stress_level` (low/moderate/high/critical) are tracked by the LLM across conversations and persisted in SQLite — the agent uses these to proactively check on stressed clients
 - personal facts memory: `personal_facts` list stores personal details the client mentions (family, hobbies, life events) — capped at 20, re-mentioned facts refresh recency so they survive the cap; the agent references these naturally in conversation
@@ -304,7 +304,7 @@ Implemented in `src/analyst/delivery/`:
     - native Claude turns use built-in `WebSearch` / `WebFetch`
     - selected analyst-owned read-only tools are shared through the local MCP bridge
     - image-generation, live-photo, and edit-style turns still stay on the host-loop path
-  - `MediaItem` dataclass and `_extract_media()` post-processor: scans agent loop message history for `generate_image` and `generate_live_photo` tool results, attaching photo or video media to `SalesChatReply`
+  - `MediaItem` dataclass and `_extract_media()` post-processor: scans agent loop message history for `generate_image` and `generate_live_photo` tool results, attaching photo or video media to `UserChatReply`
   - inbound media handling: the bot accepts Telegram photos and image documents, converts them into OpenRouter multimodal image input, and exposes the same attachment to generation tools when `use_attached_image=true`
   - media delivery: bot sends generated images as Telegram photos and motion selfies as Telegram videos, with managed temp-file cleanup after send
   - per-user conversation history (12 recent messages retrieved for continuity)
@@ -315,9 +315,9 @@ Implemented in `src/analyst/delivery/`:
   - typing simulation: length-proportional delay between multi-bubble messages with "typing..." indicator, mimicking real human typing rhythm
   - time-of-day awareness: current time (Asia/Shanghai) injected into every system prompt — agent can naturally reference late nights, early mornings, weekends
   - sales-memory hydration from `client_profiles`, `conversation_messages`, and `delivery_queue`
-  - structured sales-memory persistence after each free-text interaction via `record_sales_interaction()`
+  - structured sales-memory persistence after each free-text interaction via `record_user_interaction()`
   - 17 client profile dimensions extracted and accumulated across conversations (including emotional trend, stress level, and personal facts)
-- sales chat agent (`sales_chat.py`): standalone chat execution layer with tool wiring, client profile management, conversation history, time injection, role-specific shared MCP tool lists, `build_sales_tools()` factory, and media extraction from tool results
+- user chat agent (`user_chat.py`): standalone chat execution layer with tool wiring, client profile management, conversation history, time injection, role-specific shared MCP tool lists, `build_user_chat_tools()` factory, and media extraction from tool results
 - compliance disclaimers (formatter layer, kept for other consumers)
 - calendar reply formatting
 - Telegram-safe 4096-character truncation that preserves disclaimers
@@ -464,7 +464,7 @@ Done:
 - all responses generated by LLM through the execution layer — no hardcoded welcome/help text
 - host-loop tools for live data access depending on Seedance configuration: `fetch_live_calendar`, `get_live_article`, `get_live_markets`, `get_live_news`, `get_live_indicators`, `get_live_rates`, `get_live_rate_expectations`, `web_search`, `web_fetch`, `sync_portfolio_from_broker`, `generate_image`, optional `generate_live_photo`, plus regime/calendar/briefing tools
 - Claude Code native-agent mode can additionally use built-in web tools plus shared analyst MCP tools when `ANALYST_CLAUDE_CODE_USE_NATIVE_AGENT=1`
-- sales chat agent (`sales_chat.py`): standalone execution layer with `build_sales_tools()` factory, client profile management, conversation history, capability overlays, and media extraction from tool results
+- user chat agent (`user_chat.py`): standalone execution layer with `build_user_chat_tools()` factory, client profile management, conversation history, capability overlays, and media extraction from tool results
 - per-user conversation history (12 recent messages retrieved for continuity)
 - command handlers: `/start`, `/help`, `/regime`, `/calendar`, `/premarket`
 - free-text messages routed through agent with full tool access
@@ -474,7 +474,7 @@ Done:
   - `client_profiles` — 14 dimensions extracted and accumulated
   - `conversation_threads` / `conversation_messages` — all messages recorded
   - `delivery_queue`
-  - `record_sales_interaction()` called after every bot reply for persistence
+  - `record_user_interaction()` called after every bot reply for persistence
 - client/thread sales context is injected into the agent loop before free-text replies
 - deployed to Contabo VPS via rsync, running as background process
 

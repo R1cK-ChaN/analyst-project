@@ -854,7 +854,7 @@ class SQLiteMemoryMixin:
         scored.sort(key=lambda pair: (pair[0], pair[1].created_at), reverse=True)
         return [record for _, record in scored[:limit]]
 
-    def record_sales_interaction(
+    def record_user_interaction(
         self,
         *,
         client_id: str,
@@ -955,7 +955,7 @@ class SQLiteMemoryMixin:
                     client_id,
                     channel,
                     thread_id,
-                    "sales_reply",
+                    "user_reply",
                     None,
                     assistant_text,
                     "delivered",

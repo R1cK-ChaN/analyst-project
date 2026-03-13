@@ -2,7 +2,7 @@
 
 Status note on March 10, 2026:
 This document is still the target-state workstream plan. For the current implemented status inside `analyst-project/`, see `00-overview/Implementation_Status.md`.
-Implementation note: the Telegram bot is now deployed with 10 live tools, group chat support, conversation recording (all messages + 14 client profile dimensions), and a sales chat agent. WeCom transport remains target-state.
+Implementation note: the Telegram bot is now deployed with 10 live tools, group chat support, conversation recording (all messages + 14 client profile dimensions), and a user chat agent. WeCom transport remains target-state.
 
 ## Critical Strategic Update (from Marketing Research)
 

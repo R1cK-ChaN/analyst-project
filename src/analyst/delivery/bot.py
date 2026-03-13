@@ -52,9 +52,7 @@ from analyst.memory import (  # noqa: E402
     ClientProfileUpdate,
     build_chat_context,
     build_group_chat_context,
-    build_sales_context,
     record_chat_interaction,
-    record_sales_interaction,
     refresh_group_member_public_inference,
 )
 from analyst.storage import SQLiteEngineStore  # noqa: E402
@@ -108,9 +106,8 @@ from .companion_reminders import (  # noqa: E402
 from .companion_schedule import (  # noqa: E402
     apply_companion_schedule_update,
 )
-from .sales_chat import (  # noqa: E402
-    ChatPersonaMode,
-    SalesChatReply,
+from .user_chat import (  # noqa: E402
+    UserChatReply,
     build_companion_services,
     generate_chat_reply,
     generate_proactive_companion_reply,
@@ -222,7 +219,7 @@ async def _send_companion_proactive_message(
         thread_id=state.thread_id,
         query="",
         current_user_text="",
-        persona_mode=ChatPersonaMode.COMPANION.value,
+        persona_mode="companion",
     )
     reply = await asyncio.to_thread(
         generate_proactive_companion_reply,
@@ -441,9 +438,10 @@ async def _chat_reply(
     history_text: str | None = None,
     attached_image: RequestImageInput | None = None,
     companion_local_context: str = "",
-    persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
-) -> SalesChatReply:
-    """Send user_text through the agent loop with persona, history, tools, and sales context."""
+    persona_mode: str | None = None,
+) -> UserChatReply:
+    """Send user_text through the agent loop with persona, history, tools, and chat context."""
+    del persona_mode
     history = _get_history(context, is_group=is_group, thread_id=thread_id)
 
     try:
@@ -459,7 +457,6 @@ async def _chat_reply(
                 group_context=group_context,
                 user_content=user_content,
                 companion_local_context=companion_local_context,
-                persona_mode=persona_mode,
             )
         response_text = result.text
         profile_update = result.profile_update
@@ -485,7 +482,7 @@ async def _chat_reply(
     )
     _append_history(context, "assistant", response_text, is_group=is_group, thread_id=thread_id)
 
-    return SalesChatReply(
+    return UserChatReply(
         text=response_text,
         profile_update=profile_update,
         media=media,
@@ -493,22 +490,15 @@ async def _chat_reply(
     )
 
 
-def _resolve_runtime_persona_mode() -> ChatPersonaMode:
-    return ChatPersonaMode.COMPANION
-
-
-def _build_services() -> tuple[AgentExecutor, list[AgentTool], SQLiteEngineStore, ChatPersonaMode]:
-    """Wire up the agent loop, tools, memory store, and active chat persona."""
-    persona_mode = _resolve_runtime_persona_mode()
+def _build_services() -> tuple[AgentExecutor, list[AgentTool], SQLiteEngineStore]:
+    """Wire up the agent loop, tools, and memory store."""
     agent_loop, tools, store = build_companion_services()
-    return agent_loop, tools, store, persona_mode
+    return agent_loop, tools, store
 
 
 def _make_start_handler(
     agent_loop: AgentExecutor,
     tools: list[AgentTool],
-    *,
-    persona_mode: ChatPersonaMode = ChatPersonaMode.COMPANION,
 ):
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
@@ -522,7 +512,6 @@ def _make_start_handler(
             context,
             agent_loop,
             tools,
-            persona_mode=persona_mode,
         )
         await update.effective_message.reply_text(reply.text)
 
@@ -532,8 +521,6 @@ def _make_start_handler(
 def _make_help_handler(
     agent_loop: AgentExecutor,
     tools: list[AgentTool],
-    *,
-    persona_mode: ChatPersonaMode = ChatPersonaMode.COMPANION,
 ):
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
@@ -544,7 +531,6 @@ def _make_help_handler(
             context,
             agent_loop,
             tools,
-            persona_mode=persona_mode,
         )
         await update.effective_message.reply_text(reply.text)
 
@@ -591,8 +577,6 @@ def _make_checkins_toggle_handler(
 def _make_regime_handler(
     agent_loop: AgentExecutor,
     tools: list[AgentTool],
-    *,
-    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
 ):
     async def regime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
@@ -603,7 +587,6 @@ def _make_regime_handler(
             context,
             agent_loop,
             tools,
-            persona_mode=persona_mode,
         )
         await update.effective_message.reply_text(reply.text)
 
@@ -613,8 +596,6 @@ def _make_regime_handler(
 def _make_calendar_handler(
     agent_loop: AgentExecutor,
     tools: list[AgentTool],
-    *,
-    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
 ):
     async def calendar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
@@ -625,7 +606,6 @@ def _make_calendar_handler(
             context,
             agent_loop,
             tools,
-            persona_mode=persona_mode,
         )
         await update.effective_message.reply_text(reply.text)
 
@@ -635,8 +615,6 @@ def _make_calendar_handler(
 def _make_premarket_handler(
     agent_loop: AgentExecutor,
     tools: list[AgentTool],
-    *,
-    persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
 ):
     async def premarket(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
@@ -647,7 +625,6 @@ def _make_premarket_handler(
             context,
             agent_loop,
             tools,
-            persona_mode=persona_mode,
         )
         await update.effective_message.reply_text(reply.text)
 
@@ -658,8 +635,6 @@ def _make_message_handler(
     agent_loop: AgentExecutor,
     tools: list[AgentTool],
     store: SQLiteEngineStore,
-    *,
-    persona_mode: ChatPersonaMode = ChatPersonaMode.COMPANION,
 ):
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
@@ -676,18 +651,17 @@ def _make_message_handler(
         now_utc = utc_now()
         companion_lifestyle_state = None
         companion_local_context = ""
-        if persona_mode is ChatPersonaMode.COMPANION:
-            companion_lifestyle_state = _refresh_companion_lifestyle_state(
-                store,
-                client_id=user_id,
-                channel_id=channel_id,
-                thread_id=thread_id,
-                now=now_utc,
-            )
-            companion_local_context = _companion_local_context(store, companion_lifestyle_state, now_utc)
+        companion_lifestyle_state = _refresh_companion_lifestyle_state(
+            store,
+            client_id=user_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            now=now_utc,
+        )
+        companion_local_context = _companion_local_context(store, companion_lifestyle_state, now_utc)
 
         in_group = _is_group_chat(update)
-        if not in_group and persona_mode is ChatPersonaMode.COMPANION:
+        if not in_group:
             store.clear_companion_checkin_pending(
                 client_id=user_id,
                 channel=channel_id,
@@ -759,9 +733,9 @@ def _make_message_handler(
                 group_id=group_id,
                 thread_id=thread_id,
                 speaker_user_id=user_id,
-                persona_mode=persona_mode.value,
+                persona_mode="companion",
             )
-        elif persona_mode is ChatPersonaMode.COMPANION:
+        else:
             memory_context = build_chat_context(
                 store=store,
                 client_id=user_id,
@@ -769,16 +743,7 @@ def _make_message_handler(
                 thread_id=thread_id,
                 query=llm_text,
                 current_user_text=history_user_text,
-                persona_mode=persona_mode.value,
-            )
-        else:
-            memory_context = build_sales_context(
-                store=store,
-                client_id=user_id,
-                channel_id=channel_id,
-                thread_id=thread_id,
-                query=llm_text,
-                current_user_text=history_user_text,
+                persona_mode="companion",
             )
         profile = store.get_client_profile(user_id)
         reply = await _chat_reply(
@@ -795,7 +760,6 @@ def _make_message_handler(
             history_text=history_user_text,
             attached_image=attached_image,
             companion_local_context=companion_local_context,
-            persona_mode=persona_mode,
         )
         mention_members = store.list_group_members(group_id, limit=100) if in_group and group_id else []
         rendered_reply_text = reply.text
@@ -805,56 +769,44 @@ def _make_message_handler(
             history = _get_history(context, is_group=in_group, thread_id=thread_id)
             if history and history[-1]["role"] == "assistant":
                 history[-1]["content"] = rendered_reply_text
-        if persona_mode is ChatPersonaMode.COMPANION:
-            apply_companion_schedule_update(
+        apply_companion_schedule_update(
+            store,
+            reply.schedule_update,
+            now=now_utc,
+            routine_state=str(getattr(companion_lifestyle_state, "routine_state", "") or ""),
+            user_text=history_user_text,
+        )
+        if not in_group:
+            apply_companion_reminder_update(
                 store,
-                reply.schedule_update,
+                reply.reminder_update,
+                client_id=user_id,
+                channel_id=channel_id,
+                thread_id=thread_id,
                 now=now_utc,
-                routine_state=str(getattr(companion_lifestyle_state, "routine_state", "") or ""),
-                user_text=history_user_text,
+                preferred_language=profile.preferred_language,
             )
-            if not in_group:
-                apply_companion_reminder_update(
-                    store,
-                    reply.reminder_update,
-                    client_id=user_id,
-                    channel_id=channel_id,
-                    thread_id=thread_id,
-                    now=now_utc,
-                    preferred_language=profile.preferred_language,
-                )
-            record_chat_interaction(
-                store=store,
+        record_chat_interaction(
+            store=store,
+            client_id=user_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            user_text=history_user_text,
+            assistant_text=rendered_reply_text,
+            assistant_profile_update=reply.profile_update,
+            tool_audit=reply.tool_audit,
+            persona_mode="companion",
+        )
+        updated_profile = store.get_client_profile(user_id)
+        if not in_group:
+            _refresh_companion_checkin_schedule(
+                store,
                 client_id=user_id,
                 channel_id=channel_id,
                 thread_id=thread_id,
                 user_text=history_user_text,
-                assistant_text=rendered_reply_text,
-                assistant_profile_update=reply.profile_update,
-                tool_audit=reply.tool_audit,
-                persona_mode=persona_mode.value,
-            )
-            updated_profile = store.get_client_profile(user_id)
-            if not in_group:
-                _refresh_companion_checkin_schedule(
-                    store,
-                    client_id=user_id,
-                    channel_id=channel_id,
-                    thread_id=thread_id,
-                    user_text=history_user_text,
-                    profile=updated_profile,
-                    now=now_utc,
-                )
-        else:
-            record_sales_interaction(
-                store=store,
-                client_id=user_id,
-                channel_id=channel_id,
-                thread_id=thread_id,
-                user_text=history_user_text,
-                assistant_text=rendered_reply_text,
-                assistant_profile_update=reply.profile_update,
-                tool_audit=reply.tool_audit,
+                profile=updated_profile,
+                now=now_utc,
             )
         bubbles = rendered_bubbles or [(bubble, []) for bubble in split_into_bubbles(rendered_reply_text)]
         elapsed = asyncio.get_running_loop().time() - reply_started
@@ -920,17 +872,17 @@ def _make_message_handler(
 
 def build_application(token: str) -> Application:
     """Build and return a fully configured Telegram Application."""
-    agent_loop, tools, store, persona_mode = _build_services()
+    agent_loop, tools, store = _build_services()
 
     app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", _make_start_handler(agent_loop, tools, persona_mode=persona_mode)))
-    app.add_handler(CommandHandler("help", _make_help_handler(agent_loop, tools, persona_mode=persona_mode)))
+    app.add_handler(CommandHandler("start", _make_start_handler(agent_loop, tools)))
+    app.add_handler(CommandHandler("help", _make_help_handler(agent_loop, tools)))
     app.add_handler(CommandHandler("checkins_on", _make_checkins_toggle_handler(store, enabled=True)))
     app.add_handler(CommandHandler("checkins_off", _make_checkins_toggle_handler(store, enabled=False)))
     app.add_handler(
         MessageHandler(
             (filters.TEXT | filters.PHOTO | filters.Document.IMAGE) & ~filters.COMMAND,
-            _make_message_handler(agent_loop, tools, store, persona_mode=persona_mode),
+            _make_message_handler(agent_loop, tools, store),
         )
     )
     if app.job_queue is not None:

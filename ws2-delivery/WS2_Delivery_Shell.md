@@ -6,7 +6,7 @@ Current code includes a persona-driven Telegram agent bot (陈襄) deployed to a
 - 12-13 live tools (6 data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation)
 - group chat support (observes silently, replies on @mention)
 - reply-to-message context: referenced message text extracted and included in LLM prompt, with partial quote support
-- sales chat agent (`sales_chat.py`) with client profile management and media extraction from tool results
+- user chat agent (`user_chat.py`) with client profile management and media extraction from tool results
 - image generation via OpenRouter (`generate_image` tool) with photo delivery alongside text bubbles
 - live-photo generation via SeedDance (`generate_live_photo` tool) with video delivery and managed temp-file cleanup
 - conversation recording: all messages persisted to SQLite, 17 client profile dimensions extracted and accumulated

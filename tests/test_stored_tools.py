@@ -225,41 +225,21 @@ class TestResearchSearchHandler(_StoreTestMixin, unittest.TestCase):
 
 
 class TestToolsWiredInBuildChatTools(unittest.TestCase):
-    """Verify the 4 new tools appear in build_chat_tools() when store is provided."""
+    """Verify stored research tools appear in the generic user chat tool surface."""
 
     def test_stored_tools_present(self) -> None:
         from unittest.mock import MagicMock
-        from analyst.delivery.sales_chat import build_chat_tools, ChatPersonaMode
+        from analyst.delivery.user_chat import build_chat_tools
 
         engine = MagicMock()
-        engine.get_regime_summary.return_value = MagicMock(body_markdown="test")
-        engine.get_calendar.return_value = []
-        engine.build_premarket_briefing.return_value = MagicMock(body_markdown="test")
-
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SQLiteEngineStore(db_path=Path(tmpdir) / "test.db")
-            tools = build_chat_tools(engine, store, persona_mode=ChatPersonaMode.SALES)
+            tools = build_chat_tools(engine, store, provider=MagicMock())
             tool_names = {t.name for t in tools}
             self.assertIn("search_news", tool_names)
             self.assertIn("get_fed_communications", tool_names)
             self.assertIn("get_indicator_history", tool_names)
             self.assertIn("search_research_notes", tool_names)
-
-    def test_stored_tools_absent_without_store(self) -> None:
-        from unittest.mock import MagicMock
-        from analyst.delivery.sales_chat import build_chat_tools, ChatPersonaMode
-
-        engine = MagicMock()
-        engine.get_regime_summary.return_value = MagicMock(body_markdown="test")
-        engine.get_calendar.return_value = []
-        engine.build_premarket_briefing.return_value = MagicMock(body_markdown="test")
-
-        tools = build_chat_tools(engine, store=None, persona_mode=ChatPersonaMode.SALES)
-        tool_names = {t.name for t in tools}
-        self.assertNotIn("search_news", tool_names)
-        self.assertNotIn("get_fed_communications", tool_names)
-        self.assertNotIn("get_indicator_history", tool_names)
-        self.assertNotIn("search_research_notes", tool_names)
 
 
 if __name__ == "__main__":
