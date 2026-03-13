@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
+import re
 from typing import Any
 
 from analyst.macro_data import MacroDataClient
@@ -15,6 +16,49 @@ from analyst.storage import (
 
 from .profile import ClientProfileUpdate, extract_client_profile_update, merge_client_profile_updates
 from .render import RenderBudget, render_context_sections, trim_text
+
+_GROUP_HUMOR_MARKERS = (
+    "lol",
+    "lmao",
+    "haha",
+    "hehe",
+    "rofl",
+    "哈哈",
+    "哈哈哈",
+    "hhh",
+    "233",
+    "xd",
+    "😂",
+    "🤣",
+    "😆",
+)
+_GROUP_SUPPORT_MARKERS = (
+    "you got this",
+    "hang in there",
+    "take care",
+    "hope you're okay",
+    "hope youre okay",
+    "proud of you",
+    "加油",
+    "抱抱",
+    "辛苦了",
+    "别慌",
+    "没事",
+    "稳住",
+    "你可以",
+    "理解你",
+    "懂你",
+)
+_GROUP_TENSION_MARKERS = (
+    "stop bullying",
+    "shut up",
+    "wtf",
+    "够了",
+    "闭嘴",
+    "别闹",
+    "烦死",
+    "少来",
+)
 
 
 def build_research_context(
@@ -296,7 +340,7 @@ def build_group_chat_context(
     persona_mode: str = "sales",
     budget: RenderBudget | None = None,
 ) -> str:
-    """Build three-layer context for group chat: group messages + speaker memory + participant model."""
+    """Build group chat context: messages + speaker memory + participants + inferred roles + social graph."""
     limits = budget or RenderBudget()
 
     # Layer 1: Group conversation (working memory)
@@ -318,9 +362,23 @@ def build_group_chat_context(
     members = store.list_group_members(group_id, limit=15)
     participant_lines = _render_participant_model(members, current_speaker_id=speaker_user_id)
 
+    # Layer 4: Public-only inferred roles/persona hints
+    recent_group_messages = store.list_recent_group_messages(group_id, limit=80)
+    inferred_members = _resolve_group_member_inference(members, recent_group_messages)
+    role_lines = _render_group_roles(
+        members,
+        inferred_members,
+        current_speaker_id=speaker_user_id,
+    )
+
+    # Layer 5: Public-only thread social graph, derived on demand
+    social_lines = _render_group_social_graph(group_messages, members)
+
     sections: list[tuple[str, list[str]]] = [
         ("group_conversation", group_lines),
         ("speaker_memory", speaker_lines),
+        ("group_roles", role_lines),
+        ("group_social_graph", social_lines),
         ("group_participants", participant_lines),
     ]
     return render_context_sections(sections, budget=limits)
@@ -336,13 +394,355 @@ def _render_participant_model(
         parts = [member.display_name or member.user_id]
         if member.user_id == current_speaker_id:
             parts.append("(current speaker)")
-        if member.role_in_group:
-            parts.append(member.role_in_group)
-        if member.personality_notes:
-            parts.append(member.personality_notes)
         parts.append(f"msgs: {member.message_count}")
         lines.append(f"- {' | '.join(parts)}")
     return lines
+
+
+def refresh_group_member_public_inference(
+    *,
+    store: SQLiteEngineStore,
+    group_id: str,
+    limit: int = 80,
+) -> None:
+    members = store.list_group_members(group_id, limit=100)
+    if not members:
+        return
+    recent_messages = store.list_recent_group_messages(group_id, limit=limit)
+    inferred_members = _derive_group_member_inference(members, recent_messages)
+    for member in members:
+        role_in_group, personality_notes = inferred_members.get(member.user_id, ("", ""))
+        if role_in_group == member.role_in_group and personality_notes == member.personality_notes:
+            continue
+        store.update_group_member_inference(
+            group_id=group_id,
+            user_id=member.user_id,
+            role_in_group=role_in_group,
+            personality_notes=personality_notes,
+        )
+
+
+def _resolve_group_member_inference(
+    members: list[GroupMemberRecord],
+    group_messages: list[GroupMessageRecord],
+) -> dict[str, tuple[str, str]]:
+    derived = _derive_group_member_inference(members, group_messages)
+    resolved: dict[str, tuple[str, str]] = {}
+    for member in members:
+        derived_role, derived_notes = derived.get(member.user_id, ("", ""))
+        resolved[member.user_id] = (
+            member.role_in_group or derived_role,
+            member.personality_notes or derived_notes,
+        )
+    return resolved
+
+
+def _derive_group_member_inference(
+    members: list[GroupMemberRecord],
+    group_messages: list[GroupMessageRecord],
+) -> dict[str, tuple[str, str]]:
+    stats = _collect_group_member_stats(members, group_messages)
+    total_recent_messages = sum(stat["recent_messages"] for stat in stats.values())
+    inferred: dict[str, tuple[str, str]] = {}
+    for member in members:
+        member_stats = stats.get(member.user_id, _empty_group_member_stats())
+        role = _infer_group_role(member, member_stats, total_recent_messages=total_recent_messages)
+        notes = _build_group_personality_notes(
+            member,
+            member_stats,
+            role=role,
+            total_recent_messages=total_recent_messages,
+        )
+        inferred[member.user_id] = (role, notes)
+    return inferred
+
+
+def _collect_group_member_stats(
+    members: list[GroupMemberRecord],
+    group_messages: list[GroupMessageRecord],
+) -> dict[str, dict[str, Any]]:
+    stats = {member.user_id: _empty_group_member_stats() for member in members}
+    human_members = [member for member in members if member.user_id != "assistant"]
+    previous_human_user_id = ""
+    for message in group_messages:
+        if message.user_id == "assistant":
+            previous_human_user_id = ""
+            continue
+        if message.user_id not in stats:
+            continue
+        text = str(message.content or "").strip()
+        member_stats = stats[message.user_id]
+        member_stats["recent_messages"] += 1
+        member_stats["char_total"] += len(text)
+        if "?" in text or "？" in text:
+            member_stats["questions"] += 1
+        member_stats["humor"] += _count_markers(text, _GROUP_HUMOR_MARKERS)
+        member_stats["support"] += _count_markers(text, _GROUP_SUPPORT_MARKERS)
+        mentions = _extract_public_mentions(text, human_members, speaker_user_id=message.user_id)
+        member_stats["mentions"] += len(mentions)
+        member_stats["interacted_with"].update(mentions)
+        if previous_human_user_id and previous_human_user_id != message.user_id:
+            member_stats["interacted_with"].add(previous_human_user_id)
+        previous_human_user_id = message.user_id
+    return stats
+
+
+def _empty_group_member_stats() -> dict[str, Any]:
+    return {
+        "recent_messages": 0,
+        "char_total": 0,
+        "questions": 0,
+        "humor": 0,
+        "support": 0,
+        "mentions": 0,
+        "interacted_with": set(),
+    }
+
+
+def _infer_group_role(
+    member: GroupMemberRecord,
+    stats: dict[str, Any],
+    *,
+    total_recent_messages: int,
+) -> str:
+    recent_messages = int(stats["recent_messages"])
+    if recent_messages <= 1 and member.message_count <= 2:
+        return "quiet_observer"
+    if recent_messages <= 0 or total_recent_messages <= 0:
+        return ""
+
+    message_share = recent_messages / total_recent_messages
+    question_ratio = stats["questions"] / max(recent_messages, 1)
+    if message_share >= 0.4 and recent_messages >= 4:
+        return "leader"
+    if stats["support"] >= 2 and len(stats["interacted_with"]) >= 2:
+        return "mediator"
+    if stats["humor"] >= 2 and recent_messages >= 2:
+        return "joker"
+    if stats["questions"] >= 2 and question_ratio >= 0.5:
+        return "question_asker"
+    return ""
+
+
+def _build_group_personality_notes(
+    member: GroupMemberRecord,
+    stats: dict[str, Any],
+    *,
+    role: str,
+    total_recent_messages: int,
+) -> str:
+    recent_messages = int(stats["recent_messages"])
+    avg_chars = stats["char_total"] / max(recent_messages, 1)
+    interacted_count = len(stats["interacted_with"])
+    message_share = recent_messages / max(total_recent_messages, 1)
+
+    notes: list[str] = []
+    if role == "leader":
+        notes.append("drives a lot of the chat")
+    if role == "mediator":
+        notes.append("often supportive")
+    if role == "joker":
+        notes.append("often uses jokes/laughter")
+    if role == "question_asker":
+        notes.append("often asks questions")
+    if role == "quiet_observer":
+        notes.append("low public signal so far")
+
+    if recent_messages >= 2 and avg_chars <= 28:
+        notes.append("brief replies")
+    if recent_messages >= 2 and avg_chars >= 120:
+        notes.append("longer messages")
+    if stats["support"] >= 1:
+        notes.append("often supportive")
+    if stats["questions"] >= 2:
+        notes.append("often asks questions")
+    if stats["humor"] >= 1:
+        notes.append("often uses jokes/laughter")
+    if stats["mentions"] >= 2:
+        notes.append("frequently tags others")
+    if interacted_count >= 2:
+        notes.append("interacts with several members")
+    if recent_messages >= 3 and message_share >= 0.35:
+        notes.append("high recent activity")
+    if recent_messages <= 1 and member.message_count <= 2:
+        notes.append("low public signal so far")
+
+    deduped: list[str] = []
+    for note in notes:
+        if note not in deduped:
+            deduped.append(note)
+    return "; ".join(deduped[:2])
+
+
+def _render_group_roles(
+    members: list[GroupMemberRecord],
+    inferred_members: dict[str, tuple[str, str]],
+    *,
+    current_speaker_id: str = "",
+) -> list[str]:
+    lines: list[str] = []
+    ordered_members = sorted(members, key=lambda member: (-member.message_count, (member.display_name or member.user_id).casefold()))
+    for member in ordered_members:
+        role_in_group, personality_notes = inferred_members.get(member.user_id, ("", ""))
+        if not role_in_group and not personality_notes:
+            continue
+        name = member.display_name or member.user_id
+        if member.user_id == current_speaker_id:
+            name = f"{name} (current speaker)"
+        parts: list[str] = []
+        if role_in_group:
+            parts.append(f"seems like {role_in_group.replace('_', ' ')}")
+        if personality_notes:
+            parts.append(personality_notes)
+        lines.append(f"- {name}: {'; '.join(parts)}")
+    return lines
+
+
+def _render_group_social_graph(
+    group_messages: list[GroupMessageRecord],
+    members: list[GroupMemberRecord],
+) -> list[str]:
+    edges = _derive_group_social_edges(group_messages, members)
+    lines: list[str] = []
+    for edge in edges[:6]:
+        level_phrase = {
+            "high": "seem closely connected",
+            "medium": "interact regularly",
+            "low": "occasionally engage",
+        }[edge["level"]]
+        line = f"- {edge['members']}: {level_phrase}"
+        if edge["tone"]:
+            line += f"; tone seems {edge['tone']}"
+        lines.append(line)
+    return lines
+
+
+def _derive_group_social_edges(
+    group_messages: list[GroupMessageRecord],
+    members: list[GroupMemberRecord],
+) -> list[dict[str, Any]]:
+    display_names = {
+        member.user_id: member.display_name or member.user_id
+        for member in members
+        if member.user_id != "assistant"
+    }
+    edge_stats: dict[tuple[str, str], dict[str, Any]] = {}
+    human_members = [member for member in members if member.user_id != "assistant"]
+    previous_human_message: GroupMessageRecord | None = None
+
+    for message in group_messages:
+        if message.user_id == "assistant":
+            previous_human_message = None
+            continue
+        if message.user_id not in display_names:
+            continue
+        text = str(message.content or "").strip()
+        current_tone = _message_social_tone(text)
+
+        if previous_human_message is not None and previous_human_message.user_id != message.user_id:
+            edge = edge_stats.setdefault(
+                _pair_key(previous_human_message.user_id, message.user_id),
+                _empty_social_edge_stats(),
+            )
+            edge["score"] += 1
+            edge["directions"].add((previous_human_message.user_id, message.user_id))
+            edge["tones"][current_tone] += 1
+
+        for mentioned_user_id in _extract_public_mentions(text, human_members, speaker_user_id=message.user_id):
+            edge = edge_stats.setdefault(_pair_key(message.user_id, mentioned_user_id), _empty_social_edge_stats())
+            edge["score"] += 2
+            edge["directions"].add((message.user_id, mentioned_user_id))
+            edge["tones"][current_tone] += 1
+
+        previous_human_message = message
+
+    rendered_edges: list[dict[str, Any]] = []
+    for (user_a, user_b), stats in edge_stats.items():
+        score = int(stats["score"])
+        directions = stats["directions"]
+        if any(src == user_a and dst == user_b for src, dst in directions) and any(
+            src == user_b and dst == user_a for src, dst in directions
+        ):
+            score += 2
+        if score < 2:
+            continue
+        rendered_edges.append(
+            {
+                "members": f"{display_names[user_a]} <-> {display_names[user_b]}",
+                "level": "high" if score >= 8 else "medium" if score >= 3 else "low",
+                "tone": _dominant_edge_tone(stats["tones"]),
+                "score": score,
+            }
+        )
+
+    rendered_edges.sort(key=lambda edge: (-int(edge["score"]), edge["members"].casefold()))
+    return rendered_edges
+
+
+def _empty_social_edge_stats() -> dict[str, Any]:
+    return {
+        "score": 0,
+        "directions": set(),
+        "tones": defaultdict(int),
+    }
+
+
+def _pair_key(user_a: str, user_b: str) -> tuple[str, str]:
+    return tuple(sorted((user_a, user_b)))
+
+
+def _message_social_tone(text: str) -> str:
+    if _count_markers(text, _GROUP_TENSION_MARKERS) > 0:
+        return "tense"
+    if _count_markers(text, _GROUP_SUPPORT_MARKERS) > 0:
+        return "supportive"
+    if _count_markers(text, _GROUP_HUMOR_MARKERS) > 0:
+        return "playful"
+    return ""
+
+
+def _dominant_edge_tone(tone_counts: dict[str, int]) -> str:
+    ranked = [(count, tone) for tone, count in tone_counts.items() if tone]
+    if not ranked:
+        return ""
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return ranked[0][1]
+
+
+def _extract_public_mentions(
+    text: str,
+    members: list[GroupMemberRecord],
+    *,
+    speaker_user_id: str,
+) -> set[str]:
+    mentioned_user_ids: set[str] = set()
+    for member in members:
+        if member.user_id == speaker_user_id:
+            continue
+        if _message_mentions_display_name(text, member.display_name):
+            mentioned_user_ids.add(member.user_id)
+    return mentioned_user_ids
+
+
+def _message_mentions_display_name(text: str, display_name: str) -> bool:
+    normalized_name = " ".join(str(display_name or "").strip().split())
+    if not normalized_name:
+        return False
+    lowered_text = str(text or "").casefold()
+    lowered_name = normalized_name.casefold()
+    if not lowered_name:
+        return False
+    if any(ord(char) > 127 for char in lowered_name):
+        return lowered_name in lowered_text
+    if len(lowered_name) < 2:
+        return False
+    pattern = rf"(?<![a-z0-9_])@?{re.escape(lowered_name)}(?![a-z0-9_])"
+    return re.search(pattern, lowered_text) is not None
+
+
+def _count_markers(text: str, markers: tuple[str, ...]) -> int:
+    lowered = str(text or "").casefold()
+    return sum(1 for marker in markers if marker.casefold() in lowered)
 
 
 def _render_client_profile(profile: ClientProfileRecord) -> list[str]:

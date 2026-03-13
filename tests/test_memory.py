@@ -19,6 +19,7 @@ from analyst.memory import (
     build_trading_context,
     record_chat_interaction,
     record_sales_interaction,
+    refresh_group_member_public_inference,
 )
 from analyst.storage import SQLiteEngineStore
 
@@ -560,7 +561,7 @@ class MemoryPipelineTest(unittest.TestCase):
 
 
 class GroupMemoryTest(unittest.TestCase):
-    """Tests for the three-layer group chat memory system."""
+    """Tests for the group chat memory and public inference system."""
 
     def test_group_messages_persist_and_list_chronologically(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -620,8 +621,8 @@ class GroupMemoryTest(unittest.TestCase):
             self.assertEqual(profile.group_name, "宏观讨论群")
             self.assertEqual(profile.member_count, 5)
 
-    def test_group_chat_context_three_layers(self) -> None:
-        """build_group_chat_context should include group messages, speaker memory, and participants."""
+    def test_group_chat_context_includes_roles_and_social_graph(self) -> None:
+        """build_group_chat_context should include public-only role and relationship hints."""
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
 
@@ -640,8 +641,20 @@ class GroupMemoryTest(unittest.TestCase):
             )
 
             # Set up group messages
-            store.append_group_message(group_id="grp-1", thread_id="main", user_id="u2", display_name="Bob", content="今天市场怎么样")
-            store.append_group_message(group_id="grp-1", thread_id="main", user_id="u1", display_name="Alice", content="哈哈最近心情不好")
+            store.append_group_message(
+                group_id="grp-1",
+                thread_id="main",
+                user_id="u2",
+                display_name="Bob",
+                content="Alice 今天市场怎么样？",
+            )
+            store.append_group_message(
+                group_id="grp-1",
+                thread_id="main",
+                user_id="u1",
+                display_name="Alice",
+                content="Bob 哈哈最近心情不好",
+            )
 
             # Track members
             store.upsert_group_member(group_id="grp-1", user_id="u1", display_name="Alice")
@@ -664,11 +677,89 @@ class GroupMemoryTest(unittest.TestCase):
             self.assertIn("current_mood: sad", context)
             self.assertIn("recently went through a breakup", context)
 
-            # Layer 3: Participant model should be present
+            # Layer 3+: Participant model and public inference should be present
             self.assertIn("group_participants", context)
+            self.assertIn("group_roles", context)
+            self.assertIn("group_social_graph", context)
             self.assertIn("Alice", context)
             self.assertIn("Bob", context)
             self.assertIn("(current speaker)", context)
+            self.assertIn("Alice <-> Bob", context)
+            self.assertIn("tone seems playful", context)
+            self.assertNotIn("closely connected", context)
+
+    def test_refresh_group_member_public_inference_updates_cache_without_bumping_message_count(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            def add_public_message(user_id: str, display_name: str, content: str) -> None:
+                store.append_group_message(
+                    group_id="grp-1",
+                    thread_id="main",
+                    user_id=user_id,
+                    display_name=display_name,
+                    content=content,
+                )
+                store.upsert_group_member(group_id="grp-1", user_id=user_id, display_name=display_name)
+
+            add_public_message("u1", "Alice", "Bob can you send status?")
+            add_public_message("u1", "Alice", "Charlie can you send yours too?")
+            add_public_message("u2", "Bob", "not yet")
+            add_public_message("u1", "Alice", "let's wrap this soon")
+            add_public_message("u3", "Charlie", "haha almost there")
+            add_public_message("u1", "Alice", "Bob ping me when done")
+            add_public_message("u3", "Charlie", "lol okay")
+
+            refresh_group_member_public_inference(store=store, group_id="grp-1")
+
+            members = {member.user_id: member for member in store.list_group_members("grp-1", limit=10)}
+            self.assertEqual(members["u1"].message_count, 4)
+            self.assertEqual(members["u2"].message_count, 1)
+            self.assertEqual(members["u3"].message_count, 2)
+            self.assertEqual(members["u1"].role_in_group, "leader")
+            self.assertIn("drives a lot of the chat", members["u1"].personality_notes)
+            self.assertEqual(members["u3"].role_in_group, "joker")
+
+    def test_group_social_graph_ignores_assistant_bridging_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            def add_public_message(user_id: str, display_name: str, content: str) -> None:
+                store.append_group_message(
+                    group_id="grp-1",
+                    thread_id="main",
+                    user_id=user_id,
+                    display_name=display_name,
+                    content=content,
+                )
+                store.upsert_group_member(group_id="grp-1", user_id=user_id, display_name=display_name)
+
+            add_public_message("u1", "Alice", "Anyone around?")
+            store.append_group_message(
+                group_id="grp-1",
+                thread_id="main",
+                user_id="assistant",
+                display_name="陈襄",
+                content="I'm here if needed.",
+            )
+            add_public_message("u2", "Bob", "Yep")
+            store.append_group_message(
+                group_id="grp-1",
+                thread_id="main",
+                user_id="assistant",
+                display_name="陈襄",
+                content="Noted.",
+            )
+            add_public_message("u1", "Alice", "Cool")
+
+            context = build_group_chat_context(
+                store=store,
+                group_id="grp-1",
+                thread_id="main",
+                speaker_user_id="u1",
+            )
+
+            self.assertNotIn("Alice <-> Bob", context)
 
     def test_group_context_does_not_leak_other_users_private_data(self) -> None:
         """Group context should only contain the SPEAKER's memory, not other members' private data."""

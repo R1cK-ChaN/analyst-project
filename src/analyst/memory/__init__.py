@@ -18,6 +18,7 @@ from .service import (
     build_trading_context,
     record_chat_interaction,
     record_sales_interaction,
+    refresh_group_member_public_inference,
 )
 from .subagent import build_subagent_memory
 
@@ -37,6 +38,7 @@ __all__ = [
     "merge_client_profile_updates",
     "record_chat_interaction",
     "record_sales_interaction",
+    "refresh_group_member_public_inference",
     "split_reply_and_profile_update",
     "strip_embedded_profile_update",
     "strip_embedded_schedule_update",

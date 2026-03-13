@@ -37,3 +37,8 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: hits real external endpoints and is skipped by default unless explicitly selected",
+]

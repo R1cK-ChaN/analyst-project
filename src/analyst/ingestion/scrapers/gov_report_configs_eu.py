@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+from .gov_report_parsing import (
+    _BLS_EMBARGO_DATETIME_PATTERN,
+    _COMMON_EN_DATE_PATTERNS,
+    _RELEASE_AT_DATETIME_PATTERN,
+)
+
+_EU_SOURCES: dict[str, dict] = {
+    # -- ECB: listing + regex --------------------------------------------
+    "eu_ecb_statement": {
+        "strategy": "listing_regex",
+        "url": "https://www.ecb.europa.eu/press/pr/html/index.en.html",
+        "base_url": "https://www.ecb.europa.eu",
+        "link_pattern": r"/press/pr/date/\d{4}/html/.*\.en\.html",
+        "institution": "ECB",
+        "country": "EU",
+        "language": "en",
+        "data_category": "monetary_policy",
+        "importance": "high",
+        "content_selectors": [
+            "div.ecb-pressContent", "article.ecb-publicationPage",
+            "div.definition", "div#main-wrapper", ".main-content", "main", "article",
+        ],
+        "title_selectors": ["h1.ecb-pressHeadline", "h1", "h2", "title"],
+        "date_patterns": [
+            r"(\d{1,2} \w+ \d{4})",
+            r"(\w+ \d{1,2},?\s*\d{4})",
+            r"(\d{1,2} \w{3} \d{4})",
+            r"(\d{4}-\d{2}-\d{2})",
+        ],
+    },
+    "eu_ecb_minutes": {
+        "strategy": "listing_regex",
+        "url": "https://www.ecb.europa.eu/press/accounts/html/index.en.html",
+        "base_url": "https://www.ecb.europa.eu",
+        "link_pattern": r"/press/accounts/\d{4}/html/.*\.en\.html",
+        "institution": "ECB",
+        "country": "EU",
+        "language": "en",
+        "data_category": "monetary_policy",
+        "importance": "high",
+        "content_selectors": [
+            "div.ecb-pressContent", "article.ecb-publicationPage",
+            "div.definition", "div#main-wrapper", ".main-content", "main", "article",
+        ],
+        "title_selectors": ["h1.ecb-pressHeadline", "h1", "h2", "title"],
+        "date_patterns": [
+            r"(\d{1,2} \w+ \d{4})",
+            r"(\w+ \d{1,2},?\s*\d{4})",
+            r"(\d{1,2} \w{3} \d{4})",
+            r"(\d{4}-\d{2}-\d{2})",
+        ],
+    },
+    "eu_ecb_bulletin": {
+        "strategy": "listing_regex",
+        "url": "https://www.ecb.europa.eu/pub/economic-bulletin/html/index.en.html",
+        "base_url": "https://www.ecb.europa.eu",
+        "link_pattern": r"/pub/economic-bulletin/html/eb\d+\.en\.html",
+        "institution": "ECB",
+        "country": "EU",
+        "language": "en",
+        "data_category": "economic_conditions",
+        "importance": "medium",
+        "content_selectors": [
+            "div.ecb-pressContent", "article.ecb-publicationPage",
+            "div.pub-section", "div#content", ".main-content", "main", "article",
+        ],
+        "title_selectors": ["h1.ecb-pressHeadline", "h1", "h2", "title"],
+        "date_patterns": [
+            r"(\d{1,2} \w+ \d{4})",
+            r"(\w+ \d{1,2},?\s*\d{4})",
+            r"(\d{4}-\d{2}-\d{2})",
+        ],
+    },
+    # -- ECB RSS sources -------------------------------------------------
+    "eu_ecb_press": {
+        "strategy": "rss",
+        "url": "https://www.ecb.europa.eu/rss/press.html",
+        "base_url": "https://www.ecb.europa.eu",
+        "institution": "ECB",
+        "country": "EU",
+        "language": "en",
+        "data_category": "press_releases",
+        "importance": "medium",
+        "content_selectors": [
+            "div.ecb-pressContent", "article.ecb-publicationPage",
+            ".main-content", "main", "article",
+        ],
+        "title_selectors": ["h1.ecb-pressHeadline", "h1", "h2", "title"],
+        "date_patterns": [
+            r"(\d{1,2} \w+ \d{4})",
+            r"(\w+ \d{1,2},?\s*\d{4})",
+            r"(\d{4}-\d{2}-\d{2})",
+        ],
+    },
+    "eu_ecb_speeches": {
+        "strategy": "rss",
+        "url": "https://www.ecb.europa.eu/rss/speeches.html",
+        "base_url": "https://www.ecb.europa.eu",
+        "institution": "ECB",
+        "country": "EU",
+        "language": "en",
+        "data_category": "speeches",
+        "importance": "medium",
+        "content_selectors": [
+            "div.ecb-pressContent", "article.ecb-publicationPage",
+            ".main-content", "main", "article",
+        ],
+        "title_selectors": ["h1.ecb-pressHeadline", "h1", "h2", "title"],
+        "date_patterns": [
+            r"(\d{1,2} \w+ \d{4})",
+            r"(\w+ \d{1,2},?\s*\d{4})",
+            r"(\d{4}-\d{2}-\d{2})",
+        ],
+    },
+    # -- Eurostat: listing + keywords ------------------------------------
+    "eu_eurostat_cpi": {
+        "strategy": "listing_keywords",
+        "url": "https://ec.europa.eu/eurostat/web/products-eurostat-news",
+        "base_url": "https://ec.europa.eu",
+        "keywords": ["HICP", "inflation", "consumer price"],
+        "institution": "Eurostat",
+        "country": "EU",
+        "language": "en",
+        "data_category": "inflation",
+        "importance": "medium",
+        "content_selectors": [
+            "div.stat-news-release-content", "div.article-body",
+            "div#main-content", "article", "main",
+        ],
+        "title_selectors": ["h1.stat-news-release-title", "h1", "h2", "title"],
+        "date_patterns": [
+            r"(\d{1,2} \w+ \d{4})",
+            r"(\w+ \d{1,2},?\s*\d{4})",
+            r"(\d{4}-\d{2}-\d{2})",
+        ],
+    },
+    "eu_eurostat_gdp": {
+        "strategy": "listing_keywords",
+        "url": "https://ec.europa.eu/eurostat/web/products-eurostat-news",
+        "base_url": "https://ec.europa.eu",
+        "keywords": ["GDP", "gross domestic product", "economic growth"],
+        "institution": "Eurostat",
+        "country": "EU",
+        "language": "en",
+        "data_category": "gdp",
+        "importance": "medium",
+        "content_selectors": [
+            "div.stat-news-release-content", "div.article-body",
+            "div#main-content", "article", "main",
+        ],
+        "title_selectors": ["h1.stat-news-release-title", "h1", "h2", "title"],
+        "date_patterns": [
+            r"(\d{1,2} \w+ \d{4})",
+            r"(\w+ \d{1,2},?\s*\d{4})",
+            r"(\d{4}-\d{2}-\d{2})",
+        ],
+    },
+    "eu_eurostat_employment": {
+        "strategy": "listing_keywords",
+        "url": "https://ec.europa.eu/eurostat/web/products-eurostat-news",
+        "base_url": "https://ec.europa.eu",
+        "keywords": ["unemployment", "employment", "labour market"],
+        "institution": "Eurostat",
+        "country": "EU",
+        "language": "en",
+        "data_category": "employment",
+        "importance": "medium",
+        "content_selectors": [
+            "div.stat-news-release-content", "div.article-body",
+            "div#main-content", "article", "main",
+        ],
+        "title_selectors": ["h1.stat-news-release-title", "h1", "h2", "title"],
+        "date_patterns": [
+            r"(\d{1,2} \w+ \d{4})",
+            r"(\w+ \d{1,2},?\s*\d{4})",
+            r"(\d{4}-\d{2}-\d{2})",
+        ],
+    },
+}
+

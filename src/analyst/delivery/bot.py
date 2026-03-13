@@ -18,21 +18,15 @@ Commands
 from __future__ import annotations
 
 import asyncio
-import base64
-from datetime import datetime, timedelta, timezone
-from io import BytesIO
+from datetime import datetime, timedelta
 import logging
 import os
 import random
-import re
-import shutil
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
-from telegram import MessageEntity, Update, User
+from telegram import MessageEntity, Update
 from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
@@ -41,7 +35,6 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from PIL import Image, ImageOps
 
 # ---------------------------------------------------------------------------
 # Bootstrap the analyst package so we can import from src/
@@ -62,701 +55,65 @@ from analyst.memory import (  # noqa: E402
     build_sales_context,
     record_chat_interaction,
     record_sales_interaction,
+    refresh_group_member_public_inference,
 )
 from analyst.storage import SQLiteEngineStore  # noqa: E402
 from analyst.tools._request_context import RequestImageInput, bind_request_image  # noqa: E402
 
+from .bot_companion_timing import (  # noqa: E402
+    _companion_local_context,
+    _derive_companion_routine_state,
+    _first_reply_delay_seconds,
+    _is_same_local_day,
+    _is_within_checkin_send_window,
+    _lifestyle_ping_sent_at,
+    _needs_emotional_follow_up,
+    _next_checkin_window_start,
+    _parse_iso_datetime,
+    _reply_timing_bucket,
+    _refresh_companion_lifestyle_state,
+    _routine_checkin_kind,
+    _same_day_retry_due,
+    _cooldown_until,
+    _telegram_chat_id_from_channel,
+)
+from .bot_constants import (  # noqa: E402
+    COMPANION_CHECKIN_INTERVAL_SECONDS,
+    MAX_HISTORY_TURNS,
+    MAX_TELEGRAM_LENGTH,
+)
+from .bot_group_chat import (  # noqa: E402
+    _append_group_buffer,
+    _extract_message_text,
+    _extract_reply_context,
+    _get_user_display_name,
+    _is_group_chat,
+    _render_group_context,
+    _render_group_mentions,
+    _render_group_bubbles_with_mentions,
+    _should_reply_in_group,
+    _strip_bot_mention,
+)
+from .bot_history import _append_history, _get_history, _send_bot_bubbles  # noqa: E402
+from .bot_media import (  # noqa: E402
+    _cleanup_generated_media,
+    _extract_attached_image,
+    _summarize_user_message,
+    _render_image_instruction,
+)
 from .companion_schedule import (  # noqa: E402
     apply_companion_schedule_update,
-    build_companion_schedule_context,
 )
 from .sales_chat import (  # noqa: E402
-    SPLIT_MARKER,
     ChatPersonaMode,
-    MediaItem,
     SalesChatReply,
     build_companion_services,
-    generate_proactive_companion_reply,
     generate_chat_reply,
+    generate_proactive_companion_reply,
     split_into_bubbles,
 )
 
 logger = logging.getLogger(__name__)
-
-MAX_TELEGRAM_LENGTH = 4096
-MAX_HISTORY_TURNS = 20
-MAX_GROUP_CONTEXT_MESSAGES = 50
-MAX_GROUP_CONTEXT_CHARS = 1500
-COMPANION_CHECKIN_INTERVAL_SECONDS = 300
-COMPANION_CHECKIN_SEND_WINDOW_START_HOUR = 10
-COMPANION_CHECKIN_SEND_WINDOW_END_HOUR = 20
-COMPANION_LOCAL_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Singapore")
-MANAGED_MEDIA_PREFIXES = (
-    "analyst_gen_",
-    "analyst_live_",
-)
-MAX_INBOUND_IMAGE_EDGE = 1536
-INSTANT_REPLY_MAX_CHARS = 12
-DEEP_STORY_MIN_LINES = 4
-DEEP_STORY_MIN_CHARS = 220
-EMOTIONAL_CUE_TOKENS = (
-    "怎么办",
-    "完了",
-    "扛不住",
-    "不想做了",
-    "睡不好",
-    "睡不着",
-    "焦虑",
-    "崩溃",
-    "难受",
-    "烦死",
-    "累了",
-    "失眠",
-    "overwhelmed",
-    "anxious",
-    "panic",
-    "panicking",
-    "burned out",
-    "burnt out",
-    "rough day",
-    "can't sleep",
-    "cant sleep",
-    "breakup hurts",
-    "stressed",
-)
-GROUP_MEMBER_MENTION_RE = re.compile(r"@\[(?P<name>[^\]\n]{1,64})\]")
-
-
-# ---------------------------------------------------------------------------
-# Companion timing / proactive helpers
-# ---------------------------------------------------------------------------
-
-def _contains_emotional_cue(text: str) -> bool:
-    lowered = text.lower()
-    return any(token in lowered for token in EMOTIONAL_CUE_TOKENS)
-
-
-def _reply_timing_bucket(text: str) -> str:
-    stripped = text.strip()
-    if not stripped:
-        return "instant"
-    if stripped.count("\n") + 1 >= DEEP_STORY_MIN_LINES or len(stripped) >= DEEP_STORY_MIN_CHARS:
-        return "deep_story"
-    if _contains_emotional_cue(stripped):
-        return "emotional"
-    if len(stripped) <= INSTANT_REPLY_MAX_CHARS:
-        return "instant"
-    return "normal"
-
-
-def _first_reply_delay_seconds(text: str, *, has_image: bool = False) -> float:
-    if has_image:
-        return 0.0
-    stripped = text.strip()
-    if not stripped:
-        return 0.0
-    bucket = _reply_timing_bucket(stripped)
-    if bucket == "instant":
-        return min(0.4, 0.05 + len(stripped) * 0.02)
-    if bucket == "emotional":
-        return min(3.5, 2.0 + min(len(stripped), 180) / 120.0)
-    if bucket == "deep_story":
-        return min(5.0, 3.0 + min(len(stripped), 320) / 160.0)
-    return min(1.8, 0.8 + min(len(stripped), 120) / 120.0)
-
-
-def _needs_emotional_follow_up(text: str, profile: Any) -> bool:
-    if _contains_emotional_cue(text):
-        return True
-    stress_level = str(getattr(profile, "stress_level", "") or "").lower()
-    emotional_trend = str(getattr(profile, "emotional_trend", "") or "").lower()
-    current_mood = str(getattr(profile, "current_mood", "") or "").lower()
-    return (
-        stress_level in {"high", "critical"}
-        or emotional_trend == "declining"
-        or current_mood in {"anxious", "panicking", "burned_out", "defeated", "tired"}
-    )
-
-
-def _telegram_chat_id_from_channel(channel: str) -> int | None:
-    prefix, _, raw_chat_id = str(channel).partition(":")
-    if prefix != "telegram" or not raw_chat_id:
-        return None
-    try:
-        return int(raw_chat_id)
-    except ValueError:
-        return None
-
-
-def _companion_local_now(now: datetime) -> datetime:
-    return now.astimezone(COMPANION_LOCAL_TIMEZONE)
-
-
-def _minutes_since_midnight(moment: datetime) -> int:
-    return moment.hour * 60 + moment.minute
-
-
-def _is_weekend(moment: datetime) -> bool:
-    return moment.weekday() >= 5
-
-
-def _derive_companion_routine_state(now: datetime) -> str:
-    local_now = _companion_local_now(now)
-    minutes = _minutes_since_midnight(local_now)
-    if _is_weekend(local_now):
-        if minutes < 9 * 60:
-            return "sleep"
-        if minutes < 22 * 60 + 30:
-            return "weekend_day"
-        return "late_night"
-    if minutes < 6 * 60 + 30:
-        return "sleep"
-    if minutes < 8 * 60:
-        return "morning"
-    if minutes < 9 * 60 + 30:
-        return "commute"
-    if minutes < 12 * 60:
-        return "work"
-    if minutes < 13 * 60 + 30:
-        return "lunch"
-    if minutes < 18 * 60 + 30:
-        return "work"
-    if minutes < 22 * 60 + 30:
-        return "evening"
-    return "late_night"
-
-
-def _routine_checkin_kind(now: datetime) -> str:
-    local_now = _companion_local_now(now)
-    minutes = _minutes_since_midnight(local_now)
-    if _is_weekend(local_now):
-        if 11 * 60 <= minutes < 18 * 60:
-            return "weekend"
-        return ""
-    if 7 * 60 + 15 <= minutes < 9 * 60:
-        return "morning"
-    if 19 * 60 <= minutes < 21 * 60:
-        return "evening"
-    return ""
-
-
-def _parse_iso_datetime(value: str) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=COMPANION_LOCAL_TIMEZONE)
-    return parsed
-
-
-def _is_same_local_day(value: str, now: datetime) -> bool:
-    parsed = _parse_iso_datetime(value)
-    if parsed is None:
-        return False
-    return _companion_local_now(parsed).date() == _companion_local_now(now).date()
-
-
-def _lifestyle_ping_sent_at(lifestyle_state: Any, kind: str) -> str:
-    normalized = str(kind).strip().lower()
-    if normalized == "morning":
-        return str(getattr(lifestyle_state, "last_morning_checkin_at", "") or "")
-    if normalized == "evening":
-        return str(getattr(lifestyle_state, "last_evening_checkin_at", "") or "")
-    if normalized == "weekend":
-        return str(getattr(lifestyle_state, "last_weekend_checkin_at", "") or "")
-    return ""
-
-
-def _is_within_checkin_send_window(now: datetime) -> bool:
-    local_now = _companion_local_now(now)
-    return COMPANION_CHECKIN_SEND_WINDOW_START_HOUR <= local_now.hour < COMPANION_CHECKIN_SEND_WINDOW_END_HOUR
-
-
-def _next_checkin_window_start(now: datetime) -> datetime:
-    local_now = _companion_local_now(now)
-    candidate = local_now.replace(
-        hour=COMPANION_CHECKIN_SEND_WINDOW_START_HOUR,
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-    if local_now.hour >= COMPANION_CHECKIN_SEND_WINDOW_END_HOUR:
-        candidate = candidate + timedelta(days=1)
-    elif local_now.hour < COMPANION_CHECKIN_SEND_WINDOW_START_HOUR:
-        candidate = candidate
-    else:
-        candidate = local_now
-    return candidate.astimezone(now.tzinfo or COMPANION_LOCAL_TIMEZONE)
-
-
-def _same_day_retry_due(now: datetime) -> datetime | None:
-    local_now = _companion_local_now(now)
-    retry_local = local_now + timedelta(hours=1)
-    if retry_local.date() != local_now.date():
-        return None
-    if retry_local.hour >= COMPANION_CHECKIN_SEND_WINDOW_END_HOUR:
-        return None
-    return retry_local.astimezone(now.tzinfo or COMPANION_LOCAL_TIMEZONE)
-
-
-def _cooldown_until(now: datetime) -> datetime:
-    return now + timedelta(days=7)
-
-
-def _refresh_companion_lifestyle_state(
-    store: SQLiteEngineStore,
-    *,
-    client_id: str,
-    channel_id: str,
-    thread_id: str,
-    now: datetime,
-) -> Any:
-    current = store.get_companion_lifestyle_state(
-        client_id=client_id,
-        channel=channel_id,
-        thread_id=thread_id,
-    )
-    routine_state = _derive_companion_routine_state(now)
-    last_state_changed_at = current.last_state_changed_at
-    if current.routine_state != routine_state:
-        last_state_changed_at = now.isoformat()
-    return store.upsert_companion_lifestyle_state(
-        client_id=client_id,
-        channel=channel_id,
-        thread_id=thread_id,
-        timezone_name="Asia/Singapore",
-        home_base="Singapore",
-        work_area="Tanjong Pagar",
-        routine_state=routine_state,
-        last_state_changed_at=last_state_changed_at,
-    )
-
-
-def _companion_local_context(
-    store: SQLiteEngineStore,
-    lifestyle_state: Any,
-    now: datetime,
-) -> str:
-    local_now = _companion_local_now(now)
-    day_type = "weekend" if _is_weekend(local_now) else "weekday"
-    base = (
-        f"timezone: Asia/Singapore\n"
-        f"home_base: Singapore\n"
-        f"work_area: Tanjong Pagar\n"
-        f"local_time: {local_now.strftime('%Y-%m-%d %H:%M %A')} (Asia/Singapore)\n"
-        f"day_type: {day_type}\n"
-        f"routine_state: {getattr(lifestyle_state, 'routine_state', '')}"
-    )
-    schedule_context = build_companion_schedule_context(
-        store,
-        now=now,
-        routine_state=str(getattr(lifestyle_state, "routine_state", "") or ""),
-    )
-    return f"{base}\n{schedule_context}"
-
-
-# ---------------------------------------------------------------------------
-# Group chat detection helpers
-# ---------------------------------------------------------------------------
-
-def _is_group_chat(update: Update) -> bool:
-    """Check if the message is from a group or supergroup chat."""
-    if update.effective_chat is None:
-        return False
-    return update.effective_chat.type in ("group", "supergroup")
-
-
-def _is_bot_mentioned(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Check if the bot is @mentioned in the message entities."""
-    message = update.effective_message
-    if message is None:
-        return False
-    bot_username = (context.bot.username or "").lower()
-    bot_id = context.bot.id
-    entity_maps = [
-        message.parse_entities(types=[MessageEntity.MENTION, MessageEntity.TEXT_MENTION]),
-    ]
-    caption = getattr(message, "caption", None)
-    if isinstance(caption, str):
-        entity_maps.append(
-            message.parse_caption_entities(types=[MessageEntity.MENTION, MessageEntity.TEXT_MENTION])
-        )
-    for entity_map in entity_maps:
-        for entity, text in entity_map.items():
-            if entity.type == MessageEntity.MENTION:
-                if text.lstrip("@").lower() == bot_username:
-                    return True
-            elif entity.type == MessageEntity.TEXT_MENTION:
-                if entity.user and entity.user.id == bot_id:
-                    return True
-    return False
-
-
-def _is_reply_to_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Check if the message is a reply to one of the bot's own messages."""
-    message = update.effective_message
-    if message is None or message.reply_to_message is None:
-        return False
-    reply_from = message.reply_to_message.from_user
-    return reply_from is not None and reply_from.id == context.bot.id
-
-
-def _should_reply_in_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Return True if the bot should reply in a group chat (mentioned or replied-to)."""
-    return _is_bot_mentioned(update, context) or _is_reply_to_bot(update, context)
-
-
-def _extract_reply_context(update: Update) -> str | None:
-    """Extract text from a replied-to message, if any."""
-    message = update.effective_message
-    if message is None or message.reply_to_message is None:
-        return None
-    reply_msg = message.reply_to_message
-    # Prefer quote text if available (partial quote), fall back to full message
-    quote = getattr(reply_msg, "quote", None)
-    if quote and getattr(quote, "text", None):
-        return quote.text
-    return reply_msg.text or reply_msg.caption  # may be None for non-text messages
-
-
-def _strip_bot_mention(text: str, bot_username: str) -> str:
-    """Remove @botusername from text and clean up whitespace."""
-    pattern = re.compile(rf"@{re.escape(bot_username)}\b", re.IGNORECASE)
-    return pattern.sub("", text).strip()
-
-
-def _is_managed_generated_media(path: str) -> bool:
-    """Only delete temp files created by the image generation tool."""
-    temp_dir = os.path.abspath(tempfile.gettempdir())
-    abs_path = os.path.abspath(path)
-    return (
-        os.path.dirname(abs_path) == temp_dir
-        and os.path.basename(abs_path).startswith(MANAGED_MEDIA_PREFIXES)
-    )
-
-
-def _cleanup_generated_media(path: str) -> None:
-    if not _is_managed_generated_media(path):
-        return
-    try:
-        if os.path.isdir(path):
-            shutil.rmtree(path)
-            return
-        os.remove(path)
-    except FileNotFoundError:
-        return
-    except OSError:
-        logger.warning("Failed to remove generated media file: %s", path)
-
-
-def _get_user_display_name(update: Update) -> str:
-    """Return the sender's first name, or a fallback."""
-    user = update.effective_user
-    if user and user.first_name:
-        return user.first_name
-    return "User"
-
-
-def _extract_message_text(message: Any) -> str:
-    return str(message.text or message.caption or "").strip()
-
-
-def _image_summary_marker(image: RequestImageInput | None) -> str:
-    if image is None:
-        return ""
-    if image.source == "reply":
-        return "[Referenced image]"
-    return "[Image attached]"
-
-
-def _summarize_user_message(text: str, *, image: RequestImageInput | None = None) -> str:
-    marker = _image_summary_marker(image)
-    if marker and text:
-        return f"{text}\n{marker}"
-    if marker:
-        return marker
-    return text
-
-
-def _render_image_instruction(text: str, *, image: RequestImageInput | None = None) -> str:
-    base = text.strip() or "The user sent an image without caption. Analyze it and respond naturally."
-    relation = "attached" if image is None or image.source != "reply" else "referenced in the replied-to message"
-    return (
-        f"{base}\n\n"
-        f"[The user provided an image ({relation}). You can inspect it directly. "
-        "If they ask for a variation or edit of the attached image, call generate_image with "
-        "use_attached_image=true. If they ask to animate the attached image, call "
-        "generate_live_photo with use_attached_image=true.]"
-    )
-
-
-def _encode_image_data_uri(raw_bytes: bytes, mime_type: str) -> RequestImageInput:
-    normalized_mime_type = mime_type or "image/jpeg"
-    payload = raw_bytes
-    try:
-        with Image.open(BytesIO(raw_bytes)) as source_image:
-            image = ImageOps.exif_transpose(source_image)
-            if image.mode not in {"RGB", "L"}:
-                alpha_image = image.convert("RGBA")
-                background = Image.new("RGBA", alpha_image.size, (255, 255, 255, 255))
-                background.alpha_composite(alpha_image)
-                image = background.convert("RGB")
-            else:
-                image = image.convert("RGB")
-            longest_edge = max(image.size)
-            if longest_edge > MAX_INBOUND_IMAGE_EDGE:
-                scale = MAX_INBOUND_IMAGE_EDGE / float(longest_edge)
-                image = image.resize(
-                    (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
-                    Image.Resampling.LANCZOS,
-                )
-            buffer = BytesIO()
-            image.save(buffer, format="JPEG", quality=90)
-            payload = buffer.getvalue()
-            normalized_mime_type = "image/jpeg"
-    except Exception:
-        logger.warning("Failed to normalize inbound image; falling back to original bytes.")
-    encoded = base64.b64encode(payload).decode("ascii")
-    return RequestImageInput(data_uri=f"data:{normalized_mime_type};base64,{encoded}", mime_type=normalized_mime_type)
-
-
-def _image_file_ref(message: Any) -> tuple[str, str, str] | None:
-    file_id = ""
-    mime_type = "image/jpeg"
-    filename = ""
-    photo_items = getattr(message, "photo", None)
-    if isinstance(photo_items, (list, tuple)) and photo_items:
-        photo = photo_items[-1]
-        raw_file_id = getattr(photo, "file_id", "")
-        if not isinstance(raw_file_id, str) or not raw_file_id:
-            return None
-        file_id = raw_file_id
-        filename = f"{file_id}.jpg"
-    else:
-        document = getattr(message, "document", None)
-        mime_type = getattr(document, "mime_type", "") if document is not None else ""
-        if not isinstance(mime_type, str) or not mime_type.startswith("image/"):
-            return None
-        raw_file_id = getattr(document, "file_id", "")
-        if not isinstance(raw_file_id, str) or not raw_file_id:
-            return None
-        file_id = raw_file_id
-        raw_filename = getattr(document, "file_name", "")
-        filename = raw_filename if isinstance(raw_filename, str) and raw_filename else f"{file_id}.jpg"
-    if not file_id:
-        return None
-    return file_id, mime_type, filename
-
-
-async def _extract_message_image(
-    message: Any,
-    context: ContextTypes.DEFAULT_TYPE,
-    *,
-    source: str,
-) -> RequestImageInput | None:
-    if message is None:
-        return None
-    image_ref = _image_file_ref(message)
-    if image_ref is None:
-        return None
-    file_id, mime_type, filename = image_ref
-
-    telegram_file = await context.bot.get_file(file_id)
-    raw_bytes = bytes(await telegram_file.download_as_bytearray())
-    request_image = _encode_image_data_uri(raw_bytes, mime_type)
-    return RequestImageInput(
-        data_uri=request_image.data_uri,
-        mime_type=request_image.mime_type,
-        filename=filename,
-        source=source,
-    )
-
-
-async def _extract_attached_image(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> RequestImageInput | None:
-    message = update.effective_message
-    if message is None:
-        return None
-    direct_image = await _extract_message_image(message, context, source="message")
-    if direct_image is not None:
-        return direct_image
-    reply_message = getattr(message, "reply_to_message", None)
-    return await _extract_message_image(reply_message, context, source="reply")
-
-
-# ---------------------------------------------------------------------------
-# Group context buffer helpers
-# ---------------------------------------------------------------------------
-
-def _get_group_buffer(
-    context: ContextTypes.DEFAULT_TYPE, thread_id: str,
-) -> list[dict[str, str]]:
-    """Return the group message buffer for a given thread."""
-    if "group_buffers" not in context.chat_data:
-        context.chat_data["group_buffers"] = {}
-    buffers = context.chat_data["group_buffers"]
-    if thread_id not in buffers:
-        buffers[thread_id] = []
-    return buffers[thread_id]
-
-
-def _append_group_buffer(
-    context: ContextTypes.DEFAULT_TYPE,
-    thread_id: str,
-    name: str,
-    text: str,
-    role: str = "user",
-) -> None:
-    """Append a message to the group buffer and trim to max size."""
-    buf = _get_group_buffer(context, thread_id)
-    buf.append({"name": name, "text": text, "role": role})
-    if len(buf) > MAX_GROUP_CONTEXT_MESSAGES:
-        del buf[: len(buf) - MAX_GROUP_CONTEXT_MESSAGES]
-
-
-def _render_group_context(context: ContextTypes.DEFAULT_TYPE, thread_id: str) -> str:
-    """Render recent group messages as 'name: text' lines within char budget."""
-    buf = _get_group_buffer(context, thread_id)
-    lines: list[str] = []
-    total = 0
-    for msg in reversed(buf):
-        line = f"{msg['name']}: {msg['text']}"
-        if total + len(line) + 1 > MAX_GROUP_CONTEXT_CHARS:
-            break
-        lines.append(line)
-        total += len(line) + 1
-    lines.reverse()
-    return "\n".join(lines)
-
-
-def _normalize_group_member_name(name: str) -> str:
-    return re.sub(r"\s+", " ", str(name or "")).strip().casefold()
-
-
-def _build_group_member_lookup(members: list[Any]) -> dict[str, tuple[str, int]]:
-    lookup: dict[str, tuple[str, int]] = {}
-    ambiguous: set[str] = set()
-    for member in members:
-        key = _normalize_group_member_name(getattr(member, "display_name", ""))
-        raw_user_id = getattr(member, "user_id", "")
-        if not key:
-            continue
-        try:
-            user_id = int(str(raw_user_id))
-        except (TypeError, ValueError):
-            continue
-        if key in ambiguous:
-            continue
-        existing = lookup.get(key)
-        if existing is not None and existing[1] != user_id:
-            ambiguous.add(key)
-            lookup.pop(key, None)
-            continue
-        display_name = str(getattr(member, "display_name", "") or "").strip()
-        lookup[key] = (display_name or str(raw_user_id), user_id)
-    return lookup
-
-
-def _render_group_mentions(text: str, members: list[Any]) -> tuple[str, list[MessageEntity]]:
-    if "@[" not in text:
-        return text, []
-    lookup = _build_group_member_lookup(members)
-    rendered_parts: list[str] = []
-    entities: list[MessageEntity] = []
-    cursor = 0
-    rendered_length = 0
-    for match in GROUP_MEMBER_MENTION_RE.finditer(text):
-        literal = text[cursor:match.start()]
-        rendered_parts.append(literal)
-        rendered_length += len(literal)
-
-        raw_name = re.sub(r"\s+", " ", match.group("name")).strip()
-        mention_text = f"@{raw_name}" if raw_name else match.group(0)
-        mention_meta = lookup.get(_normalize_group_member_name(raw_name))
-        if mention_meta is not None:
-            display_name, user_id = mention_meta
-            mention_text = f"@{display_name}"
-            entities.append(
-                MessageEntity(
-                    type=MessageEntity.TEXT_MENTION,
-                    offset=rendered_length,
-                    length=len(mention_text),
-                    user=User(
-                        id=user_id,
-                        first_name=display_name or raw_name or "user",
-                        is_bot=False,
-                    ),
-                )
-            )
-        rendered_parts.append(mention_text)
-        rendered_length += len(mention_text)
-        cursor = match.end()
-
-    tail = text[cursor:]
-    rendered_parts.append(tail)
-    return "".join(rendered_parts), entities
-
-
-def _render_group_bubbles_with_mentions(
-    text: str,
-    members: list[Any],
-) -> tuple[str, list[tuple[str, list[MessageEntity]]]]:
-    raw_bubbles = split_into_bubbles(text)
-    rendered_bubbles = [_render_group_mentions(bubble, members) for bubble in raw_bubbles]
-    rendered_text = SPLIT_MARKER.join(rendered for rendered, _ in rendered_bubbles)
-    return rendered_text, rendered_bubbles
-
-
-# ---------------------------------------------------------------------------
-# Conversation history helpers
-# ---------------------------------------------------------------------------
-
-def _get_history(
-    context: ContextTypes.DEFAULT_TYPE,
-    *,
-    is_group: bool = False,
-    thread_id: str = "main",
-) -> list[dict[str, str]]:
-    if is_group:
-        if "agent_history" not in context.chat_data:
-            context.chat_data["agent_history"] = {}
-        histories = context.chat_data["agent_history"]
-        if thread_id not in histories:
-            histories[thread_id] = []
-        return histories[thread_id]
-    if "history" not in context.user_data:
-        context.user_data["history"] = []
-    return context.user_data["history"]
-
-
-def _append_history(
-    context: ContextTypes.DEFAULT_TYPE,
-    role: str,
-    content: str,
-    *,
-    is_group: bool = False,
-    thread_id: str = "main",
-) -> None:
-    history = _get_history(context, is_group=is_group, thread_id=thread_id)
-    history.append({"role": role, "content": content})
-    max_messages = MAX_HISTORY_TURNS * 2
-    if len(history) > max_messages:
-        del history[: len(history) - max_messages]
-
-
-async def _send_bot_bubbles(bot: Any, *, chat_id: int, bubbles: list[str]) -> None:
-    for i, bubble in enumerate(bubbles):
-        await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-        if i > 0:
-            delay = min(0.5 + len(bubble) * 0.01, 2.5) + random.uniform(-0.3, 0.3)
-            await asyncio.sleep(max(delay, 0.3))
-        await bot.send_message(chat_id=chat_id, text=bubble)
-
 
 def _refresh_companion_checkin_schedule(
     store: SQLiteEngineStore,
@@ -1019,15 +376,6 @@ async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> Non
             logger.exception("Failed to send companion routine check-in")
 
 
-# ---------------------------------------------------------------------------
-# Tool definitions
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Core agent chat function
-# ---------------------------------------------------------------------------
-
 async def _chat_reply(
     user_text: str,
     context: ContextTypes.DEFAULT_TYPE,
@@ -1094,10 +442,6 @@ async def _chat_reply(
     )
 
 
-# ---------------------------------------------------------------------------
-# Service wiring
-# ---------------------------------------------------------------------------
-
 def _resolve_runtime_persona_mode() -> ChatPersonaMode:
     return ChatPersonaMode.COMPANION
 
@@ -1108,10 +452,6 @@ def _build_services() -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineSto
     agent_loop, tools, store = build_companion_services()
     return agent_loop, tools, store, persona_mode
 
-
-# ---------------------------------------------------------------------------
-# Handler factories
-# ---------------------------------------------------------------------------
 
 def _make_start_handler(
     agent_loop: PythonAgentLoop,
@@ -1324,6 +664,7 @@ def _make_message_handler(
                 user_id=user_id,
                 display_name=sender_name,
             )
+            refresh_group_member_public_inference(store=store, group_id=group_id)
 
             if not _should_reply_in_group(update, context):
                 return
@@ -1513,10 +854,6 @@ def _make_message_handler(
     return handle_message
 
 
-# ---------------------------------------------------------------------------
-# Application builder
-# ---------------------------------------------------------------------------
-
 def build_application(token: str) -> Application:
     """Build and return a fully configured Telegram Application."""
     agent_loop, tools, store, persona_mode = _build_services()
@@ -1563,7 +900,3 @@ def main() -> None:
     logger.info("Starting Analyst Telegram bot ...")
     app = build_application(token)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-if __name__ == "__main__":
-    main()

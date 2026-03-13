@@ -1,6 +1,6 @@
 # Analyst — Implementation Status
 
-**Status date:** March 12, 2026 (updated after macro-data service extraction and agent HTTP integration verification)
+**Status date:** March 13, 2026 (updated after codebase reconstruction, targeted regression verification, and live scraper integration validation)
 
 This document is the current implementation snapshot for `analyst-project/`.
 
@@ -27,6 +27,8 @@ The sibling `information/` repo is currently reference material only. The standa
 The macro-data stack now also has a standalone sibling codebase at `/home/rick/Desktop/analyst/macro-data-service`.
 
 `analyst-project` now prefers talking to that service over HTTP when `ANALYST_MACRO_DATA_BASE_URL` is set, and falls back to an in-process compatibility adapter only when the external endpoint is unset.
+
+As of March 13, 2026, the largest production modules in storage, delivery, and ingestion were decomposed into feature-scoped implementation modules behind compatibility facades. Public imports and entrypoints stayed stable while internal responsibilities were split into smaller files.
 
 ---
 
@@ -189,6 +191,10 @@ Implemented in `src/analyst/tools/` — 13 tool builders across 12 files:
 
 Implemented in `src/analyst/storage/`:
 
+- feature-scoped SQLite implementation modules behind the stable `src/analyst/storage/sqlite.py` facade:
+  - schema/bootstrap in `sqlite_schema.py`
+  - records/types in `sqlite_records.py`
+  - market/macro/news/research/memory/group/document/portfolio/calendar domains in dedicated `sqlite_*.py` modules
 - SQLite store (`sqlite.py`) with managed connection context manager (commit/rollback/close)
 - typed pipeline tables for:
   - market state: `calendar_events`, `market_prices`, `central_bank_comms`, `indicators`, `news_articles`
@@ -203,6 +209,23 @@ Implemented in `src/analyst/storage/`:
 - query methods for market state, typed research publication, trader lineage, and sales profile/thread/delivery retrieval
 - upsert semantics with UNIQUE constraints for deduplication
 - foreign-key-enforced lineage from trader outputs back to `research_artifacts`
+
+### Refactor validation
+
+Validated on March 13, 2026:
+
+- targeted regression suite passed locally:
+  - `tests/test_oecd.py`
+  - `tests/test_oecd_sources.py`
+  - `tests/test_gov_report.py`
+  - `tests/test_companion_checkins.py`
+  - `tests/test_telegram.py`
+  - `tests/test_memory.py`
+  - `tests/test_news_ingestion.py`
+  - result: `221 passed`
+- live integration suite passed against real endpoints:
+  - `pytest tests/test_scrapers.py -m live -v`
+  - result: `5 passed`
 
 ### Memory layer
 

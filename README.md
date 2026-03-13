@@ -2,7 +2,7 @@
 
 Standalone Analyst product scaffold. This folder now contains its own installable Python package under `src/analyst/` and can run without importing from the sibling `information/` repo.
 
-Current status on March 12, 2026:
+Current status on March 13, 2026:
 
 - the live WS1 engine is implemented under `src/analyst/engine/` with a dedicated macro-data client boundary under `src/analyst/macro_data/`
 - the service-side macro-data stack has been extracted into a standalone sibling codebase at `/home/rick/Desktop/analyst/macro-data-service`
@@ -15,6 +15,8 @@ Current status on March 12, 2026:
 - the portfolio package supports CSV import and live broker sync via an extensible adapter layer (IBKR, Longbridge 长桥, Tiger 老虎), with EWMA risk pipeline, VIX regime signals, and agent-actionable tools
 - the Telegram bot is deployed to a Contabo VPS with group chat support (observe silently, reply on @mention), full tool access, time-of-day awareness, absence awareness, typing simulation between multi-bubble messages, inbound user-image understanding, static image generation via Volcengine Seedream with photo delivery and AI watermark disabled by default, and optional motion-selfie/live-photo generation via Seedance with Telegram video delivery
 - the standalone HTTP communication path between `analyst-project` and `macro-data-service` is covered by an end-to-end integration test
+- the oversized production modules in storage, delivery, and ingestion have been reconstructed into feature-specific modules behind compatibility facades, so external imports and entrypoints remain stable while the implementation is split by responsibility
+- targeted regression coverage for the refactor passed locally (`221 passed` across OECD, gov reports, Telegram, memory, companion check-ins, and news ingestion), and the live scraper integration suite in `tests/test_scrapers.py -m live -v` passed against real endpoints on March 13, 2026
 - China-specific ingestion, live end-to-end provider verification, and WeCom delivery are still pending
 
 ## What's Inside
@@ -154,6 +156,25 @@ The standalone package inside `analyst-project/` can be smoke-tested with:
 
 ```bash
 python3 -m unittest discover -s tests -v
+```
+
+Targeted regression coverage for the March 13, 2026 codebase reconstruction:
+
+```bash
+pytest -q \
+  tests/test_oecd.py \
+  tests/test_oecd_sources.py \
+  tests/test_gov_report.py \
+  tests/test_companion_checkins.py \
+  tests/test_telegram.py \
+  tests/test_memory.py \
+  tests/test_news_ingestion.py
+```
+
+Live scraper integration coverage (real endpoints, network required):
+
+```bash
+pytest tests/test_scrapers.py -m live -v
 ```
 
 Quick local usage:
