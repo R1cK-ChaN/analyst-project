@@ -115,8 +115,16 @@ from analyst.runtime.chat import (  # noqa: E402
 )
 from analyst.runtime.conversation_service import (  # noqa: E402
     persist_companion_turn,
+    persist_companion_turn_for_input,
     run_companion_turn,
+    run_companion_turn_for_input,
     run_proactive_companion_turn,
+    run_proactive_companion_turn_for_input,
+)
+from analyst.runtime.environment_adapter import (  # noqa: E402
+    ConversationInput,
+    build_proactive_conversation_input,
+    build_telegram_conversation_input,
 )
 
 logger = logging.getLogger(__name__)
@@ -216,15 +224,19 @@ async def _send_companion_proactive_message(
         thread_id=state.thread_id,
         now=now,
     )
-    reply = await asyncio.to_thread(
-        run_proactive_companion_turn,
-        kind=kind,
-        store=store,
-        client_id=state.client_id,
+    conversation = build_proactive_conversation_input(
+        user_id=state.client_id,
+        channel="telegram",
         channel_id=state.channel,
         thread_id=state.thread_id,
-        agent_loop=agent_loop,
+        kind=kind,
         companion_local_context=_companion_local_context(store, lifestyle_state, now),
+    )
+    reply = await asyncio.to_thread(
+        run_proactive_companion_turn_for_input,
+        conversation=conversation,
+        store=store,
+        agent_loop=agent_loop,
         memory_context_builder=build_chat_context,
         proactive_reply_generator=generate_proactive_companion_reply,
     )
@@ -428,6 +440,7 @@ async def _chat_reply(
     context: ContextTypes.DEFAULT_TYPE,
     agent_loop: AgentExecutor,
     tools: list[AgentTool],
+    conversation: ConversationInput | None = None,
     store: SQLiteEngineStore | None = None,
     client_id: str = "",
     channel_id: str = "",
@@ -448,7 +461,18 @@ async def _chat_reply(
     history = _get_history(context, is_group=is_group, thread_id=thread_id)
 
     try:
-        if store is not None and client_id and channel_id:
+        if conversation is not None and store is not None:
+            result = await asyncio.to_thread(
+                run_companion_turn_for_input,
+                conversation=conversation,
+                store=store,
+                agent_loop=agent_loop,
+                tools=tools,
+                memory_context_builder=build_chat_context,
+                group_memory_context_builder=build_group_chat_context,
+                reply_generator=generate_chat_reply,
+            )
+        elif store is not None and client_id and channel_id:
             result = await asyncio.to_thread(
                 run_companion_turn,
                 user_text=user_text,
@@ -502,7 +526,7 @@ async def _chat_reply(
     _append_history(
         context,
         "user",
-        history_text or user_text,
+        (conversation.current_user_text if conversation is not None else "") or history_text or user_text,
         is_group=is_group,
         thread_id=thread_id,
     )
@@ -749,6 +773,19 @@ def _make_message_handler(
             if attached_image is not None
             else llm_text
         )
+        conversation = build_telegram_conversation_input(
+            user_id=user_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            message=llm_text,
+            history=_get_history(context, is_group=in_group, thread_id=thread_id),
+            current_user_text=history_user_text,
+            group_context=group_context_str,
+            group_id=group_id,
+            user_content=user_content,
+            companion_local_context=companion_local_context,
+            attached_image=attached_image,
+        )
 
         await update.effective_chat.send_action(ChatAction.TYPING)
         reply_started = asyncio.get_running_loop().time()
@@ -757,6 +794,7 @@ def _make_message_handler(
             context,
             agent_loop,
             tools,
+            conversation=conversation,
             store=store,
             client_id=user_id,
             channel_id=channel_id,
@@ -777,12 +815,9 @@ def _make_message_handler(
             history = _get_history(context, is_group=in_group, thread_id=thread_id)
             if history and history[-1]["role"] == "assistant":
                 history[-1]["content"] = rendered_reply_text
-        persist_companion_turn(
+        persist_companion_turn_for_input(
+            conversation=conversation,
             store=store,
-            client_id=user_id,
-            channel_id=channel_id,
-            thread_id=thread_id,
-            user_text=history_user_text,
             assistant_text=rendered_reply_text,
             reply=reply,
             now=now_utc,

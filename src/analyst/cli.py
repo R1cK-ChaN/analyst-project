@@ -18,7 +18,8 @@ from analyst.delivery.companion_schedule import (
 from analyst.delivery.companion_reminders import apply_companion_reminder_update
 from analyst.memory import build_chat_context, record_chat_interaction
 from analyst.runtime.chat import build_companion_services, generate_chat_reply, split_into_bubbles
-from analyst.runtime.conversation_service import persist_companion_turn, run_companion_turn
+from analyst.runtime.conversation_service import persist_companion_turn_for_input, run_companion_turn_for_input
+from analyst.runtime.environment_adapter import build_cli_conversation_input
 from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
 from analyst.tools import build_image_gen_tool, build_live_photo_tool
 from analyst.tools._image_gen import GeneratedImage, ImageGenConfig, SeedreamImageClient
@@ -467,27 +468,25 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
     history: list[dict[str, str]] = []
 
     def handle_turn(user_text: str) -> None:
-        reply = run_companion_turn(
-            user_text=user_text,
-            history=history,
-            agent_loop=agent_loop,
-            tools=tools,
-            store=store,
-            client_id=args.client_id,
+        conversation = build_cli_conversation_input(
+            user_id=args.client_id,
             channel_id=args.channel_id,
             thread_id=args.thread_id,
-            query=user_text,
-            current_user_text=user_text,
+            message=user_text,
+            history=history,
             companion_local_context=build_companion_schedule_context(store),
+        )
+        reply = run_companion_turn_for_input(
+            conversation=conversation,
+            store=store,
+            agent_loop=agent_loop,
+            tools=tools,
             memory_context_builder=build_chat_context,
             reply_generator=generate_chat_reply,
         )
-        persist_companion_turn(
+        persist_companion_turn_for_input(
+            conversation=conversation,
             store=store,
-            client_id=args.client_id,
-            channel_id=args.channel_id,
-            thread_id=args.thread_id,
-            user_text=user_text,
             assistant_text=reply.text,
             reply=reply,
             schedule_updater=apply_companion_schedule_update,

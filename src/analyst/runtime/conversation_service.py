@@ -12,6 +12,7 @@ from analyst.storage import SQLiteEngineStore
 from analyst.tools._request_context import RequestImageInput, bind_request_image
 
 from .chat import ChatReply, generate_chat_reply, generate_proactive_companion_reply
+from .environment_adapter import ConversationInput, ProactiveConversationInput
 
 MemoryContextBuilder = Callable[..., str]
 GroupMemoryContextBuilder = Callable[..., str]
@@ -76,31 +77,66 @@ def run_companion_turn(
     group_memory_context_builder: GroupMemoryContextBuilder = build_group_chat_context,
     reply_generator: ReplyGenerator = generate_chat_reply,
 ) -> ChatReply:
+    return run_companion_turn_for_input(
+        conversation=ConversationInput(
+            user_id=client_id,
+            channel="",
+            channel_id=channel_id,
+            thread_id=thread_id,
+            message=user_text,
+            current_user_text=current_user_text,
+            history=list(history or []),
+            group_context=group_context,
+            group_id=group_id,
+            user_content=user_content,
+            companion_local_context=companion_local_context,
+            attached_image=attached_image,
+            persona_mode=persona_mode,
+        ),
+        store=store,
+        agent_loop=agent_loop,
+        tools=tools,
+        memory_context_builder=memory_context_builder,
+        group_memory_context_builder=group_memory_context_builder,
+        reply_generator=reply_generator,
+    )
+
+
+def run_companion_turn_for_input(
+    *,
+    conversation: ConversationInput,
+    store: SQLiteEngineStore,
+    agent_loop: AgentExecutor | Any,
+    tools: list[AgentTool],
+    memory_context_builder: MemoryContextBuilder = build_chat_context,
+    group_memory_context_builder: GroupMemoryContextBuilder = build_group_chat_context,
+    reply_generator: ReplyGenerator = generate_chat_reply,
+) -> ChatReply:
     memory_context = build_companion_memory_context(
         store=store,
-        client_id=client_id,
-        channel_id=channel_id,
-        thread_id=thread_id,
-        query=query,
-        current_user_text=current_user_text,
-        group_id=group_id,
-        persona_mode=persona_mode,
+        client_id=conversation.user_id,
+        channel_id=conversation.channel_id,
+        thread_id=conversation.thread_id,
+        query=conversation.message,
+        current_user_text=conversation.current_user_text or conversation.message,
+        group_id=conversation.group_id,
+        persona_mode=conversation.persona_mode,
         memory_context_builder=memory_context_builder,
         group_memory_context_builder=group_memory_context_builder,
     )
-    profile = store.get_client_profile(client_id)
-    with bind_request_image(attached_image):
+    profile = store.get_client_profile(conversation.user_id)
+    with bind_request_image(conversation.attached_image):
         return reply_generator(
-            user_text,
-            history=history,
+            conversation.message,
+            history=conversation.history,
             agent_loop=agent_loop,
             tools=tools,
             memory_context=memory_context,
             preferred_language=profile.preferred_language,
-            group_context=group_context,
-            user_content=user_content,
-            companion_local_context=companion_local_context,
-            persona_mode=persona_mode,
+            group_context=conversation.group_context,
+            user_content=conversation.user_content,
+            companion_local_context=conversation.companion_local_context,
+            persona_mode=conversation.persona_mode,
         )
 
 
@@ -121,7 +157,44 @@ def persist_companion_turn(
     reminder_updater: ReminderUpdater = apply_companion_reminder_update,
     interaction_recorder: InteractionRecorder = record_chat_interaction,
 ) -> None:
-    schedule_kwargs: dict[str, Any] = {"user_text": user_text}
+    persist_companion_turn_for_input(
+        conversation=ConversationInput(
+            user_id=client_id,
+            channel="",
+            channel_id=channel_id,
+            thread_id=thread_id,
+            message=user_text,
+            current_user_text=user_text,
+            persona_mode=persona_mode,
+        ),
+        store=store,
+        assistant_text=assistant_text,
+        reply=reply,
+        routine_state=routine_state,
+        now=now,
+        apply_reminders=apply_reminders,
+        persona_mode=persona_mode,
+        schedule_updater=schedule_updater,
+        reminder_updater=reminder_updater,
+        interaction_recorder=interaction_recorder,
+    )
+
+
+def persist_companion_turn_for_input(
+    *,
+    conversation: ConversationInput,
+    store: SQLiteEngineStore,
+    assistant_text: str,
+    reply: ChatReply,
+    routine_state: str = "",
+    now: datetime | None = None,
+    apply_reminders: bool = True,
+    persona_mode: str = "companion",
+    schedule_updater: ScheduleUpdater = apply_companion_schedule_update,
+    reminder_updater: ReminderUpdater = apply_companion_reminder_update,
+    interaction_recorder: InteractionRecorder = record_chat_interaction,
+) -> None:
+    schedule_kwargs: dict[str, Any] = {"user_text": conversation.current_user_text or conversation.message}
     if now is not None:
         schedule_kwargs["now"] = now
     if routine_state:
@@ -129,13 +202,13 @@ def persist_companion_turn(
     schedule_updater(store, reply.schedule_update, **schedule_kwargs)
 
     if apply_reminders:
-        profile = store.get_client_profile(client_id)
+        profile = store.get_client_profile(conversation.user_id)
         reminder_kwargs: dict[str, Any] = {
             "store": store,
             "update": reply.reminder_update,
-            "client_id": client_id,
-            "channel_id": channel_id,
-            "thread_id": thread_id,
+            "client_id": conversation.user_id,
+            "channel_id": conversation.channel_id,
+            "thread_id": conversation.thread_id,
             "preferred_language": profile.preferred_language,
         }
         if now is not None:
@@ -144,10 +217,10 @@ def persist_companion_turn(
 
     interaction_recorder(
         store=store,
-        client_id=client_id,
-        channel_id=channel_id,
-        thread_id=thread_id,
-        user_text=user_text,
+        client_id=conversation.user_id,
+        channel_id=conversation.channel_id,
+        thread_id=conversation.thread_id,
+        user_text=conversation.current_user_text or conversation.message,
         assistant_text=assistant_text,
         assistant_profile_update=reply.profile_update,
         tool_audit=reply.tool_audit,
@@ -168,20 +241,45 @@ def run_proactive_companion_turn(
     memory_context_builder: MemoryContextBuilder = build_chat_context,
     proactive_reply_generator: ProactiveReplyGenerator = generate_proactive_companion_reply,
 ) -> ChatReply:
+    return run_proactive_companion_turn_for_input(
+        conversation=ProactiveConversationInput(
+            user_id=client_id,
+            channel="",
+            channel_id=channel_id,
+            thread_id=thread_id,
+            kind=kind,
+            companion_local_context=companion_local_context,
+            persona_mode=persona_mode,
+        ),
+        store=store,
+        agent_loop=agent_loop,
+        memory_context_builder=memory_context_builder,
+        proactive_reply_generator=proactive_reply_generator,
+    )
+
+
+def run_proactive_companion_turn_for_input(
+    *,
+    conversation: ProactiveConversationInput,
+    store: SQLiteEngineStore,
+    agent_loop: AgentExecutor | Any,
+    memory_context_builder: MemoryContextBuilder = build_chat_context,
+    proactive_reply_generator: ProactiveReplyGenerator = generate_proactive_companion_reply,
+) -> ChatReply:
     memory_context = memory_context_builder(
         store=store,
-        client_id=client_id,
-        channel_id=channel_id,
-        thread_id=thread_id,
+        client_id=conversation.user_id,
+        channel_id=conversation.channel_id,
+        thread_id=conversation.thread_id,
         query="",
         current_user_text="",
-        persona_mode=persona_mode,
+        persona_mode=conversation.persona_mode,
     )
-    profile = store.get_client_profile(client_id)
+    profile = store.get_client_profile(conversation.user_id)
     return proactive_reply_generator(
-        kind=kind,
+        kind=conversation.kind,
         agent_loop=agent_loop,
         memory_context=memory_context,
         preferred_language=profile.preferred_language,
-        companion_local_context=companion_local_context,
+        companion_local_context=conversation.companion_local_context,
     )
