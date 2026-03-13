@@ -331,6 +331,66 @@ class ClaudeCodeProviderTest(unittest.TestCase):
         self.assertIn("--strict-mcp-config", command)
         self.assertIn("WebSearch,WebFetch", command)
 
+    def test_complete_native_uses_stream_json_for_image_blocks(self) -> None:
+        completed = Mock(
+            returncode=0,
+            stdout="\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "content": [{"type": "text", "text": "red"}],
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "result",
+                            "subtype": "success",
+                            "is_error": False,
+                            "result": "red",
+                        }
+                    ),
+                ]
+            ),
+            stderr="",
+        )
+        runner = Mock(return_value=completed)
+        provider = ClaudeCodeProvider(
+            ClaudeCodeConfig(oauth_token="token", model="sonnet"),
+            runner=runner,
+        )
+
+        result = provider.complete_native(
+            system_prompt="system",
+            messages=[
+                ConversationMessage(
+                    role="user",
+                    content=[
+                        {"type": "text", "text": "What color is this image? Answer one word."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64,"
+                                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jkO8AAAAASUVORK5CYII="
+                            },
+                        },
+                    ],
+                )
+            ],
+        )
+
+        self.assertEqual(result.message.content, "red")
+        command = runner.call_args.args[0]
+        self.assertIn("--input-format", command)
+        self.assertIn("--output-format", command)
+        self.assertIn("--verbose", command)
+        self.assertNotIn("--", command)
+        stream_input = runner.call_args.kwargs["input"]
+        self.assertIn('"type":"image"', stream_input)
+        self.assertIn('"media_type":"image/png"', stream_input)
+
 
 class OpenRouterAnalystEngineTest(unittest.TestCase):
     def test_regime_and_premarket_notes_use_runtime_output(self) -> None:

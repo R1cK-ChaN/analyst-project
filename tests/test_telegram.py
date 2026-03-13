@@ -10,6 +10,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -289,7 +290,30 @@ class TestUserChatClaudeCodeImages(unittest.TestCase):
         from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
         from analyst.engine.live_provider import ClaudeCodeConfig, ClaudeCodeProvider
 
-        completed = MagicMock(returncode=0, stdout="red\n", stderr="")
+        completed = MagicMock(
+            returncode=0,
+            stdout="\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "content": [{"type": "text", "text": "red"}],
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "result",
+                            "subtype": "success",
+                            "is_error": False,
+                            "result": "red",
+                        }
+                    ),
+                ]
+            ),
+            stderr="",
+        )
         runner = MagicMock(return_value=completed)
         provider = ClaudeCodeProvider(
             ClaudeCodeConfig(oauth_token="token", model="sonnet"),
@@ -325,7 +349,9 @@ class TestUserChatClaudeCodeImages(unittest.TestCase):
         self.assertEqual(reply.text, "red")
         self.assertEqual(reply.tool_audit, [])
         command = runner.call_args.args[0]
-        self.assertNotIn("--output-format", command)
+        self.assertIn("--input-format", command)
+        self.assertIn("--output-format", command)
+        self.assertIn('"type":"image"', runner.call_args.kwargs["input"])
 
     def test_generate_chat_reply_can_use_native_claude_agent_with_shared_mcp_tools(self) -> None:
         from analyst.delivery.user_chat import ChatPersonaMode, generate_chat_reply
