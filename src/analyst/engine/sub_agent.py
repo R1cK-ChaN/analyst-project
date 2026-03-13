@@ -5,7 +5,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from .agent_loop import AgentLoopConfig, PythonAgentLoop
 from .live_types import AgentTool, LLMProvider
@@ -21,6 +21,8 @@ _SUB_AGENT_PARAMETERS: dict[str, Any] = {
     },
 }
 
+SubAgentPromptBuilder = Callable[[dict[str, Any]], str]
+
 
 @dataclass(frozen=True)
 class SubAgentSpec:
@@ -30,6 +32,7 @@ class SubAgentSpec:
     tools: list[AgentTool]
     config: AgentLoopConfig = field(default_factory=lambda: AgentLoopConfig(max_turns=3, max_tokens=1200, temperature=0.2))
     parameters: dict[str, Any] = field(default_factory=lambda: dict(_SUB_AGENT_PARAMETERS))
+    build_user_prompt: SubAgentPromptBuilder | None = None
 
 
 class SubAgentHandler:
@@ -48,13 +51,20 @@ class SubAgentHandler:
 
     def __call__(self, arguments: dict[str, Any]) -> dict[str, Any]:
         task = str(arguments.get("task", ""))
-        context = str(arguments.get("context", ""))
         if not task:
             return {"status": "error", "error": "Missing required 'task' argument."}
 
-        user_prompt_parts = [task]
-        if context:
-            user_prompt_parts.append(f"\n\nAdditional context:\n{context}")
+        try:
+            if self.spec.build_user_prompt is not None:
+                user_prompt = self.spec.build_user_prompt(arguments)
+            else:
+                context = str(arguments.get("context", ""))
+                user_prompt_parts = [task]
+                if context:
+                    user_prompt_parts.append(f"\n\nAdditional context:\n{context}")
+                user_prompt = "".join(user_prompt_parts)
+        except Exception as exc:
+            return {"status": "error", "error": str(exc)}
 
         # Build scoped memory if store is available
         memory = ""
@@ -67,9 +77,7 @@ class SubAgentHandler:
                 logger.debug("Failed to build sub-agent memory", exc_info=True)
 
         if memory:
-            user_prompt_parts.append(f"\n\nRelevant background:\n{memory}")
-
-        user_prompt = "".join(user_prompt_parts)
+            user_prompt = f"{user_prompt}\n\nRelevant background:\n{memory}"
         task_id = uuid.uuid4().hex[:12]
         start = time.monotonic()
 

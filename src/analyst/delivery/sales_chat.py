@@ -8,6 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Any
 
+from analyst.agents import RoleDependencies, RolePromptContext, get_role_spec
 from analyst.engine import OpenRouterAnalystEngine
 from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
 from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider
@@ -101,12 +102,17 @@ def resolve_chat_persona_mode(value: str | ChatPersonaMode | None = None) -> Cha
 
 
 def build_companion_tools() -> list[AgentTool]:
-    kit = ToolKit()
-    kit.add(build_image_gen_tool())
-    live_photo_tool = build_optional_live_photo_tool()
-    if live_photo_tool is not None:
-        kit.add(live_photo_tool)
-    return kit.to_list()
+    return get_role_spec("companion").build_tools(RoleDependencies())
+
+
+def _build_configured_companion_tools(
+    *,
+    store: SQLiteEngineStore | None = None,
+    provider: LLMProvider | None = None,
+) -> list[AgentTool]:
+    return get_role_spec("companion").build_tools(
+        RoleDependencies(store=store, provider=provider),
+    )
 
 
 def build_chat_tools(
@@ -118,7 +124,7 @@ def build_chat_tools(
 ) -> list[AgentTool]:
     resolved_mode = resolve_chat_persona_mode(persona_mode)
     if resolved_mode is ChatPersonaMode.COMPANION:
-        return build_companion_tools()
+        return _build_configured_companion_tools(store=store, provider=provider)
 
     def get_regime(arguments: dict[str, object]) -> str:
         note = engine.get_regime_summary()
@@ -250,7 +256,7 @@ def build_companion_services(
         provider=provider,
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
     )
-    tools = build_companion_tools()
+    tools = _build_configured_companion_tools(store=store, provider=provider)
     return agent_loop, tools, store
 
 
@@ -298,11 +304,19 @@ def system_prompt_with_memory(
     persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
 ) -> str:
     resolved_mode = resolve_chat_persona_mode(persona_mode)
-    timezone_name = "Asia/Singapore" if resolved_mode is ChatPersonaMode.COMPANION else "Asia/Shanghai"
     if resolved_mode is ChatPersonaMode.COMPANION:
-        now = datetime.now(timezone(timedelta(hours=8), name="Asia/Singapore"))
-    else:
-        now = datetime.now(ZoneInfo(timezone_name))
+        return get_role_spec("companion").build_system_prompt(
+            RolePromptContext(
+                memory_context=memory_context,
+                user_text=user_text,
+                user_lang=user_lang,
+                group_context=group_context,
+                proactive_kind=proactive_kind,
+                companion_local_context=companion_local_context,
+            )
+        )
+    timezone_name = "Asia/Shanghai"
+    now = datetime.now(ZoneInfo(timezone_name))
     return assemble_persona_system_prompt(
         PromptAssemblyContext(
             mode=resolved_mode.value,

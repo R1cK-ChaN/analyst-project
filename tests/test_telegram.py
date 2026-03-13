@@ -244,14 +244,16 @@ class TestBuildApplication(unittest.TestCase):
 
 
 class TestChatPersonaRouting(unittest.TestCase):
-    def test_companion_tools_exclude_finance_and_web_tools(self) -> None:
+    def test_companion_tools_only_expose_media_and_research_delegate(self) -> None:
         from analyst.delivery.sales_chat import ChatPersonaMode, build_chat_tools, build_companion_services, COMPANION_DEFAULT_MODEL
 
         image_tool = AgentTool(name="generate_image", description="", parameters={}, handler=lambda _: {})
         live_tool = AgentTool(name="generate_live_photo", description="", parameters={}, handler=lambda _: {})
+        research_tool = AgentTool(name="research_agent", description="", parameters={}, handler=lambda _: {})
 
-        with patch("analyst.delivery.sales_chat.build_image_gen_tool", return_value=image_tool), \
-             patch("analyst.delivery.sales_chat.build_optional_live_photo_tool", return_value=live_tool):
+        with patch("analyst.agents.companion.companion_agent.build_image_gen_tool", return_value=image_tool), \
+             patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool", return_value=live_tool), \
+             patch("analyst.agents.companion.companion_agent.build_research_agent_tool", return_value=research_tool):
             tools = build_chat_tools(
                 engine=MagicMock(),
                 store=MagicMock(),
@@ -259,7 +261,7 @@ class TestChatPersonaRouting(unittest.TestCase):
                 persona_mode=ChatPersonaMode.COMPANION,
             )
 
-        self.assertEqual([tool.name for tool in tools], ["generate_image", "generate_live_photo"])
+        self.assertEqual([tool.name for tool in tools], ["generate_image", "generate_live_photo", "research_agent"])
 
     def test_companion_services_use_companion_default_model(self) -> None:
         from analyst.delivery.sales_chat import (
@@ -272,8 +274,9 @@ class TestChatPersonaRouting(unittest.TestCase):
             "analyst.delivery.sales_chat.OpenRouterConfig.from_env",
             return_value=OpenRouterConfig(api_key="test-key", model=COMPANION_DEFAULT_MODEL),
         ) as config_mock, \
-             patch("analyst.delivery.sales_chat.build_image_gen_tool", return_value=MagicMock()), \
-             patch("analyst.delivery.sales_chat.build_optional_live_photo_tool", return_value=MagicMock()):
+             patch("analyst.agents.companion.companion_agent.build_image_gen_tool", return_value=MagicMock()), \
+             patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool", return_value=MagicMock()), \
+             patch("analyst.agents.companion.companion_agent.build_research_agent_tool", return_value=MagicMock()):
             build_companion_services()
 
         kwargs = config_mock.call_args.kwargs
