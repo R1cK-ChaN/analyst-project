@@ -3,6 +3,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from analyst.runtime.capabilities import (
+    CONTENT_SUB_AGENT_TOOL_BUILDERS,
+    RESEARCH_SUB_AGENT_PARENT_TOOL_NAMES,
+    USER_SUB_AGENT_PARENT_TOOL_NAMES,
+)
+
 from .agent_loop import AgentLoopConfig
 from .live_types import AgentTool, LLMProvider
 from .sub_agent import SubAgentSpec, build_sub_agent_tool
@@ -33,10 +39,7 @@ def build_research_sub_agents(
                 "Be factual. Cite specific numbers. Do not speculate beyond the data.\n"
                 "Reply in the same language as the task."
             ),
-            tools=_pick(by_name, [
-                "get_indicator_history", "get_indicator_trend", "get_surprise_summary",
-                "get_recent_releases", "get_today_calendar",
-            ]),
+            tools=_pick(by_name, list(RESEARCH_SUB_AGENT_PARENT_TOOL_NAMES["data_deep_dive"])),
             config=AgentLoopConfig(max_turns=3, max_tokens=1200, temperature=0.2),
         ),
         SubAgentSpec(
@@ -54,10 +57,7 @@ def build_research_sub_agents(
                 "Focus on what moved and why. Be specific with numbers.\n"
                 "Reply in the same language as the task."
             ),
-            tools=_pick(by_name, [
-                "get_market_snapshot", "get_vix_regime", "fetch_reference_rates",
-                "fetch_rate_expectations", "fetch_live_markets", "fetch_live_news",
-            ]),
+            tools=_pick(by_name, list(RESEARCH_SUB_AGENT_PARENT_TOOL_NAMES["market_scanner"])),
             config=AgentLoopConfig(max_turns=3, max_tokens=1200, temperature=0.2),
         ),
         SubAgentSpec(
@@ -74,10 +74,7 @@ def build_research_sub_agents(
                 "Distinguish facts from speculation. Note conflicting reports.\n"
                 "Reply in the same language as the task."
             ),
-            tools=_pick(by_name, [
-                "web_search", "web_fetch_page", "fetch_live_news",
-                "fetch_article", "search_news", "get_recent_news",
-            ]),
+            tools=_pick(by_name, list(RESEARCH_SUB_AGENT_PARENT_TOOL_NAMES["news_researcher"])),
             config=AgentLoopConfig(max_turns=4, max_tokens=1500, temperature=0.2),
         ),
     ]
@@ -108,11 +105,7 @@ def build_user_sub_agents(
                 "Be specific with numbers. Avoid jargon.\n"
                 "Reply in the same language as the task."
             ),
-            tools=_pick(by_name, [
-                "fetch_live_markets", "fetch_live_news", "fetch_article",
-                "fetch_country_indicators", "fetch_reference_rates",
-                "get_regime_summary", "get_calendar", "web_search",
-            ]),
+            tools=_pick(by_name, list(USER_SUB_AGENT_PARENT_TOOL_NAMES["research_lookup"])),
             config=AgentLoopConfig(max_turns=3, max_tokens=1200, temperature=0.3),
         ),
         SubAgentSpec(
@@ -129,10 +122,7 @@ def build_user_sub_agents(
                 "Focus on actionable risk insights.\n"
                 "Reply in the same language as the task."
             ),
-            tools=_pick(by_name, [
-                "get_portfolio_risk", "get_portfolio_holdings",
-                "get_vix_regime", "sync_portfolio_from_broker",
-            ]),
+            tools=_pick(by_name, list(USER_SUB_AGENT_PARENT_TOOL_NAMES["portfolio_analyst"])),
             config=AgentLoopConfig(max_turns=3, max_tokens=1000, temperature=0.2),
         ),
     ]
@@ -145,34 +135,8 @@ def build_content_sub_agents(
     store: Any | None = None,
 ) -> list[AgentTool]:
     """Build sub-agent tools for the Professional Content agent (OpenRouterAgentRuntime)."""
-    # Content sub-agents need their own tool instances since there's no parent tool list
-    from analyst.tools import (
-        build_country_indicators_tool,
-        build_live_markets_tool,
-        build_live_news_tool,
-        build_rate_expectations_tool,
-        build_reference_rates_tool,
-        build_vix_regime_tool,
-        build_web_fetch_tool,
-        build_web_search_tool,
-        build_article_tool,
-    )
-
-    fact_checker_tools = [
-        build_live_markets_tool(),
-        build_reference_rates_tool(),
-        build_rate_expectations_tool(),
-        build_country_indicators_tool(),
-        build_vix_regime_tool(),
-    ]
-
-    content_researcher_tools = [
-        build_web_search_tool(),
-        build_web_fetch_tool(),
-        build_live_news_tool(),
-        build_article_tool(),
-        build_live_markets_tool(),
-    ]
+    fact_checker_tools = [builder() for builder in CONTENT_SUB_AGENT_TOOL_BUILDERS["fact_checker"]]
+    content_researcher_tools = [builder() for builder in CONTENT_SUB_AGENT_TOOL_BUILDERS["content_researcher"]]
 
     specs = [
         SubAgentSpec(

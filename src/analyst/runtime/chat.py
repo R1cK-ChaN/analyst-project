@@ -7,7 +7,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
-from analyst.agents import RoleDependencies, RolePromptContext, get_role_spec
+from analyst.agents import RolePromptContext, get_role_spec
 from analyst.env import get_env_value
 from analyst.engine import (
     AgentExecutor,
@@ -20,28 +20,6 @@ from analyst.engine import (
 from analyst.engine.agent_loop import AgentLoopConfig
 from analyst.engine.backends.factory import build_llm_provider_from_env
 from analyst.engine.live_types import AgentTool, ConversationMessage, LLMProvider, MessageContent
-from analyst.mcp.shared_tools import BASE_SHARED_MCP_TOOL_NAMES
-from analyst.tools import (
-    ToolKit,
-    build_article_tool,
-    build_country_indicators_tool,
-    build_fed_comms_tool,
-    build_image_gen_tool,
-    build_indicator_history_tool,
-    build_optional_live_photo_tool,
-    build_live_markets_tool,
-    build_live_news_tool,
-    build_portfolio_holdings_tool,
-    build_portfolio_risk_tool,
-    build_portfolio_sync_tool,
-    build_rate_expectations_tool,
-    build_reference_rates_tool,
-    build_research_search_tool,
-    build_stored_news_tool,
-    build_vix_regime_tool,
-    build_web_fetch_tool,
-    build_web_search_tool,
-)
 from analyst.memory import (
     ClientProfileUpdate,
     CompanionReminderUpdate,
@@ -51,9 +29,15 @@ from analyst.memory import (
     split_reply_and_profile_update,
 )
 from analyst.storage import SQLiteEngineStore
-from analyst.tools._live_calendar import build_live_calendar_tool
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 
+from .capabilities import (
+    CLAUDE_CODE_NATIVE_TOOL_NAMES,
+    COMPANION_SHARED_MCP_TOOL_NAMES as USER_SHARED_MCP_TOOL_NAMES,
+    USER_CHAT_SHARED_MCP_TOOL_NAMES,
+    build_capability_tools,
+    build_content_runtime_tools,
+)
 from .openrouter import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
 
 COMPANION_MODEL_KEYS = (
@@ -69,22 +53,6 @@ USER_MODEL_KEYS = (
     "LLM_MODEL",
 )
 USER_DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
-CLAUDE_CODE_NATIVE_TOOL_NAMES = ("WebSearch", "WebFetch")
-USER_SHARED_MCP_TOOL_NAMES = (
-    *BASE_SHARED_MCP_TOOL_NAMES,
-    "fetch_live_calendar",
-    "search_news",
-    "get_fed_communications",
-    "get_indicator_history",
-    "search_research_notes",
-)
-USER_CHAT_SHARED_MCP_TOOL_NAMES = (
-    *USER_SHARED_MCP_TOOL_NAMES,
-    "get_portfolio_risk",
-    "get_portfolio_holdings",
-)
-
-
 class ChatPersonaMode(str, Enum):
     COMPANION = "companion"
 
@@ -126,7 +94,7 @@ def resolve_chat_persona_mode(value: str | ChatPersonaMode | None = None) -> Cha
 
 
 def build_companion_tools() -> list[AgentTool]:
-    return get_role_spec("companion").build_tools(RoleDependencies())
+    return build_capability_tools("companion")
 
 
 def _build_configured_companion_tools(
@@ -134,9 +102,7 @@ def _build_configured_companion_tools(
     store: SQLiteEngineStore | None = None,
     provider: LLMProvider | None = None,
 ) -> list[AgentTool]:
-    return get_role_spec("companion").build_tools(
-        RoleDependencies(store=store, provider=provider),
-    )
+    return build_capability_tools("companion", store=store, provider=provider)
 
 
 def build_chat_tools(
@@ -152,79 +118,8 @@ def build_chat_tools(
         else str(persona_mode or "").strip().lower()
     )
     if normalized_mode == ChatPersonaMode.COMPANION.value or engine is None:
-        return _build_configured_companion_tools(store=store, provider=provider)
-
-    def get_regime(arguments: dict[str, object]) -> str:
-        note = engine.get_regime_summary()
-        return note.body_markdown
-
-    def get_calendar(arguments: dict[str, object]) -> str:
-        items = engine.get_calendar(limit=5)
-        if not items:
-            return "No upcoming calendar events."
-        return "\n".join(
-            f"- {item.indicator} ({item.country}) | "
-            f"预期 {item.expected or '待定'} | 前值 {item.previous or '未知'} | {item.notes}"
-            for item in items
-        )
-
-    def get_premarket(arguments: dict[str, object]) -> str:
-        note = engine.build_premarket_briefing()
-        return note.body_markdown
-
-    kit = ToolKit()
-    kit.add(build_web_search_tool())
-    kit.add(build_web_fetch_tool())
-    kit.add(build_image_gen_tool())
-    live_photo_tool = build_optional_live_photo_tool()
-    if live_photo_tool is not None:
-        kit.add(live_photo_tool)
-    kit.add(
-        AgentTool(
-            name="get_regime_summary",
-            description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_regime,
-        )
-    )
-    kit.add(
-        AgentTool(
-            name="get_calendar",
-            description="Fetch upcoming economic data releases from local cache. For live/real-time calendar data, prefer fetch_live_calendar instead.",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_calendar,
-        )
-    )
-    kit.add(
-        AgentTool(
-            name="get_premarket_briefing",
-            description="Fetch the pre-market briefing including overnight highlights and today's key data.",
-            parameters={"type": "object", "properties": {}, "required": []},
-            handler=get_premarket,
-        )
-    )
-    kit.add(build_live_news_tool())
-    kit.add(build_article_tool())
-    kit.add(build_live_markets_tool())
-    kit.add(build_country_indicators_tool())
-    kit.add(build_reference_rates_tool())
-    kit.add(build_rate_expectations_tool())
-    if store is not None:
-        kit.add(build_live_calendar_tool(store))
-        kit.add(build_portfolio_risk_tool(store))
-        kit.add(build_portfolio_holdings_tool(store))
-        kit.add(build_portfolio_sync_tool(store))
-        kit.add(build_stored_news_tool(store))
-        kit.add(build_fed_comms_tool(store))
-        kit.add(build_indicator_history_tool(store))
-        kit.add(build_research_search_tool(store))
-    kit.add(build_vix_regime_tool())
-    if provider is not None:
-        from analyst.engine.sub_agent_specs import build_user_sub_agents
-
-        for sa_tool in build_user_sub_agents(kit.to_list(), provider, store):
-            kit.add(sa_tool)
-    return kit.to_list()
+        return build_capability_tools("companion", store=store, provider=provider)
+    return build_capability_tools("user_chat", engine=engine, store=store, provider=provider)
 
 
 def build_user_chat_tools(
@@ -263,9 +158,7 @@ def build_chat_services(
 
     repository = FileBackedInformationRepository()
     info_service = AnalystInformationService(repository)
-    from analyst.engine.sub_agent_specs import build_content_sub_agents
-
-    content_tools = build_content_sub_agents(provider, store)
+    content_tools = build_content_runtime_tools(provider=provider, store=store)
     runtime = OpenRouterAgentRuntime(
         provider=provider,
         config=OpenRouterRuntimeConfig(
