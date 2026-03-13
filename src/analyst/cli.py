@@ -477,6 +477,7 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
             channel_id=args.channel_id,
             thread_id=args.thread_id,
             query=user_text,
+            current_user_text=user_text,
             persona_mode=persona_mode.value,
         )
         profile = store.get_client_profile(args.client_id)
@@ -544,6 +545,7 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
                 channel_id=args.channel_id,
                 thread_id=args.thread_id,
                 query="",
+                current_user_text="",
                 persona_mode=persona_mode.value,
             )
             print("\n[memory]")

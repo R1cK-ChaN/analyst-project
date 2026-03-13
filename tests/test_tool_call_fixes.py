@@ -132,6 +132,13 @@ class PromptAssemblySelectionTest(unittest.TestCase):
         self.assertIn("group_chat", grouped.module_ids)
         self.assertIn("GROUP CHAT MODE", grouped.prompt)
 
+    def test_topic_state_module_loads_when_active_topic_present(self) -> None:
+        result = assemble_persona_system_prompt(
+            PromptAssemblyContext(mode="companion", memory_context="- active_topic: planning / scheduling")
+        )
+        self.assertIn("topic_state_focus", result.module_ids)
+        self.assertIn("active_topic 是当前默认焦点", result.prompt)
+
 
 # ------------------------------------------------------------------ #
 # Fix 3: fetch_live_calendar wired into main agent                    #

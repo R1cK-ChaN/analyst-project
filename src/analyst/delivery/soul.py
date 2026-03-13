@@ -71,6 +71,16 @@ REENGAGEMENT_MODULE = PromptModule(
 """,
 )
 
+TOPIC_STATE_MODULE = PromptModule(
+    module_id="topic_state_focus",
+    body="""\
+如果 internal context 里有 topic_state：
+- active_topic 是当前默认焦点，先回应它，不要被你自己上一轮说过的小事带偏。
+- reply_focus 如果存在，优先接那句话或那个问题。
+- cooling_topics 只在对方明确重新问起时再回去，不要主动翻旧话题。
+""",
+)
+
 SALES_IDENTITY_MODULE = PromptModule(
     module_id="sales_identity",
     body="""\
@@ -330,6 +340,7 @@ COMMON_MODULES: dict[str, PromptModule] = {
     TIME_AWARENESS_MODULE.module_id: TIME_AWARENESS_MODULE,
     GROUP_CHAT_MODULE.module_id: GROUP_CHAT_MODULE,
     REENGAGEMENT_MODULE.module_id: REENGAGEMENT_MODULE,
+    TOPIC_STATE_MODULE.module_id: TOPIC_STATE_MODULE,
 }
 
 MODE_MODULES: dict[str, dict[str, PromptModule]] = {
@@ -375,10 +386,8 @@ BASE_MODULE_IDS: dict[str, tuple[str, ...]] = {
         "companion_message_format",
         "companion_style",
         "companion_singapore_lifestyle",
-        "companion_media_rules",
         "time_awareness",
         "companion_boundaries",
-        "companion_schedule_consistency",
         "companion_profile_update",
     ),
 }
@@ -422,6 +431,12 @@ PROFILE_SIGNAL_FIELDS = (
     "stress_level:",
     "notes:",
     "days_since_last_active:",
+)
+
+TOPIC_STATE_SIGNAL_FIELDS = (
+    "active_topic:",
+    "reply_focus:",
+    "cooling_topics:",
 )
 
 
@@ -487,6 +502,27 @@ def _user_text_needs_emotional_support(user_text: str) -> bool:
     return any(token in lowered for token in EMOTIONAL_KEYWORDS)
 
 
+def _user_text_needs_media_rules(user_text: str) -> bool:
+    lowered = user_text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "photo",
+            "pic",
+            "picture",
+            "image",
+            "selfie",
+            "video",
+            "live photo",
+            "照片",
+            "图片",
+            "自拍",
+            "视频",
+            "动态",
+        )
+    )
+
+
 def _optional_module_ids(context: PromptAssemblyContext) -> tuple[str, ...]:
     mode = resolve_prompt_mode(context.mode)
     module_ids: list[str] = []
@@ -497,10 +533,16 @@ def _optional_module_ids(context: PromptAssemblyContext) -> tuple[str, ...]:
     days_since_last_active = _extract_days_since_last_active(context.memory_context)
     if days_since_last_active is not None and days_since_last_active >= 3:
         module_ids.append("re_engagement")
+    if any(field in context.memory_context.lower() for field in TOPIC_STATE_SIGNAL_FIELDS):
+        module_ids.append("topic_state_focus")
     if _user_text_needs_emotional_support(context.user_text) or _memory_needs_emotional_support(context.memory_context):
         module_ids.append(f"{mode}_emotional_support")
     if mode == "companion" and context.proactive_kind:
         module_ids.append("companion_proactive")
+    if mode == "companion" and context.companion_local_context:
+        module_ids.append("companion_schedule_consistency")
+    if mode == "companion" and _user_text_needs_media_rules(context.user_text):
+        module_ids.append("companion_media_rules")
     return _dedupe_module_ids(module_ids)
 
 

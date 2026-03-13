@@ -8,6 +8,7 @@ from typing import Any
 from analyst.macro_data import MacroDataClient
 from analyst.storage import (
     ClientProfileRecord,
+    ConversationMessageRecord,
     DeliveryQueueRecord,
     GroupMemberRecord,
     GroupMessageRecord,
@@ -16,6 +17,7 @@ from analyst.storage import (
 
 from .profile import ClientProfileUpdate, extract_client_profile_update, merge_client_profile_updates
 from .render import RenderBudget, render_context_sections, trim_text
+from .topic_state import ConversationTopicMessage, build_topic_state_lines
 
 _GROUP_HUMOR_MARKERS = (
     "lol",
@@ -149,6 +151,7 @@ def build_sales_context(
     channel_id: str,
     thread_id: str,
     query: str,
+    current_user_text: str = "",
     budget: RenderBudget | None = None,
 ) -> str:
     limits = budget or RenderBudget()
@@ -173,11 +176,21 @@ def build_sales_context(
             channel=channel_id,
             limit=limits.max_delivery_items,
         )
+    topic_lines = build_topic_state_lines(
+        _conversation_topic_messages(
+            recent_messages,
+            pending_user_text=current_user_text or query,
+        )
+    )
 
     sections = [
         (
             "client_profile",
             _render_client_profile(profile),
+        ),
+        (
+            "topic_state",
+            topic_lines,
         ),
         (
             "sent_content",
@@ -201,6 +214,7 @@ def build_chat_context(
     channel_id: str,
     thread_id: str,
     query: str,
+    current_user_text: str = "",
     persona_mode: str = "sales",
     budget: RenderBudget | None = None,
 ) -> str:
@@ -211,6 +225,7 @@ def build_chat_context(
             channel_id=channel_id,
             thread_id=thread_id,
             query=query,
+            current_user_text=current_user_text,
             budget=budget,
         )
 
@@ -222,10 +237,20 @@ def build_chat_context(
         thread_id=thread_id,
         limit=limits.max_recent_messages,
     )
+    topic_lines = build_topic_state_lines(
+        _conversation_topic_messages(
+            recent_messages,
+            pending_user_text=current_user_text or query,
+        )
+    )
     sections = [
         (
             "client_profile",
             _render_companion_profile(profile),
+        ),
+        (
+            "topic_state",
+            topic_lines,
         ),
         (
             "current_thread",
@@ -345,6 +370,7 @@ def build_group_chat_context(
 
     # Layer 1: Group conversation (working memory)
     group_messages = store.list_group_messages(group_id, thread_id, limit=20)
+    topic_lines = build_topic_state_lines(_group_topic_messages(group_messages))
     group_lines = [
         f"- {msg.display_name}: {trim_text(msg.content, max_chars=limits.max_item_chars)}"
         for msg in group_messages
@@ -375,6 +401,7 @@ def build_group_chat_context(
     social_lines = _render_group_social_graph(group_messages, members)
 
     sections: list[tuple[str, list[str]]] = [
+        ("topic_state", topic_lines),
         ("group_conversation", group_lines),
         ("speaker_memory", speaker_lines),
         ("group_roles", role_lines),
@@ -397,6 +424,48 @@ def _render_participant_model(
         parts.append(f"msgs: {member.message_count}")
         lines.append(f"- {' | '.join(parts)}")
     return lines
+
+
+def _conversation_topic_messages(
+    recent_messages: list[ConversationMessageRecord],
+    *,
+    pending_user_text: str = "",
+) -> list[ConversationTopicMessage]:
+    messages = [
+        ConversationTopicMessage(
+            speaker_key=message.role,
+            speaker_label=message.role,
+            content=message.content,
+            created_at=message.created_at,
+            is_assistant=message.role == "assistant",
+        )
+        for message in recent_messages
+    ]
+    if str(pending_user_text or "").strip():
+        messages.append(
+            ConversationTopicMessage(
+                speaker_key="user",
+                speaker_label="user",
+                content=pending_user_text,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                is_assistant=False,
+                is_current_turn=True,
+            )
+        )
+    return messages
+
+
+def _group_topic_messages(group_messages: list[GroupMessageRecord]) -> list[ConversationTopicMessage]:
+    return [
+        ConversationTopicMessage(
+            speaker_key=message.user_id,
+            speaker_label=message.display_name or message.user_id,
+            content=message.content,
+            created_at=message.created_at,
+            is_assistant=message.user_id == "assistant",
+        )
+        for message in group_messages
+    ]
 
 
 def refresh_group_member_public_inference(

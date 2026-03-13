@@ -330,6 +330,35 @@ class MemoryPipelineTest(unittest.TestCase):
             self.assertEqual(profile.institution_type, "")
             self.assertEqual(profile.watchlist_topics, [])
 
+    def test_topic_state_prefers_current_planning_turn_over_old_meal_topic(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            record_chat_interaction(
+                store=store,
+                client_id="client-companion",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="你晚饭吃了什么？",
+                assistant_text="我刚吃了 char siu rice。",
+                persona_mode="companion",
+            )
+
+            context = build_chat_context(
+                store=store,
+                client_id="client-companion",
+                channel_id="telegram:1",
+                thread_id="main",
+                query="我们明天要不要见面？",
+                current_user_text="我们明天要不要见面？",
+                persona_mode="companion",
+            )
+
+            self.assertIn("### topic_state", context)
+            self.assertIn("active_topic: planning / scheduling", context)
+            self.assertIn("reply_focus: 我们明天要不要见面？", context)
+            self.assertIn("cooling_topics: meal / food", context)
+
     def test_research_and_trading_context_builders_use_typed_stores(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
@@ -795,6 +824,46 @@ class GroupMemoryTest(unittest.TestCase):
             # Bob's private info should NOT appear
             self.assertNotIn("wife is pregnant", context)
             self.assertNotIn("怀孕", context)
+
+    def test_group_topic_state_cools_old_assistant_meal_topic_after_new_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
+
+            store.append_group_message(
+                group_id="grp-1",
+                thread_id="main",
+                user_id="u1",
+                display_name="Alice",
+                content="你晚饭吃了什么？",
+            )
+            store.append_group_message(
+                group_id="grp-1",
+                thread_id="main",
+                user_id="assistant",
+                display_name="陈襄",
+                content="我刚吃了 char siu rice。",
+            )
+            store.append_group_message(
+                group_id="grp-1",
+                thread_id="main",
+                user_id="u1",
+                display_name="Alice",
+                content="那我们明天几点碰头？",
+            )
+            store.upsert_group_member(group_id="grp-1", user_id="u1", display_name="Alice")
+
+            context = build_group_chat_context(
+                store=store,
+                group_id="grp-1",
+                thread_id="main",
+                speaker_user_id="u1",
+            )
+
+            self.assertIn("### topic_state", context)
+            self.assertIn("active_topic: planning / scheduling", context)
+            self.assertIn("cooling_topics: meal / food", context)
+            self.assertIn("topic_stack: planning / scheduling", context)
+            self.assertIn("topic_stack: meal / food", context)
 
 
 if __name__ == "__main__":

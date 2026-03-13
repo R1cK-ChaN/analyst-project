@@ -217,6 +217,7 @@ async def _send_companion_proactive_message(
         channel_id=state.channel,
         thread_id=state.thread_id,
         query="",
+        current_user_text="",
         persona_mode=ChatPersonaMode.COMPANION.value,
     )
     reply = await asyncio.to_thread(
@@ -717,6 +718,7 @@ def _make_message_handler(
                 channel_id=channel_id,
                 thread_id=thread_id,
                 query=llm_text,
+                current_user_text=history_user_text,
                 persona_mode=persona_mode.value,
             )
         else:
@@ -726,6 +728,7 @@ def _make_message_handler(
                 channel_id=channel_id,
                 thread_id=thread_id,
                 query=llm_text,
+                current_user_text=history_user_text,
             )
         profile = store.get_client_profile(user_id)
         reply = await _chat_reply(
