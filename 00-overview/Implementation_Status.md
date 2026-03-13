@@ -20,7 +20,7 @@ The active implementation lives under:
 - `tests/`
 - `pyproject.toml`
 
-The old split folders such as `analyst-runtime/`, `analyst-information/`, `analyst-engine/`, `analyst-delivery/`, and `analyst-integration/` are now documentation and historical scaffolding only. New code should go into `src/analyst/`.
+The old split folders such as `analyst-runtime/`, `analyst-information/`, `analyst-engine/`, `analyst-delivery/`, and `analyst-integration/` have been removed. All live code now belongs under `src/analyst/`.
 
 The sibling `information/` repo is currently reference material only. The standalone project does not import it at runtime.
 
@@ -549,9 +549,9 @@ For product intent and target shape:
 
 - `00-overview/Product_Vision.md`
 - `00-overview/Workstream_Plan.md`
-- `ws1-engine/`
-- `ws2-delivery/`
-- `ws4-integration/`
+- `docs/workstreams/WS1_Macro_Engine.md`
+- `docs/workstreams/WS2_Delivery_Shell.md`
+- `docs/workstreams/WS4_Integration.md`
 
 For reference only:
 

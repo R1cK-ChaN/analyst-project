@@ -23,6 +23,11 @@ What remains true:
 
 For the current implementation snapshot, see `00-overview/Implementation_Status.md`.
 
+Historical note:
+
+- the old top-level split folders referenced below (`analyst-runtime/`, `analyst-information/`, `analyst-engine/`, `analyst-delivery/`, `analyst-integration/`) have since been removed from the repo
+- those references are part of the original migration plan, not the current code layout
+
 ## Purpose
 
 This plan describes how Analyst moved away from direct dependence on the current `agent_maxwell/` and `information/` implementations, and how it can still borrow ideas from them without breaking ongoing work.

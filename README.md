@@ -32,39 +32,6 @@ analyst-project/
 │   └── Current_System_Migration_Plan.md
 │                                   Plan for evolving current agent/information code into Analyst product modules
 │
-├── ws1-engine/                     ← ENGINEERING: The macro brain
-│   └── WS1_Macro_Engine.md         Data pipeline, agent specs, LLM prompts, regime state design
-│
-├── ws2-delivery/                   ← ENGINEERING: The delivery channels
-│   └── WS2_Delivery_Shell.md       WeCom bot, 公众号, Mini Program, interaction modes, compliance
-│
-├── ws3-discovery/                  ← MARKETING: Customer research
-│   └── WS3_Customer_Discovery.md   Interview scripts, competitive scan template, network audit
-│
-├── ws4-integration/                ← ENGINEERING: Connect engine to delivery
-│   └── WS4_Integration.md          API contracts, message routing, auto-publish, error handling
-│
-├── ws5-gtm/                        ← MARKETING + FOUNDER: Go-to-market
-│   └── WS5_Go_To_Market.md         Seed users, pilot conversion, pricing, content strategy
-│
-├── analyst-shared/                 ← LEGACY DESIGN NOTE
-│   └── README.md                   Historical split-package note; live code moved into `src/analyst/`
-│
-├── analyst-runtime/                ← LEGACY DESIGN NOTE
-│   └── README.md                   Historical split-package note; live code moved into `src/analyst/runtime/`
-│
-├── analyst-information/            ← LEGACY DESIGN NOTE
-│   └── README.md                   Historical split-package note; live code moved into `src/analyst/information/`
-│
-├── analyst-engine/                 ← LEGACY DESIGN NOTE
-│   └── README.md                   Historical split-package note; live code moved into `src/analyst/engine/`
-│
-├── analyst-delivery/               ← LEGACY DESIGN NOTE
-│   └── README.md                   Historical split-package note; live code moved into `src/analyst/delivery/`
-│
-├── analyst-integration/            ← LEGACY DESIGN NOTE
-│   └── README.md                   Historical split-package note; live code moved into `src/analyst/integration/`
-│
 ├── tests/                          ← LOCAL VALIDATION
 │   ├── test_broker_ibkr.py         Broker adapter layer: IBKR, Longbridge, Tiger position mapping + session + factory
 │   ├── test_news_ingestion.py      WS1 news ingestion, extraction, search, and retrieval ranking tests
@@ -95,6 +62,16 @@ analyst-project/
 │   ├── calendar.json               Sample upcoming releases
 │   ├── documents.json              Sample research snippets
 │   └── market_prices.json          Sample market snapshot
+│
+├── docs/                           ← SUPPORTING DOCS
+│   ├── macro_data_service.md       Macro-data service note
+│   ├── sales_agent_soul_v2.md      Sales persona design note
+│   └── workstreams/                Detailed WS1-WS5 workstream specs
+│       ├── WS1_Macro_Engine.md
+│       ├── WS2_Delivery_Shell.md
+│       ├── WS3_Customer_Discovery.md
+│       ├── WS4_Integration.md
+│       └── WS5_Go_To_Market.md
 │
 ├── pyproject.toml                  ← STANDALONE PROJECT ENTRY
 │
@@ -255,6 +232,6 @@ Live code:
 Target-state planning:
 
 - `00-overview/Workstream_Plan.md`
-- `ws1-engine/`
-- `ws2-delivery/`
-- `ws4-integration/`
+- `docs/workstreams/WS1_Macro_Engine.md`
+- `docs/workstreams/WS2_Delivery_Shell.md`
+- `docs/workstreams/WS4_Integration.md`
