@@ -7,9 +7,8 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 
-import httpx
-
-from analyst.env import get_env_value
+from analyst.engine.live_provider import build_llm_provider_from_env
+from analyst.engine.live_types import ConversationMessage
 from analyst.ingestion.news_classify import classify
 
 logger = logging.getLogger(__name__)
@@ -266,15 +265,13 @@ def extract_news_metadata(
 
     Uses LLM when API key is available, falls back to keyword classification.
     """
-    api_key = get_env_value("LLM_API_KEY", "OPENROUTER_API_KEY")
-    if not api_key:
+    try:
+        provider = build_llm_provider_from_env(
+            model_keys=("ANALYST_NEWS_EXTRACT_MODEL", "LLM_MODEL"),
+            default_model="openai/gpt-4o-mini",
+        )
+    except RuntimeError:
         return _keyword_fallback(title, description, source_feed, feed_category, published_at)
-
-    base_url = get_env_value(
-        "LLM_BASE_URL", "OPENROUTER_BASE_URL",
-        default="https://openrouter.ai/api/v1",
-    )
-    model = get_env_value("ANALYST_NEWS_EXTRACT_MODEL", default="openai/gpt-4o-mini")
 
     markdown = _compose_extraction_markdown(
         title=title,
@@ -285,31 +282,15 @@ def extract_news_metadata(
     )
 
     try:
-        client = httpx.Client(
-            timeout=httpx.Timeout(60.0, connect=15.0),
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
+        completion = provider.complete(
+            system_prompt=_build_system_prompt(),
+            messages=[ConversationMessage(role="user", content=markdown)],
+            tools=[],
+            max_tokens=_LLM_MAX_TOKENS,
+            temperature=_LLM_TEMPERATURE,
         )
-        try:
-            resp = client.post(
-                f"{base_url.rstrip('/')}/chat/completions",
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": _build_system_prompt()},
-                        {"role": "user", "content": markdown},
-                    ],
-                    "max_tokens": _LLM_MAX_TOKENS,
-                    "temperature": _LLM_TEMPERATURE,
-                },
-            )
-            resp.raise_for_status()
-            content_text = resp.json()["choices"][0]["message"]["content"]
-            fields = _parse_json_response(content_text)
-        finally:
-            client.close()
+        content_text = str(completion.message.content or "")
+        fields = _parse_json_response(content_text)
 
         def _f(key: str, fallback: str = "") -> str:
             v = fields.get(key)

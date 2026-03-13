@@ -266,20 +266,19 @@ class TestChatPersonaRouting(unittest.TestCase):
     def test_companion_services_use_companion_default_model(self) -> None:
         from analyst.delivery.sales_chat import (
             COMPANION_DEFAULT_MODEL,
-            OpenRouterConfig,
             build_companion_services,
         )
 
         with patch(
-            "analyst.delivery.sales_chat.OpenRouterConfig.from_env",
-            return_value=OpenRouterConfig(api_key="test-key", model=COMPANION_DEFAULT_MODEL),
-        ) as config_mock, \
+            "analyst.delivery.sales_chat.build_llm_provider_from_env",
+            return_value=MagicMock(),
+        ) as provider_factory_mock, \
              patch("analyst.agents.companion.companion_agent.build_image_gen_tool", return_value=MagicMock()), \
              patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool", return_value=MagicMock()), \
              patch("analyst.agents.companion.companion_agent.build_research_agent_tool", return_value=MagicMock()):
             build_companion_services()
 
-        kwargs = config_mock.call_args.kwargs
+        kwargs = provider_factory_mock.call_args.kwargs
         self.assertEqual(kwargs["default_model"], COMPANION_DEFAULT_MODEL)
         self.assertIn("ANALYST_COMPANION_OPENROUTER_MODEL", kwargs["model_keys"])
 

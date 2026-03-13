@@ -11,7 +11,7 @@ from typing import Any
 from analyst.agents import RoleDependencies, RolePromptContext, get_role_spec
 from analyst.engine import OpenRouterAnalystEngine
 from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
-from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider
+from analyst.engine.live_provider import build_llm_provider_from_env
 from analyst.engine.live_types import AgentTool, ConversationMessage, LLMProvider, MessageContent
 from analyst.tools import (
     ToolKit,
@@ -214,12 +214,11 @@ def build_chat_services(
     if resolved_mode is ChatPersonaMode.COMPANION:
         return build_companion_services(db_path=db_path)
 
-    or_config = OpenRouterConfig.from_env(
+    store = SQLiteEngineStore(db_path=db_path)
+    provider = build_llm_provider_from_env(
         model_keys=SALES_MODEL_KEYS,
         default_model=SALES_DEFAULT_MODEL,
     )
-    store = SQLiteEngineStore(db_path=db_path)
-    provider = OpenRouterProvider(or_config)
     agent_loop = PythonAgentLoop(
         provider=provider,
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
@@ -230,7 +229,7 @@ def build_chat_services(
     from analyst.engine.sub_agent_specs import build_content_sub_agents
     content_tools = build_content_sub_agents(provider, store)
     runtime = OpenRouterAgentRuntime(
-        provider_config=or_config,
+        provider=provider,
         config=OpenRouterRuntimeConfig(
             model_keys=SALES_MODEL_KEYS,
             default_model=SALES_DEFAULT_MODEL,
@@ -246,12 +245,11 @@ def build_companion_services(
     *,
     db_path: Path | None = None,
 ) -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
-    or_config = OpenRouterConfig.from_env(
+    store = SQLiteEngineStore(db_path=db_path)
+    provider = build_llm_provider_from_env(
         model_keys=COMPANION_MODEL_KEYS,
         default_model=COMPANION_DEFAULT_MODEL,
     )
-    store = SQLiteEngineStore(db_path=db_path)
-    provider = OpenRouterProvider(or_config)
     agent_loop = PythonAgentLoop(
         provider=provider,
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),

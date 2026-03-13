@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -17,8 +18,14 @@ from analyst.contracts import (
     SourceReference,
     utc_now,
 )
-from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider
-from analyst.engine.live_types import CompletionResult, ConversationMessage
+from analyst.engine.live_provider import (
+    ClaudeCodeConfig,
+    ClaudeCodeProvider,
+    OpenRouterConfig,
+    OpenRouterProvider,
+    build_llm_provider_from_env,
+)
+from analyst.engine.live_types import AgentTool, CompletionResult, ConversationMessage
 from analyst.engine.service import OpenRouterAnalystEngine
 from analyst.env import clear_env_cache
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
@@ -89,6 +96,55 @@ class OpenRouterConfigTest(unittest.TestCase):
                     )
             self.assertEqual(config.model, "google/gemini-3.1-flash-lite-preview")
 
+    def test_from_env_supports_anthropic_compat_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = Path(temp_dir) / ".env"
+            env_file.write_text(
+                "\n".join(
+                    [
+                        "ANALYST_LLM_PLATFORM=anthropic",
+                        "ANTHROPIC_API_KEY=test-anthropic-key",
+                        "ANALYST_TELEGRAM_OPENROUTER_MODEL=google/gemini-3.1-flash-lite-preview",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with patch("analyst.env.DEFAULT_ENV_FILES", (env_file,)):
+                with patch.dict("os.environ", {}, clear=True):
+                    clear_env_cache()
+                    config = OpenRouterConfig.from_env(
+                        model_keys=("ANALYST_TELEGRAM_OPENROUTER_MODEL", "ANALYST_OPENROUTER_MODEL"),
+                        default_model="google/gemini-3.1-flash-lite-preview",
+                    )
+            self.assertEqual(config.api_key, "test-anthropic-key")
+            self.assertEqual(config.base_url, "https://api.anthropic.com/v1")
+            self.assertEqual(config.model, "claude-sonnet-4-20250514")
+            self.assertEqual(config.provider_name, "anthropic")
+
+    def test_provider_factory_supports_claude_code_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = Path(temp_dir) / ".env"
+            env_file.write_text(
+                "\n".join(
+                    [
+                        "ANALYST_LLM_PLATFORM=claude_code",
+                        "CLAUDE_CODE_OAUTH_TOKEN=test-claude-code-token",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with patch("analyst.env.DEFAULT_ENV_FILES", (env_file,)):
+                with patch.dict("os.environ", {}, clear=True):
+                    clear_env_cache()
+                    provider = build_llm_provider_from_env(
+                        model_keys=("ANALYST_TELEGRAM_OPENROUTER_MODEL", "ANALYST_OPENROUTER_MODEL"),
+                        default_model="google/gemini-3.1-flash-lite-preview",
+                    )
+        self.assertIsInstance(provider, ClaudeCodeProvider)
+        self.assertEqual(provider.config.model, "sonnet")
+
 
 class OpenRouterRuntimeTest(unittest.TestCase):
     def test_generate_uses_provider_and_builds_plain_text(self) -> None:
@@ -150,6 +206,68 @@ class OpenRouterProviderTest(unittest.TestCase):
         request_payload = session.post.call_args.kwargs["data"]
         self.assertIn('"type": "image_url"', request_payload)
         self.assertIn("data:image/jpeg;base64,abc", request_payload)
+
+
+class ClaudeCodeProviderTest(unittest.TestCase):
+    def test_complete_without_tools_uses_structured_output(self) -> None:
+        completed = Mock(returncode=0, stdout=json.dumps({"structured_output": {"final_text": "ok"}}), stderr="")
+        runner = Mock(return_value=completed)
+        provider = ClaudeCodeProvider(
+            ClaudeCodeConfig(oauth_token="token", model="sonnet"),
+            runner=runner,
+        )
+
+        result = provider.complete(
+            system_prompt="system",
+            messages=[ConversationMessage(role="user", content="hi")],
+            tools=[],
+            max_tokens=100,
+            temperature=0.2,
+        )
+
+        self.assertEqual(result.message.content, "ok")
+        command = runner.call_args.args[0]
+        self.assertIn("--tools", command)
+        self.assertIn("", command)
+
+    def test_complete_with_tools_returns_tool_calls(self) -> None:
+        completed = Mock(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "structured_output": {
+                        "action": "tool_call",
+                        "final_text": "",
+                        "tool_name": "web_search",
+                        "tool_arguments_json": "{\"query\":\"rates today\"}",
+                    }
+                }
+            ),
+            stderr="",
+        )
+        runner = Mock(return_value=completed)
+        provider = ClaudeCodeProvider(
+            ClaudeCodeConfig(oauth_token="token", model="sonnet"),
+            runner=runner,
+        )
+        tool = AgentTool(
+            name="web_search",
+            description="Search the web",
+            parameters={"type": "object", "properties": {"query": {"type": "string"}}},
+            handler=lambda _: {},
+        )
+
+        result = provider.complete(
+            system_prompt="system",
+            messages=[ConversationMessage(role="user", content="hi")],
+            tools=[tool],
+            max_tokens=100,
+            temperature=0.2,
+        )
+
+        self.assertEqual(len(result.message.tool_calls), 1)
+        self.assertEqual(result.message.tool_calls[0].name, "web_search")
+        self.assertEqual(result.message.tool_calls[0].arguments, {"query": "rates today"})
 
 
 class OpenRouterAnalystEngineTest(unittest.TestCase):

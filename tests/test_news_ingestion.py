@@ -483,21 +483,12 @@ class TestNewsExtraction:
             }]
         }
 
-        with patch("analyst.ingestion.news_extract.get_env_value") as mock_env, patch(
-            "analyst.ingestion.news_extract.httpx.Client"
-        ) as mock_client_cls:
-            def _env_side_effect(*keys: str, default: str = "") -> str:
-                if "LLM_API_KEY" in keys or "OPENROUTER_API_KEY" in keys:
-                    return "test-key"
-                return default
-
-            mock_env.side_effect = _env_side_effect
-            mock_client = MagicMock()
-            mock_response = MagicMock()
-            mock_response.raise_for_status.return_value = None
-            mock_response.json.return_value = payload
-            mock_client.post.return_value = mock_response
-            mock_client_cls.return_value = mock_client
+        with patch("analyst.ingestion.news_extract.build_llm_provider_from_env") as mock_provider_factory:
+            mock_provider = MagicMock()
+            mock_provider.complete.return_value = SimpleNamespace(
+                message=SimpleNamespace(content=payload["choices"][0]["message"]["content"])
+            )
+            mock_provider_factory.return_value = mock_provider
 
             result = extract_news_metadata(
                 title="FOMC rate decision announced",

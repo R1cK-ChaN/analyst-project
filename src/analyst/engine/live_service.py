@@ -35,7 +35,7 @@ from analyst.tools import (
 
 from .agent_loop import AgentLoopConfig, PythonAgentLoop
 from .live_prompts import SYSTEM_PROMPT, briefing_prompt, flash_prompt, regime_prompt, wrap_prompt
-from .live_provider import OpenRouterConfig, OpenRouterProvider
+from .live_provider import build_llm_provider_from_env
 from .live_types import AgentTool, LLMProvider
 
 
@@ -435,13 +435,13 @@ class LiveAnalystEngine:
         kit.add(build_portfolio_sync_tool(self.store))
         kit.add(build_vix_regime_tool())
         from .sub_agent_specs import build_research_sub_agents
-        provider = self.provider or OpenRouterProvider(OpenRouterConfig.from_env())
+        provider = self.provider or build_llm_provider_from_env()
         for sa_tool in build_research_sub_agents(kit.to_list(), provider, self.store):
             kit.add(sa_tool)
         return kit.to_list()
 
     def _loop(self) -> PythonAgentLoop:
-        provider = self.provider or OpenRouterProvider(OpenRouterConfig.from_env())
+        provider = self.provider or build_llm_provider_from_env()
         return PythonAgentLoop(
             provider,
             AgentLoopConfig(

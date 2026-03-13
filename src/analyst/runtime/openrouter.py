@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
-from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider
+from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider, build_llm_provider_from_env
 from analyst.engine.live_types import AgentTool, ConversationMessage, LLMProvider
 
 from .prompts import get_prompt_profile
@@ -60,17 +60,19 @@ class OpenRouterAgentRuntime(AgentRuntime):
             )
             markdown = (completion.message.content or "").strip()
         if not markdown:
-            raise RuntimeError("OpenRouter returned empty content.")
+            raise RuntimeError("LLM provider returned empty content.")
         plain_text = self._strip_markdown(markdown)
         return RuntimeResult(markdown=markdown, plain_text=plain_text, citations=context.citations)
 
     def _get_provider(self) -> LLMProvider:
         if self._provider is None:
-            provider_config = self._provider_config or OpenRouterConfig.from_env(
-                model_keys=self.config.model_keys,
-                default_model=self.config.default_model,
-            )
-            self._provider = OpenRouterProvider(provider_config)
+            if self._provider_config is not None:
+                self._provider = OpenRouterProvider(self._provider_config)
+            else:
+                self._provider = build_llm_provider_from_env(
+                    model_keys=self.config.model_keys,
+                    default_model=self.config.default_model,
+                )
         return self._provider
 
     def _build_system_prompt(self, context: RuntimeContext) -> str:
