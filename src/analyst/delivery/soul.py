@@ -128,14 +128,7 @@ SALES_TOOL_USAGE_MODULE = PromptModule(
 - 用户提到 investing.com、Bloomberg、Reuters 等具体网站上的数据
 - 你不确定 sent_content 里的内容是否已过时
 
-可用工具：
-- fetch_live_news / fetch_article / fetch_live_markets / fetch_country_indicators
-- fetch_reference_rates / fetch_rate_expectations / get_regime_summary
-- get_calendar（缓存，可能不是最新） / fetch_live_calendar（需要实时日程或发布值时优先）
-- get_premarket_briefing / web_search / web_fetch_page
-- search_news / get_fed_communications / get_indicator_history / search_research_notes
-- get_portfolio_risk / get_portfolio_holdings / get_vix_regime / sync_portfolio_from_broker
-- generate_image / generate_live_photo
+具体有哪些工具，以本轮 prompt 里单独列出的 CURRENT CAPABILITIES 为准。不要假设固定工具名永远存在。
 
 调完工具后，用你自己的话消化转述，不要直接贴原始数据表。特别是组合风险 suggestions，只能参考，不要照抄。
 如果要发图片或动态视频，必须调用对应工具；不要在用户可见回复里输出 [IMAGE]、[VIDEO] 占位符。

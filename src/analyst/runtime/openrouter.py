@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
+from analyst.engine import AgentRunRequest, build_agent_executor
+from analyst.engine.agent_loop import AgentLoopConfig
 from analyst.engine.live_provider import OpenRouterConfig, OpenRouterProvider, build_llm_provider_from_env
-from analyst.engine.live_types import AgentTool, ConversationMessage, LLMProvider
+from analyst.engine.live_types import AgentTool, LLMProvider
 
 from .prompts import get_prompt_profile
 from .service import AgentRuntime, RuntimeContext, RuntimeResult
@@ -35,30 +36,23 @@ class OpenRouterAgentRuntime(AgentRuntime):
     def generate(self, context: RuntimeContext) -> RuntimeResult:
         system_prompt = self._build_system_prompt(context)
         user_prompt = self._build_user_prompt(context)
-        if self._tools:
-            loop = PythonAgentLoop(
-                self._get_provider(),
-                AgentLoopConfig(
-                    max_turns=4,
-                    max_tokens=self.config.max_tokens,
-                    temperature=self.config.temperature,
-                ),
-            )
-            result = loop.run(
+        executor = build_agent_executor(
+            self._get_provider(),
+            config=AgentLoopConfig(
+                max_turns=4,
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
+            ),
+        )
+        result = executor.run_turn(
+            AgentRunRequest(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 tools=self._tools,
+                prefer_direct_response=not self._tools,
             )
-            markdown = result.final_text.strip()
-        else:
-            completion = self._get_provider().complete(
-                system_prompt=system_prompt,
-                messages=[ConversationMessage(role="user", content=user_prompt)],
-                tools=[],
-                max_tokens=self.config.max_tokens,
-                temperature=self.config.temperature,
-            )
-            markdown = (completion.message.content or "").strip()
+        )
+        markdown = result.final_text.strip()
         if not markdown:
             raise RuntimeError("LLM provider returned empty content.")
         plain_text = self._strip_markdown(markdown)

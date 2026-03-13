@@ -43,7 +43,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(_PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
-from analyst.engine.agent_loop import PythonAgentLoop  # noqa: E402
+from analyst.engine import AgentExecutor  # noqa: E402
 from analyst.engine.live_provider import OpenRouterConfig  # noqa: E402
 from analyst.engine.live_types import AgentTool  # noqa: E402
 from analyst.contracts import utc_now  # noqa: E402
@@ -198,7 +198,7 @@ def _should_send_routine_ping(
 async def _send_companion_proactive_message(
     *,
     store: SQLiteEngineStore,
-    agent_loop: PythonAgentLoop,
+    agent_loop: AgentExecutor,
     bot: Any,
     state: Any,
     kind: str,
@@ -323,7 +323,7 @@ async def _send_companion_user_reminder(
 async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     job_data = getattr(context.job, "data", {}) or {}
     store: SQLiteEngineStore | None = job_data.get("store")
-    agent_loop: PythonAgentLoop | None = job_data.get("agent_loop")
+    agent_loop: AgentExecutor | None = job_data.get("agent_loop")
     if store is None:
         return
     now = utc_now()
@@ -430,7 +430,7 @@ async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> Non
 async def _chat_reply(
     user_text: str,
     context: ContextTypes.DEFAULT_TYPE,
-    agent_loop: PythonAgentLoop,
+    agent_loop: AgentExecutor,
     tools: list[AgentTool],
     memory_context: str = "",
     preferred_language: str = "",
@@ -497,7 +497,7 @@ def _resolve_runtime_persona_mode() -> ChatPersonaMode:
     return ChatPersonaMode.COMPANION
 
 
-def _build_services() -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore, ChatPersonaMode]:
+def _build_services() -> tuple[AgentExecutor, list[AgentTool], SQLiteEngineStore, ChatPersonaMode]:
     """Wire up the agent loop, tools, memory store, and active chat persona."""
     persona_mode = _resolve_runtime_persona_mode()
     agent_loop, tools, store = build_companion_services()
@@ -505,7 +505,7 @@ def _build_services() -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineSto
 
 
 def _make_start_handler(
-    agent_loop: PythonAgentLoop,
+    agent_loop: AgentExecutor,
     tools: list[AgentTool],
     *,
     persona_mode: ChatPersonaMode = ChatPersonaMode.COMPANION,
@@ -530,7 +530,7 @@ def _make_start_handler(
 
 
 def _make_help_handler(
-    agent_loop: PythonAgentLoop,
+    agent_loop: AgentExecutor,
     tools: list[AgentTool],
     *,
     persona_mode: ChatPersonaMode = ChatPersonaMode.COMPANION,
@@ -589,7 +589,7 @@ def _make_checkins_toggle_handler(
 
 
 def _make_regime_handler(
-    agent_loop: PythonAgentLoop,
+    agent_loop: AgentExecutor,
     tools: list[AgentTool],
     *,
     persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
@@ -611,7 +611,7 @@ def _make_regime_handler(
 
 
 def _make_calendar_handler(
-    agent_loop: PythonAgentLoop,
+    agent_loop: AgentExecutor,
     tools: list[AgentTool],
     *,
     persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
@@ -633,7 +633,7 @@ def _make_calendar_handler(
 
 
 def _make_premarket_handler(
-    agent_loop: PythonAgentLoop,
+    agent_loop: AgentExecutor,
     tools: list[AgentTool],
     *,
     persona_mode: ChatPersonaMode = ChatPersonaMode.SALES,
@@ -655,7 +655,7 @@ def _make_premarket_handler(
 
 
 def _make_message_handler(
-    agent_loop: PythonAgentLoop,
+    agent_loop: AgentExecutor,
     tools: list[AgentTool],
     store: SQLiteEngineStore,
     *,

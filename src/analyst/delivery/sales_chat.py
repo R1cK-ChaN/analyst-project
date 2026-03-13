@@ -9,10 +9,19 @@ from zoneinfo import ZoneInfo
 from typing import Any
 
 from analyst.agents import RoleDependencies, RolePromptContext, get_role_spec
-from analyst.engine import OpenRouterAnalystEngine
-from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
+from analyst.env import get_env_value
+from analyst.engine import (
+    AgentExecutor,
+    AgentRunRequest,
+    ExecutorBackend,
+    OpenRouterAnalystEngine,
+    build_agent_executor,
+    coerce_agent_executor,
+)
+from analyst.engine.agent_loop import AgentLoopConfig
 from analyst.engine.live_provider import build_llm_provider_from_env
 from analyst.engine.live_types import AgentTool, ConversationMessage, LLMProvider, MessageContent
+from analyst.mcp.shared_tools import BASE_SHARED_MCP_TOOL_NAMES
 from analyst.tools import (
     ToolKit,
     build_article_tool,
@@ -68,6 +77,20 @@ SALES_MODEL_KEYS = (
     "LLM_MODEL",
 )
 SALES_DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
+CLAUDE_CODE_NATIVE_TOOL_NAMES = ("WebSearch", "WebFetch")
+COMPANION_SHARED_MCP_TOOL_NAMES = (
+    *BASE_SHARED_MCP_TOOL_NAMES,
+    "fetch_live_calendar",
+    "search_news",
+    "get_fed_communications",
+    "get_indicator_history",
+    "search_research_notes",
+)
+SALES_SHARED_MCP_TOOL_NAMES = (
+    *COMPANION_SHARED_MCP_TOOL_NAMES,
+    "get_portfolio_risk",
+    "get_portfolio_holdings",
+)
 
 
 @dataclass(frozen=True)
@@ -209,7 +232,7 @@ def build_chat_services(
     *,
     db_path: Path | None = None,
     persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
-) -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
+) -> tuple[AgentExecutor, list[AgentTool], SQLiteEngineStore]:
     resolved_mode = resolve_chat_persona_mode(persona_mode)
     if resolved_mode is ChatPersonaMode.COMPANION:
         return build_companion_services(db_path=db_path)
@@ -219,9 +242,11 @@ def build_chat_services(
         model_keys=SALES_MODEL_KEYS,
         default_model=SALES_DEFAULT_MODEL,
     )
-    agent_loop = PythonAgentLoop(
-        provider=provider,
+    executor = build_agent_executor(
+        provider,
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
+        mcp_tool_names=SALES_SHARED_MCP_TOOL_NAMES,
+        mcp_db_path=store.db_path,
     )
 
     repository = FileBackedInformationRepository()
@@ -238,30 +263,32 @@ def build_chat_services(
     )
     engine = OpenRouterAnalystEngine(info_service=info_service, runtime=runtime)
     tools = build_chat_tools(engine, store, provider=provider, persona_mode=resolved_mode)
-    return agent_loop, tools, store
+    return executor, tools, store
 
 
 def build_companion_services(
     *,
     db_path: Path | None = None,
-) -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
+) -> tuple[AgentExecutor, list[AgentTool], SQLiteEngineStore]:
     store = SQLiteEngineStore(db_path=db_path)
     provider = build_llm_provider_from_env(
         model_keys=COMPANION_MODEL_KEYS,
         default_model=COMPANION_DEFAULT_MODEL,
     )
-    agent_loop = PythonAgentLoop(
-        provider=provider,
+    executor = build_agent_executor(
+        provider,
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
+        mcp_tool_names=COMPANION_SHARED_MCP_TOOL_NAMES,
+        mcp_db_path=store.db_path,
     )
     tools = _build_configured_companion_tools(store=store, provider=provider)
-    return agent_loop, tools, store
+    return executor, tools, store
 
 
 def build_sales_services(
     *,
     db_path: Path | None = None,
-) -> tuple[PythonAgentLoop, list[AgentTool], SQLiteEngineStore]:
+) -> tuple[AgentExecutor, list[AgentTool], SQLiteEngineStore]:
     return build_chat_services(db_path=db_path, persona_mode=ChatPersonaMode.SALES)
 
 
@@ -300,10 +327,22 @@ def system_prompt_with_memory(
     proactive_kind: str = "",
     companion_local_context: str = "",
     persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
+    executor: AgentExecutor | Any | None = None,
+    tools: list[AgentTool] | None = None,
+    native_tool_names: tuple[str, ...] = (),
+    mcp_tool_names: tuple[str, ...] = (),
 ) -> str:
     resolved_mode = resolve_chat_persona_mode(persona_mode)
+    resolved_executor = coerce_agent_executor(executor) if executor is not None else None
+    capability_overlay = _build_capability_overlay(
+        persona_mode=resolved_mode,
+        executor=resolved_executor,
+        tools=tools or [],
+        native_tool_names=native_tool_names,
+        mcp_tool_names=mcp_tool_names,
+    )
     if resolved_mode is ChatPersonaMode.COMPANION:
-        return get_role_spec("companion").build_system_prompt(
+        base_prompt = get_role_spec("companion").build_system_prompt(
             RolePromptContext(
                 memory_context=memory_context,
                 user_text=user_text,
@@ -313,9 +352,10 @@ def system_prompt_with_memory(
                 companion_local_context=companion_local_context,
             )
         )
+        return f"{base_prompt}\n\n{capability_overlay}".strip() if capability_overlay else base_prompt
     timezone_name = "Asia/Shanghai"
     now = datetime.now(ZoneInfo(timezone_name))
-    return assemble_persona_system_prompt(
+    base_prompt = assemble_persona_system_prompt(
         PromptAssemblyContext(
             mode=resolved_mode.value,
             user_text=user_text,
@@ -327,6 +367,54 @@ def system_prompt_with_memory(
             companion_local_context=companion_local_context,
         )
     ).prompt
+    return f"{base_prompt}\n\n{capability_overlay}".strip() if capability_overlay else base_prompt
+
+
+def _build_capability_overlay(
+    *,
+    persona_mode: ChatPersonaMode,
+    executor: AgentExecutor | None,
+    tools: list[AgentTool],
+    native_tool_names: tuple[str, ...],
+    mcp_tool_names: tuple[str, ...],
+) -> str:
+    tool_names = tuple(
+        str(getattr(tool, "name", ""))
+        for tool in tools
+        if str(getattr(tool, "name", "")).strip()
+    )
+    if not tool_names and not native_tool_names:
+        return ""
+
+    lines = [
+        "[CURRENT CAPABILITIES]",
+        "Use only the capabilities listed for this turn. Do not invent tool names or assume hidden tools exist.",
+    ]
+    if tool_names:
+        lines.append("Host-managed tools available now: " + ", ".join(tool_names))
+    if native_tool_names:
+        native_label = "Claude native tools" if executor and executor.backend is ExecutorBackend.CLAUDE_CODE else "Native tools"
+        lines.append(f"{native_label} available now: " + ", ".join(native_tool_names))
+    if mcp_tool_names:
+        lines.append("Shared analyst tools available now: " + ", ".join(mcp_tool_names))
+    if executor and executor.backend is ExecutorBackend.CLAUDE_CODE and native_tool_names:
+        lines.append(
+            "Use native Claude web tools for open-web lookup. Use shared analyst tools for product-owned market, calendar, archive, or portfolio data."
+        )
+    elif persona_mode is ChatPersonaMode.SALES and tool_names:
+        lines.append(
+            "For time-sensitive market or news questions, call the appropriate live tool before answering."
+        )
+    return "\n".join(lines)
+
+
+def _claude_native_agent_enabled() -> bool:
+    return get_env_value("ANALYST_CLAUDE_CODE_USE_NATIVE_AGENT", default="").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _extract_media(messages: list[ConversationMessage]) -> list[MediaItem]:
@@ -601,6 +689,86 @@ def _build_placeholder_image_arguments(
     return arguments
 
 
+def _requires_image_tool_path(user_text: str) -> bool:
+    lowered = user_text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "animate",
+            "animation",
+            "live photo",
+            "video",
+            "edit this image",
+            "edit this photo",
+            "change this image",
+            "change this photo",
+            "make this image",
+            "make this photo",
+            "改图",
+            "修图",
+            "p图",
+            "动起来",
+            "视频",
+            "改成",
+            "生成一张",
+            "generate image",
+            "selfie",
+            "自拍",
+        )
+    )
+
+
+def _is_visual_analysis_request(user_text: str) -> bool:
+    lowered = user_text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "what color is this image",
+            "what color is this photo",
+            "what do you see",
+            "describe this image",
+            "describe this photo",
+            "answer one word",
+            "what's in this image",
+            "what is in this image",
+            "图里是什么",
+            "这张图是什么",
+            "这张图里有什么",
+            "这是什么颜色",
+            "看这张图",
+        )
+    )
+
+
+def _should_prefer_direct_visual_reply(
+    *,
+    user_text: str,
+    user_content: MessageContent | None,
+) -> bool:
+    return (
+        _has_attached_image(user_content)
+        and not _requires_image_tool_path(user_text)
+        and _is_visual_analysis_request(user_text)
+    )
+
+
+def _should_use_claude_native_agent(
+    *,
+    executor: AgentExecutor,
+    user_text: str,
+    user_content: MessageContent | None,
+) -> bool:
+    if executor.backend is not ExecutorBackend.CLAUDE_CODE:
+        return False
+    if not _claude_native_agent_enabled():
+        return False
+    if _requires_image_tool_path(user_text):
+        return False
+    if _has_attached_image(user_content) and not _is_visual_analysis_request(user_text):
+        return False
+    return True
+
+
 def _repair_missing_image_media(
     *,
     response_text: str,
@@ -672,7 +840,7 @@ def generate_chat_reply(
     user_text: str,
     *,
     history: list[dict[str, str]] | None,
-    agent_loop: PythonAgentLoop,
+    agent_loop: AgentExecutor | Any,
     tools: list[AgentTool],
     memory_context: str = "",
     preferred_language: str = "",
@@ -680,24 +848,49 @@ def generate_chat_reply(
     user_content: MessageContent | None = None,
     companion_local_context: str = "",
     persona_mode: str | ChatPersonaMode = ChatPersonaMode.COMPANION,
+    native_tool_names: tuple[str, ...] = (),
 ) -> ChatReply:
+    executor = coerce_agent_executor(agent_loop)
     history_messages = [
         ConversationMessage(role=message["role"], content=message["content"])
         for message in (history or [])
     ]
     user_lang = _detect_language(user_text, fallback=preferred_language)
-    result = agent_loop.run(
-        system_prompt=system_prompt_with_memory(
-            memory_context,
-            user_text=user_text,
-            user_lang=user_lang,
-            group_context=group_context,
-            companion_local_context=companion_local_context,
-            persona_mode=persona_mode,
-        ),
-        user_prompt=user_content or user_text,
-        tools=tools,
-        history=history_messages,
+    prefer_direct_reply = _should_prefer_direct_visual_reply(
+        user_text=user_text,
+        user_content=user_content,
+    )
+    use_native_agent = _should_use_claude_native_agent(
+        executor=executor,
+        user_text=user_text,
+        user_content=user_content,
+    )
+    use_native_execution = prefer_direct_reply or use_native_agent
+    active_tools = [] if use_native_execution else tools
+    native_tool_names_for_turn = CLAUDE_CODE_NATIVE_TOOL_NAMES if use_native_agent else ()
+    mcp_tool_names_for_turn = executor.mcp_tool_names if use_native_agent else ()
+    system_prompt = system_prompt_with_memory(
+        memory_context,
+        user_text=user_text,
+        user_lang=user_lang,
+        group_context=group_context,
+        companion_local_context=companion_local_context,
+        persona_mode=persona_mode,
+        executor=executor,
+        tools=active_tools,
+        native_tool_names=native_tool_names or native_tool_names_for_turn,
+        mcp_tool_names=mcp_tool_names_for_turn,
+    )
+    result = executor.run_turn(
+        AgentRunRequest(
+            system_prompt=system_prompt,
+            user_prompt=user_content or user_text,
+            tools=active_tools,
+            history=history_messages,
+            prefer_direct_response=use_native_execution,
+            native_tool_names=native_tool_names or native_tool_names_for_turn,
+            mcp_tool_names=mcp_tool_names_for_turn,
+        )
     )
     response_text, profile_update = split_reply_and_profile_update(result.final_text)
     reminder_update = extract_embedded_reminder_update(result.final_text)
@@ -760,24 +953,29 @@ def _proactive_companion_instruction(kind: str) -> str:
 def generate_proactive_companion_reply(
     *,
     kind: str,
-    agent_loop: PythonAgentLoop,
+    agent_loop: AgentExecutor | Any,
     memory_context: str = "",
     preferred_language: str = "",
     companion_local_context: str = "",
 ) -> ChatReply:
+    executor = coerce_agent_executor(agent_loop)
     user_lang = preferred_language if preferred_language in {"zh", "en"} else ""
-    result = agent_loop.run(
-        system_prompt=system_prompt_with_memory(
-            memory_context,
-            user_text="",
-            user_lang=user_lang,
-            proactive_kind=kind,
-            companion_local_context=companion_local_context,
-            persona_mode=ChatPersonaMode.COMPANION,
-        ),
-        user_prompt=_proactive_companion_instruction(kind),
-        tools=[],
-        history=[],
+    result = executor.run_turn(
+        AgentRunRequest(
+            system_prompt=system_prompt_with_memory(
+                memory_context,
+                user_text="",
+                user_lang=user_lang,
+                proactive_kind=kind,
+                companion_local_context=companion_local_context,
+                persona_mode=ChatPersonaMode.COMPANION,
+                executor=executor,
+                tools=[],
+            ),
+            user_prompt=_proactive_companion_instruction(kind),
+            tools=[],
+            history=[],
+        )
     )
     response_text, profile_update = split_reply_and_profile_update(result.final_text)
     reminder_update = extract_embedded_reminder_update(result.final_text)
@@ -799,7 +997,7 @@ def generate_sales_reply(
     user_text: str,
     *,
     history: list[dict[str, str]] | None,
-    agent_loop: PythonAgentLoop,
+    agent_loop: AgentExecutor | Any,
     tools: list[AgentTool],
     memory_context: str = "",
     preferred_language: str = "",

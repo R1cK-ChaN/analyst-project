@@ -26,6 +26,7 @@ from analyst.engine.live_provider import (
     build_llm_provider_from_env,
 )
 from analyst.engine.live_types import AgentTool, CompletionResult, ConversationMessage
+from analyst.mcp.bridge import ClaudeCodeMcpConfig
 from analyst.engine.service import OpenRouterAnalystEngine
 from analyst.env import clear_env_cache
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
@@ -268,6 +269,67 @@ class ClaudeCodeProviderTest(unittest.TestCase):
         self.assertEqual(len(result.message.tool_calls), 1)
         self.assertEqual(result.message.tool_calls[0].name, "web_search")
         self.assertEqual(result.message.tool_calls[0].arguments, {"query": "rates today"})
+
+    def test_complete_materializes_image_blocks_for_claude_code(self) -> None:
+        completed = Mock(returncode=0, stdout="red\n", stderr="")
+        runner = Mock(return_value=completed)
+        provider = ClaudeCodeProvider(
+            ClaudeCodeConfig(oauth_token="token", model="sonnet"),
+            runner=runner,
+        )
+
+        result = provider.complete(
+            system_prompt="system",
+            messages=[
+                ConversationMessage(
+                    role="user",
+                    content=[
+                        {"type": "text", "text": "What color is this image? Answer one word."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64,"
+                                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jkO8AAAAASUVORK5CYII="
+                            },
+                        },
+                    ],
+                )
+            ],
+            tools=[],
+            max_tokens=100,
+            temperature=0.2,
+        )
+
+        self.assertEqual(result.message.content, "red")
+        command = runner.call_args.args[0]
+        self.assertIn("--add-dir", command)
+        prompt = command[-1]
+        marker = "Attached local image file: "
+        self.assertIn(marker, prompt)
+        image_line = next(line for line in prompt.splitlines() if line.startswith(marker))
+        image_path = Path(image_line.split(marker, 1)[1].split(". Inspect it directly", 1)[0].strip())
+        self.assertFalse(image_path.exists())
+
+    def test_complete_native_wires_mcp_config_for_claude_code(self) -> None:
+        completed = Mock(returncode=0, stdout="ok\n", stderr="")
+        runner = Mock(return_value=completed)
+        provider = ClaudeCodeProvider(
+            ClaudeCodeConfig(oauth_token="token", model="sonnet"),
+            runner=runner,
+        )
+
+        result = provider.complete_native(
+            system_prompt="system",
+            messages=[ConversationMessage(role="user", content="hi")],
+            allowed_tools=("WebSearch", "WebFetch"),
+            mcp_config=ClaudeCodeMcpConfig(tool_names=("fetch_live_news",), db_path="/tmp/test.db"),
+        )
+
+        self.assertEqual(result.message.content, "ok")
+        command = runner.call_args.args[0]
+        self.assertIn("--mcp-config", command)
+        self.assertIn("--strict-mcp-config", command)
+        self.assertIn("WebSearch,WebFetch", command)
 
 
 class OpenRouterAnalystEngineTest(unittest.TestCase):

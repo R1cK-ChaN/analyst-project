@@ -176,7 +176,12 @@ class Fix3LiveCalendarToolTest(unittest.TestCase):
         self.assertIn("cache", cal_tool.description.lower())
 
     def test_soul_prompt_documents_fetch_live_calendar(self) -> None:
-        self.assertIn("fetch_live_calendar", SOUL_SYSTEM_PROMPT)
+        prompt = system_prompt_with_memory(
+            "",
+            tools=[type("T", (), {"name": "fetch_live_calendar"})()],
+        )
+        self.assertIn("CURRENT CAPABILITIES", prompt)
+        self.assertIn("fetch_live_calendar", prompt)
 
 
 # ------------------------------------------------------------------ #

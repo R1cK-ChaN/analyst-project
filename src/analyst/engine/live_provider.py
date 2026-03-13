@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
+import base64
+import shutil
 
 import requests
 
 from analyst.env import get_env_value
+from analyst.mcp.bridge import ClaudeCodeMcpConfig
 
 from .live_types import AgentTool, CompletionResult, ConversationMessage, MessageContent, ToolCall
 
@@ -362,37 +368,117 @@ class ClaudeCodeProvider:
     ) -> CompletionResult:
         del max_tokens, temperature
         schema = self._response_schema(tools)
-        command = [
-            self.config.cli_path,
-            "-p",
-            "--model",
-            self.config.model,
-            "--tools",
-            "",
-            "--output-format",
-            "json",
-            "--json-schema",
-            json.dumps(schema, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
-            "--system-prompt",
-            self._build_system_prompt(system_prompt, tools),
-            "--no-session-persistence",
-            self._build_prompt(messages, tools),
-        ]
-        env = os.environ.copy()
-        env["CLAUDE_CODE_OAUTH_TOKEN"] = self.config.oauth_token
-        completed = self._runner(
-            command,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=self.config.timeout_seconds,
-            check=False,
-        )
+        materialized_images: list[tuple[Path, str]] = []
+        temp_dirs: list[str] = []
+        try:
+            prompt = self._build_prompt(messages, tools, materialized_images=materialized_images, temp_dirs=temp_dirs)
+            command = [
+                self.config.cli_path,
+                "-p",
+                "--model",
+                self.config.model,
+                "--tools",
+                "",
+                "--system-prompt",
+                self._build_system_prompt(system_prompt, tools),
+                "--no-session-persistence",
+            ]
+            use_plain_text = not tools and bool(materialized_images)
+            if not use_plain_text:
+                command.extend(
+                    [
+                        "--output-format",
+                        "json",
+                        "--json-schema",
+                        json.dumps(schema, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+                    ]
+                )
+            for directory in dict.fromkeys(temp_dirs):
+                command.extend(["--add-dir", directory])
+            command.append("--")
+            command.append(prompt)
+            env = os.environ.copy()
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = self.config.oauth_token
+            completed = self._runner(
+                command,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=self.config.timeout_seconds,
+                check=False,
+            )
+        finally:
+            for directory in temp_dirs:
+                shutil.rmtree(directory, ignore_errors=True)
         if completed.returncode != 0:
             stderr = (completed.stderr or completed.stdout or "").strip()
             raise RuntimeError(f"Claude Code error {completed.returncode}: {stderr[:500]}")
+        if use_plain_text:
+            return CompletionResult(
+                message=ConversationMessage(role="assistant", content=(completed.stdout or "").strip()),
+                raw_response={"stdout": completed.stdout, "stderr": completed.stderr},
+            )
         body = self._parse_cli_payload(completed.stdout)
         return self._decode_completion(body, tools)
+
+    def complete_native(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[ConversationMessage],
+        allowed_tools: tuple[str, ...] = (),
+        mcp_config: ClaudeCodeMcpConfig | None = None,
+    ) -> CompletionResult:
+        materialized_images: list[tuple[Path, str]] = []
+        temp_dirs: list[str] = []
+        try:
+            prompt = self._build_native_prompt(
+                messages,
+                materialized_images=materialized_images,
+                temp_dirs=temp_dirs,
+                allowed_tools=allowed_tools,
+            )
+            command = [
+                self.config.cli_path,
+                "-p",
+                "--model",
+                self.config.model,
+                "--tools",
+                ",".join(allowed_tools) if allowed_tools else "",
+                "--append-system-prompt",
+                self._build_native_system_prompt(system_prompt, allowed_tools=allowed_tools),
+                "--no-session-persistence",
+            ]
+            if mcp_config is not None:
+                config_path, config_dir = mcp_config.write_temp_file()
+                temp_dirs.append(config_dir)
+                command.extend(["--mcp-config", config_path])
+                if mcp_config.strict:
+                    command.append("--strict-mcp-config")
+            for directory in dict.fromkeys(temp_dirs):
+                command.extend(["--add-dir", directory])
+            command.append("--")
+            command.append(prompt)
+            env = os.environ.copy()
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = self.config.oauth_token
+            completed = self._runner(
+                command,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=self.config.timeout_seconds,
+                check=False,
+            )
+        finally:
+            for directory in temp_dirs:
+                shutil.rmtree(directory, ignore_errors=True)
+        if completed.returncode != 0:
+            stderr = (completed.stderr or completed.stdout or "").strip()
+            raise RuntimeError(f"Claude Code error {completed.returncode}: {stderr[:500]}")
+        return CompletionResult(
+            message=ConversationMessage(role="assistant", content=(completed.stdout or "").strip()),
+            raw_response={"stdout": completed.stdout, "stderr": completed.stderr},
+        )
 
     def _build_system_prompt(self, system_prompt: str, tools: list[AgentTool]) -> str:
         loop_contract = (
@@ -400,6 +486,9 @@ class ClaudeCodeProvider:
             "You cannot execute tools yourself. The host application will execute any tool calls you request.\n"
             "Do not mention the host application, JSON schema, or hidden coordination protocol in the final answer.\n"
             "When tool results appear in the conversation transcript, treat them as authoritative.\n"
+            "If the prompt includes local image file paths marked as attached image inputs, those images are already "
+            "provided as visual inputs. Inspect them directly. Do not say that you need the user to upload or embed "
+            "the image again, and do not treat attached image inspection as a separate tool.\n"
         )
         if tools:
             loop_contract += (
@@ -411,11 +500,45 @@ class ClaudeCodeProvider:
             loop_contract += "No tools are available in this turn. Return a final answer directly.\n"
         return f"{system_prompt}\n\n{loop_contract}".strip()
 
-    def _build_prompt(self, messages: list[ConversationMessage], tools: list[AgentTool]) -> str:
+    def _build_native_system_prompt(
+        self,
+        system_prompt: str,
+        *,
+        allowed_tools: tuple[str, ...],
+    ) -> str:
+        native_contract = (
+            "Respond directly to the latest user message.\n"
+            "If the prompt includes local image file paths marked as attached image inputs, those images are already "
+            "provided as visual inputs. Inspect them directly. Do not ask the user to re-upload them.\n"
+        )
+        if allowed_tools:
+            native_contract += (
+                "Use Claude Code's built-in tools only when they materially improve correctness. "
+                "Prefer the minimum number of tool actions needed.\n"
+            )
+        return f"{system_prompt}\n\n{native_contract}".strip()
+
+    def _build_prompt(
+        self,
+        messages: list[ConversationMessage],
+        tools: list[AgentTool],
+        *,
+        materialized_images: list[tuple[Path, str]],
+        temp_dirs: list[str],
+    ) -> str:
         parts = [
             "Conversation transcript:",
-            self._render_messages(messages),
+            self._render_messages(messages, materialized_images=materialized_images, temp_dirs=temp_dirs),
         ]
+        if materialized_images:
+            parts.insert(
+                0,
+                "Attached image inputs:\n"
+                + "\n".join(
+                    f"- {path} (inspect directly as a visual input)"
+                    for path, _mime_type in materialized_images
+                ),
+            )
         if tools:
             tool_lines = ["Available tools:"]
             for tool in tools:
@@ -431,7 +554,43 @@ class ClaudeCodeProvider:
             parts.append("Return the best possible final answer.")
         return "\n\n".join(part for part in parts if part.strip())
 
-    def _render_messages(self, messages: list[ConversationMessage]) -> str:
+    def _build_native_prompt(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        materialized_images: list[tuple[Path, str]],
+        temp_dirs: list[str],
+        allowed_tools: tuple[str, ...],
+    ) -> str:
+        parts = [
+            "Conversation transcript:",
+            self._render_messages(messages, materialized_images=materialized_images, temp_dirs=temp_dirs),
+        ]
+        if materialized_images:
+            parts.insert(
+                0,
+                "Attached image inputs:\n"
+                + "\n".join(
+                    f"- {path} (inspect directly as a visual input)"
+                    for path, _mime_type in materialized_images
+                ),
+            )
+        if allowed_tools:
+            parts.append(
+                "Native Claude tools available in this turn: "
+                + ", ".join(allowed_tools)
+                + ". Use them only if needed."
+            )
+        parts.append("Reply to the latest user message.")
+        return "\n\n".join(part for part in parts if part.strip())
+
+    def _render_messages(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        materialized_images: list[tuple[Path, str]],
+        temp_dirs: list[str],
+    ) -> str:
         rendered: list[str] = []
         for message in messages:
             if message.role == "assistant" and message.tool_calls:
@@ -441,7 +600,7 @@ class ClaudeCodeProvider:
                 for tool_call in message.tool_calls:
                     args = json.dumps(tool_call.arguments, ensure_ascii=True, sort_keys=True)
                     tool_lines.append(
-                        f"- id={tool_call.call_id} name={tool_call.name} arguments={args}"
+                    f"- id={tool_call.call_id} name={tool_call.name} arguments={args}"
                     )
                 rendered.append("\n".join(tool_lines))
                 continue
@@ -449,18 +608,29 @@ class ClaudeCodeProvider:
                 tool_name = message.tool_name or "tool"
                 call_id = message.tool_call_id or "unknown"
                 rendered.append(
-                    f"Tool result ({tool_name}, call_id={call_id}):\n{self._render_content(message.content)}"
+                    f"Tool result ({tool_name}, call_id={call_id}):\n"
+                    f"{self._render_content(message.content, materialized_images=materialized_images, temp_dirs=temp_dirs)}"
                 )
                 continue
-            rendered.append(f"{message.role.capitalize()}:\n{self._render_content(message.content)}")
+            rendered.append(
+                f"{message.role.capitalize()}:\n"
+                f"{self._render_content(message.content, materialized_images=materialized_images, temp_dirs=temp_dirs)}"
+            )
         return "\n\n".join(rendered)
 
-    def _render_content(self, content: MessageContent | None) -> str:
+    def _render_content(
+        self,
+        content: MessageContent | None,
+        *,
+        materialized_images: list[tuple[Path, str]],
+        temp_dirs: list[str],
+    ) -> str:
         if content is None:
             return ""
         if isinstance(content, str):
             return content
         parts: list[str] = []
+        image_paths: list[str] = []
         for item in content:
             item_type = str(item.get("type", ""))
             if item_type == "text":
@@ -473,15 +643,70 @@ class ClaudeCodeProvider:
                     url = str(image_url.get("url", ""))
                 elif isinstance(image_url, str):
                     url = image_url
-                if url.startswith("data:"):
-                    parts.append("[Image attachment omitted: inline data URL]")
+                path = self._materialize_image_reference(url, materialized_images=materialized_images, temp_dirs=temp_dirs)
+                if path is not None:
+                    image_paths.append(str(path))
+                elif url.startswith("http://") or url.startswith("https://"):
+                    parts.append(f"[Image attachment URL: {url}]")
                 elif url:
                     parts.append(f"[Image attachment: {url}]")
                 else:
                     parts.append("[Image attachment]")
                 continue
             parts.append(f"[Unsupported content block type: {item_type or 'unknown'}]")
+        if image_paths:
+            parts.extend(
+                f"Attached local image file: {path}. Inspect it directly as part of the user input."
+                for path in image_paths
+            )
         return "\n".join(part for part in parts if part)
+
+    def _materialize_image_reference(
+        self,
+        url: str,
+        *,
+        materialized_images: list[tuple[Path, str]],
+        temp_dirs: list[str],
+    ) -> Path | None:
+        stripped = url.strip()
+        if not stripped:
+            return None
+        if stripped.startswith("data:image/"):
+            return self._write_data_uri_image(
+                stripped,
+                materialized_images=materialized_images,
+                temp_dirs=temp_dirs,
+            )
+        if stripped.startswith(("http://", "https://")):
+            return None
+        candidate = Path(stripped).expanduser()
+        if candidate.exists():
+            temp_dirs.append(str(candidate.resolve().parent))
+            return candidate.resolve()
+        return None
+
+    def _write_data_uri_image(
+        self,
+        data_uri: str,
+        *,
+        materialized_images: list[tuple[Path, str]],
+        temp_dirs: list[str],
+    ) -> Path | None:
+        header, _, payload = data_uri.partition(",")
+        if not header or not payload:
+            return None
+        mime_type = header[5:].split(";", 1)[0] if header.startswith("data:") else "image/jpeg"
+        extension = mimetypes.guess_extension(mime_type) or ".jpg"
+        try:
+            raw_bytes = base64.b64decode(payload, validate=True)
+        except (ValueError, base64.binascii.Error):
+            return None
+        temp_dir = tempfile.mkdtemp(prefix="analyst-claude-code-image-")
+        temp_dirs.append(temp_dir)
+        path = Path(temp_dir) / f"attached{extension}"
+        path.write_bytes(raw_bytes)
+        materialized_images.append((path, mime_type))
+        return path
 
     def _response_schema(self, tools: list[AgentTool]) -> dict[str, Any]:
         if not tools:

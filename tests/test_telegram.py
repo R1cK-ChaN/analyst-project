@@ -283,6 +283,83 @@ class TestChatPersonaRouting(unittest.TestCase):
         self.assertIn("ANALYST_COMPANION_OPENROUTER_MODEL", kwargs["model_keys"])
 
 
+class TestSalesChatClaudeCodeImages(unittest.TestCase):
+    def test_generate_chat_reply_bypasses_tool_loop_for_claude_code_image_analysis(self) -> None:
+        from analyst.delivery.sales_chat import ChatPersonaMode, generate_chat_reply
+        from analyst.engine.agent_loop import AgentLoopConfig, PythonAgentLoop
+        from analyst.engine.live_provider import ClaudeCodeConfig, ClaudeCodeProvider
+
+        completed = MagicMock(returncode=0, stdout="red\n", stderr="")
+        runner = MagicMock(return_value=completed)
+        provider = ClaudeCodeProvider(
+            ClaudeCodeConfig(oauth_token="token", model="sonnet"),
+            runner=runner,
+        )
+        agent_loop = PythonAgentLoop(
+            provider=provider,
+            config=AgentLoopConfig(max_turns=4, max_tokens=120, temperature=0.2),
+        )
+        tools = [
+            AgentTool(name="generate_image", description="", parameters={}, handler=lambda _: {}),
+            AgentTool(name="research_agent", description="", parameters={}, handler=lambda _: {}),
+        ]
+
+        reply = generate_chat_reply(
+            "What color is this image? Answer one word.",
+            history=[],
+            agent_loop=agent_loop,
+            tools=tools,
+            user_content=[
+                {"type": "text", "text": "What color is this image? Answer one word."},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,"
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jkO8AAAAASUVORK5CYII="
+                    },
+                },
+            ],
+            persona_mode=ChatPersonaMode.COMPANION,
+        )
+
+        self.assertEqual(reply.text, "red")
+        self.assertEqual(reply.tool_audit, [])
+        command = runner.call_args.args[0]
+        self.assertNotIn("--output-format", command)
+
+    def test_generate_chat_reply_can_use_native_claude_agent_with_shared_mcp_tools(self) -> None:
+        from analyst.delivery.sales_chat import ChatPersonaMode, generate_chat_reply
+        from analyst.engine import build_agent_executor
+        from analyst.engine.agent_loop import AgentLoopConfig
+        from analyst.engine.live_provider import ClaudeCodeConfig, ClaudeCodeProvider
+
+        completed = MagicMock(returncode=0, stdout="Treasury yields rose after the CPI surprise.\n", stderr="")
+        runner = MagicMock(return_value=completed)
+        provider = ClaudeCodeProvider(
+            ClaudeCodeConfig(oauth_token="token", model="sonnet"),
+            runner=runner,
+        )
+        executor = build_agent_executor(
+            provider,
+            config=AgentLoopConfig(max_turns=4, max_tokens=120, temperature=0.2),
+            mcp_tool_names=("fetch_live_news", "fetch_live_markets"),
+        )
+
+        with patch.dict("os.environ", {"ANALYST_CLAUDE_CODE_USE_NATIVE_AGENT": "1"}, clear=False):
+            reply = generate_chat_reply(
+                "What moved Treasury yields today?",
+                history=[],
+                agent_loop=executor,
+                tools=[AgentTool(name="generate_image", description="", parameters={}, handler=lambda _: {})],
+                persona_mode=ChatPersonaMode.SALES,
+            )
+
+        self.assertEqual(reply.text, "Treasury yields rose after the CPI surprise.")
+        command = runner.call_args.args[0]
+        self.assertIn("--mcp-config", command)
+        self.assertIn("WebSearch,WebFetch", command)
+
+
 class TestChatReply(unittest.IsolatedAsyncioTestCase):
     """Test _chat_reply — the core agent-loop chat function."""
 
