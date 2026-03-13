@@ -126,83 +126,15 @@ from analyst.runtime.environment_adapter import (  # noqa: E402
     build_proactive_conversation_input,
     build_telegram_conversation_input,
 )
+from analyst.runtime.platform.telegram import (  # noqa: E402
+    persist_telegram_companion_turn,
+    prepare_telegram_turn,
+    refresh_companion_checkin_schedule,
+    should_send_inactivity_ping,
+    should_send_routine_ping,
+)
 
 logger = logging.getLogger(__name__)
-
-def _refresh_companion_checkin_schedule(
-    store: SQLiteEngineStore,
-    *,
-    client_id: str,
-    channel_id: str,
-    thread_id: str,
-    user_text: str,
-    profile: Any,
-    now: datetime,
-) -> None:
-    state = store.get_companion_checkin_state(
-        client_id=client_id,
-        channel=channel_id,
-        thread_id=thread_id,
-    )
-    if not state.enabled:
-        return
-    if _needs_emotional_follow_up(user_text, profile):
-        due_at = now + timedelta(hours=18)
-        store.schedule_companion_checkin(
-            client_id=client_id,
-            channel=channel_id,
-            thread_id=thread_id,
-            kind="follow_up",
-            due_at=due_at.isoformat(),
-        )
-
-
-def _should_send_inactivity_ping(
-    *,
-    now: datetime,
-    checkin_state: Any,
-    last_user_message_at: str,
-) -> bool:
-    if not last_user_message_at:
-        return False
-    if checkin_state.pending_kind == "follow_up":
-        return False
-    if checkin_state.cooldown_until:
-        cooldown_until = _parse_iso_datetime(checkin_state.cooldown_until)
-        if cooldown_until is not None and cooldown_until > now:
-            return False
-    if checkin_state.last_sent_at and _is_same_local_day(checkin_state.last_sent_at, now):
-        return False
-    last_user_dt = _parse_iso_datetime(last_user_message_at)
-    if last_user_dt is None:
-        return False
-    return now - last_user_dt >= timedelta(days=5)
-
-
-def _should_send_routine_ping(
-    *,
-    now: datetime,
-    lifestyle_state: Any,
-    checkin_state: Any,
-    last_user_message_at: str,
-    kind: str,
-) -> bool:
-    if not kind:
-        return False
-    if checkin_state.pending_kind:
-        return False
-    if checkin_state.cooldown_until:
-        cooldown_until = _parse_iso_datetime(checkin_state.cooldown_until)
-        if cooldown_until is not None and cooldown_until > now:
-            return False
-    if last_user_message_at and _is_same_local_day(last_user_message_at, now):
-        return False
-    if checkin_state.last_sent_at and _is_same_local_day(checkin_state.last_sent_at, now):
-        return False
-    routine_sent_at = _lifestyle_ping_sent_at(lifestyle_state, kind)
-    if routine_sent_at and _is_same_local_day(routine_sent_at, now):
-        return False
-    return True
 
 
 async def _send_companion_proactive_message(
@@ -387,10 +319,12 @@ async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> Non
             channel=state.channel,
             thread_id=state.thread_id,
         )
-        if _is_within_checkin_send_window(now) and _should_send_inactivity_ping(
+        if _is_within_checkin_send_window(now) and should_send_inactivity_ping(
             now=now,
             checkin_state=state,
             last_user_message_at=last_user_message_at,
+            parse_iso_datetime=_parse_iso_datetime,
+            is_same_local_day=_is_same_local_day,
         ):
             try:
                 await _send_companion_proactive_message(
@@ -414,12 +348,15 @@ async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> Non
             thread_id=state.thread_id,
             now=now,
         )
-        if not _should_send_routine_ping(
+        if not should_send_routine_ping(
             now=now,
             lifestyle_state=lifestyle_state,
             checkin_state=state,
             last_user_message_at=last_user_message_at,
             kind=routine_kind,
+            parse_iso_datetime=_parse_iso_datetime,
+            is_same_local_day=_is_same_local_day,
+            lifestyle_ping_sent_at=_lifestyle_ping_sent_at,
         ):
             continue
         try:
@@ -755,37 +692,24 @@ def _make_message_handler(
             group_id = ""
             group_context_str = ""
 
-        # Build enriched text for LLM (includes reply context)
-        base_llm_text = text or "The user sent an image without caption."
-        if reply_context:
-            llm_text = f'回复消息：\n"{reply_context}"\n\n用户说：\n{base_llm_text}'
-        else:
-            llm_text = base_llm_text
-        first_reply_delay_seconds = _first_reply_delay_seconds(
-            text,
-            has_image=attached_image is not None,
-        )
-        user_content = (
-            [
-                {"type": "text", "text": _render_image_instruction(llm_text, image=attached_image)},
-                {"type": "image_url", "image_url": {"url": attached_image.data_uri}},
-            ]
-            if attached_image is not None
-            else llm_text
-        )
-        conversation = build_telegram_conversation_input(
+        preparation = prepare_telegram_turn(
             user_id=user_id,
             channel_id=channel_id,
             thread_id=thread_id,
-            message=llm_text,
+            text=text,
+            reply_context=reply_context,
             history=_get_history(context, is_group=in_group, thread_id=thread_id),
-            current_user_text=history_user_text,
+            history_user_text=history_user_text,
             group_context=group_context_str,
             group_id=group_id,
-            user_content=user_content,
             companion_local_context=companion_local_context,
             attached_image=attached_image,
+            render_image_instruction=_render_image_instruction,
+            first_reply_delay=_first_reply_delay_seconds,
         )
+        llm_text = preparation.llm_text
+        first_reply_delay_seconds = preparation.first_reply_delay_seconds
+        conversation = preparation.conversation
 
         await update.effective_chat.send_action(ChatAction.TYPING)
         reply_started = asyncio.get_running_loop().time()
@@ -802,7 +726,7 @@ def _make_message_handler(
             group_context=group_context_str,
             is_group=in_group,
             thread_id=thread_id,
-            user_content=user_content,
+            user_content=conversation.user_content,
             history_text=history_user_text,
             attached_image=attached_image,
             companion_local_context=companion_local_context,
@@ -815,29 +739,21 @@ def _make_message_handler(
             history = _get_history(context, is_group=in_group, thread_id=thread_id)
             if history and history[-1]["role"] == "assistant":
                 history[-1]["content"] = rendered_reply_text
-        persist_companion_turn_for_input(
-            conversation=conversation,
+        updated_profile = persist_telegram_companion_turn(
             store=store,
-            assistant_text=rendered_reply_text,
+            conversation=conversation,
             reply=reply,
+            assistant_text=rendered_reply_text,
+            history_user_text=history_user_text,
             now=now_utc,
             routine_state=str(getattr(companion_lifestyle_state, "routine_state", "") or ""),
-            apply_reminders=not in_group,
-            schedule_updater=apply_companion_schedule_update,
-            reminder_updater=apply_companion_reminder_update,
-            interaction_recorder=record_chat_interaction,
+            in_group=in_group,
+            refresh_schedule=refresh_companion_checkin_schedule,
+            apply_companion_schedule_update=apply_companion_schedule_update,
+            apply_companion_reminder_update=apply_companion_reminder_update,
+            record_chat_interaction=record_chat_interaction,
+            needs_emotional_follow_up=_needs_emotional_follow_up,
         )
-        updated_profile = store.get_client_profile(user_id)
-        if not in_group:
-            _refresh_companion_checkin_schedule(
-                store,
-                client_id=user_id,
-                channel_id=channel_id,
-                thread_id=thread_id,
-                user_text=history_user_text,
-                profile=updated_profile,
-                now=now_utc,
-            )
         bubbles = rendered_bubbles or [(bubble, []) for bubble in split_into_bubbles(rendered_reply_text)]
         elapsed = asyncio.get_running_loop().time() - reply_started
         remaining_delay = first_reply_delay_seconds - elapsed
