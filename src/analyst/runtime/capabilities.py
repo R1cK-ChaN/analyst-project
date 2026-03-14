@@ -6,6 +6,7 @@ from typing import Any, Callable
 from analyst.agents import RoleDependencies, get_role_spec
 from analyst.engine import OpenRouterAnalystEngine
 from analyst.engine.live_types import AgentTool, LLMProvider
+from analyst.engine.backends import ClaudeCodeProvider
 from analyst.mcp.shared_tools import BASE_SHARED_MCP_TOOL_NAMES
 from analyst.storage import SQLiteEngineStore
 from analyst.tools import (
@@ -39,11 +40,14 @@ COMPANION_SHARED_MCP_TOOL_NAMES = (
     "get_fed_communications",
     "get_indicator_history",
     "search_research_notes",
+    "generate_image",
 )
 USER_CHAT_SHARED_MCP_TOOL_NAMES = (
     *COMPANION_SHARED_MCP_TOOL_NAMES,
     "get_portfolio_risk",
     "get_portfolio_holdings",
+    "generate_live_photo",
+    "sync_portfolio_from_broker",
 )
 
 RESEARCH_SUB_AGENT_PARENT_TOOL_NAMES: dict[str, tuple[str, ...]] = {
@@ -196,7 +200,7 @@ def _build_companion_capabilities(context: CapabilityBuildContext) -> list[Agent
 
 
 def _append_user_chat_sub_agents(parent_tools: list[AgentTool], context: CapabilityBuildContext) -> list[AgentTool]:
-    if context.provider is None:
+    if context.provider is None or _is_claude_code_provider(context):
         return []
     from analyst.engine.sub_agent_specs import build_user_sub_agents
 
@@ -214,6 +218,10 @@ def _render_engine_calendar(engine: OpenRouterAnalystEngine | Any) -> str:
     )
 
 
+def _is_claude_code_provider(context: CapabilityBuildContext) -> bool:
+    return isinstance(context.provider, ClaudeCodeProvider)
+
+
 def _build_declared_surface(spec: CapabilitySurfaceSpec, context: CapabilityBuildContext) -> list[AgentTool]:
     kit = ToolKit()
     for builder in spec.static_tool_builders:
@@ -224,7 +232,7 @@ def _build_declared_surface(spec: CapabilitySurfaceSpec, context: CapabilityBuil
         tool = builder()
         if tool is not None:
             kit.add(tool)
-    if context.engine is not None:
+    if context.engine is not None and not _is_claude_code_provider(context):
         for tool_spec in spec.engine_tool_specs:
             kit.add(
                 AgentTool(
@@ -320,6 +328,8 @@ def _validate_surface_sub_agents(
     provider: LLMProvider | None,
 ) -> None:
     if provider is None or not spec.sub_agent_names:
+        return
+    if isinstance(provider, ClaudeCodeProvider):
         return
     tool_names = {
         name

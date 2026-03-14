@@ -72,6 +72,7 @@ def _completion_to_result(
         messages=messages,
         final_text=str(completion.message.content or ""),
         events=events,
+        raw_response=completion.raw_response,
     )
 
 
@@ -110,28 +111,20 @@ class ClaudeCodeExecutor:
     backend: ExecutorBackend = field(default=ExecutorBackend.CLAUDE_CODE, init=False)
 
     def run_turn(self, request: AgentRunRequest) -> AgentLoopResult:
-        if request.prefer_direct_response or not request.tools:
-            tool_names = self.mcp_tool_names if request.mcp_tool_names is None else request.mcp_tool_names
-            mcp_config = None
-            if tool_names:
-                mcp_config = ClaudeCodeMcpConfig(
-                    tool_names=tool_names,
-                    db_path=self.mcp_db_path,
-                )
-            completion = self.provider.complete_native(
-                system_prompt=request.system_prompt,
-                messages=[*list(request.history), ConversationMessage(role="user", content=request.user_prompt)],
-                allowed_tools=request.native_tool_names,
-                mcp_config=mcp_config,
+        tool_names = self.mcp_tool_names if request.mcp_tool_names is None else request.mcp_tool_names
+        mcp_config = None
+        if tool_names:
+            mcp_config = ClaudeCodeMcpConfig(
+                tool_names=tool_names,
+                db_path=self.mcp_db_path,
             )
-            return _completion_to_result(request=request, completion=completion)
-        loop = PythonAgentLoop(self.provider, self.config)
-        return loop.run(
+        completion = self.provider.complete_native(
             system_prompt=request.system_prompt,
-            user_prompt=request.user_prompt,
-            tools=request.tools,
-            history=request.history,
+            messages=[*list(request.history), ConversationMessage(role="user", content=request.user_prompt)],
+            allowed_tools=request.native_tool_names,
+            mcp_config=mcp_config,
         )
+        return _completion_to_result(request=request, completion=completion)
 
 
 @dataclass
@@ -152,7 +145,7 @@ class LegacyLoopExecutor:
 
     def run_turn(self, request: AgentRunRequest) -> AgentLoopResult:
         provider = self.provider
-        if request.prefer_direct_response and isinstance(provider, ClaudeCodeProvider):
+        if isinstance(provider, ClaudeCodeProvider):
             completion = provider.complete_native(
                 system_prompt=request.system_prompt,
                 messages=[*list(request.history), ConversationMessage(role="user", content=request.user_prompt)],

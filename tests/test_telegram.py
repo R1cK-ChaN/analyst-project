@@ -373,7 +373,11 @@ class TestUserChatClaudeCodeImages(unittest.TestCase):
         from analyst.engine.agent_loop import AgentLoopConfig
         from analyst.engine.live_provider import ClaudeCodeConfig, ClaudeCodeProvider
 
-        completed = MagicMock(returncode=0, stdout="Treasury yields rose after the CPI surprise.\n", stderr="")
+        stream_stdout = "\n".join([
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Treasury yields rose after the CPI surprise."}]}}),
+            json.dumps({"type": "result", "is_error": False, "result": "Treasury yields rose after the CPI surprise."}),
+        ])
+        completed = MagicMock(returncode=0, stdout=stream_stdout, stderr="")
         runner = MagicMock(return_value=completed)
         provider = ClaudeCodeProvider(
             ClaudeCodeConfig(oauth_token="token", model="sonnet"),
@@ -385,14 +389,13 @@ class TestUserChatClaudeCodeImages(unittest.TestCase):
             mcp_tool_names=("fetch_live_news", "fetch_live_markets"),
         )
 
-        with patch.dict("os.environ", {"ANALYST_CLAUDE_CODE_USE_NATIVE_AGENT": "1"}, clear=False):
-            reply = generate_chat_reply(
-                "What moved Treasury yields today?",
-                history=[],
-                agent_loop=executor,
-                tools=[AgentTool(name="generate_image", description="", parameters={}, handler=lambda _: {})],
-                persona_mode=ChatPersonaMode.COMPANION,
-            )
+        reply = generate_chat_reply(
+            "What moved Treasury yields today?",
+            history=[],
+            agent_loop=executor,
+            tools=[AgentTool(name="generate_image", description="", parameters={}, handler=lambda _: {})],
+            persona_mode=ChatPersonaMode.COMPANION,
+        )
 
         self.assertEqual(reply.text, "Treasury yields rose after the CPI surprise.")
         command = runner.call_args.args[0]

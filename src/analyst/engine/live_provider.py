@@ -8,7 +8,6 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 import base64
 import shutil
 
@@ -180,6 +179,7 @@ class ClaudeCodeConfig:
     model: str = DEFAULT_CLAUDE_CODE_MODEL
     cli_path: str = "claude"
     timeout_seconds: int = 180
+    max_turns: int = 15
 
     @classmethod
     def from_env(
@@ -199,6 +199,10 @@ class ClaudeCodeConfig:
             timeout_seconds=_safe_int(
                 get_env_value("ANALYST_CLAUDE_CODE_TIMEOUT_SECONDS", default="180"),
                 default=180,
+            ),
+            max_turns=_safe_int(
+                get_env_value("ANALYST_CLAUDE_CODE_MAX_TURNS", default="15"),
+                default=15,
             ),
         )
 
@@ -357,70 +361,6 @@ class ClaudeCodeProvider:
         self.config = config
         self._runner = runner or subprocess.run
 
-    def complete(
-        self,
-        *,
-        system_prompt: str,
-        messages: list[ConversationMessage],
-        tools: list[AgentTool],
-        max_tokens: int,
-        temperature: float,
-    ) -> CompletionResult:
-        del max_tokens, temperature
-        schema = self._response_schema(tools)
-        materialized_images: list[tuple[Path, str]] = []
-        temp_dirs: list[str] = []
-        try:
-            prompt = self._build_prompt(messages, tools, materialized_images=materialized_images, temp_dirs=temp_dirs)
-            command = [
-                self.config.cli_path,
-                "-p",
-                "--model",
-                self.config.model,
-                "--tools",
-                "",
-                "--system-prompt",
-                self._build_system_prompt(system_prompt, tools),
-                "--no-session-persistence",
-            ]
-            use_plain_text = not tools and bool(materialized_images)
-            if not use_plain_text:
-                command.extend(
-                    [
-                        "--output-format",
-                        "json",
-                        "--json-schema",
-                        json.dumps(schema, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
-                    ]
-                )
-            for directory in dict.fromkeys(temp_dirs):
-                command.extend(["--add-dir", directory])
-            command.append("--")
-            command.append(prompt)
-            env = os.environ.copy()
-            env["CLAUDE_CODE_OAUTH_TOKEN"] = self.config.oauth_token
-            completed = self._runner(
-                command,
-                capture_output=True,
-                text=True,
-                env=env,
-                timeout=self.config.timeout_seconds,
-                check=False,
-            )
-        finally:
-            for directory in temp_dirs:
-                shutil.rmtree(directory, ignore_errors=True)
-        if completed.returncode != 0:
-            stderr = (completed.stderr or completed.stdout or "").strip()
-            raise RuntimeError(f"Claude Code error {completed.returncode}: {stderr[:500]}")
-        if use_plain_text:
-            return CompletionResult(
-                message=ConversationMessage(role="assistant", content=(completed.stdout or "").strip()),
-                raw_response={"stdout": completed.stdout, "stderr": completed.stderr},
-            )
-        body = self._parse_cli_payload(completed.stdout)
-        return self._decode_completion(body, tools)
-
     def complete_native(
         self,
         *,
@@ -442,26 +382,14 @@ class ClaudeCodeProvider:
                 "--append-system-prompt",
                 self._build_native_system_prompt(system_prompt, allowed_tools=allowed_tools),
                 "--no-session-persistence",
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--max-turns",
+                str(self.config.max_turns),
             ]
-            if stream_input is None:
-                materialized_images: list[tuple[Path, str]] = []
-                prompt = self._build_native_prompt(
-                    messages,
-                    materialized_images=materialized_images,
-                    temp_dirs=temp_dirs,
-                    allowed_tools=allowed_tools,
-                )
-            else:
-                # Claude Code's non-streaming print mode does not support direct image attachments.
-                command.extend(
-                    [
-                        "--input-format",
-                        "stream-json",
-                        "--output-format",
-                        "stream-json",
-                        "--verbose",
-                    ]
-                )
             if mcp_config is not None:
                 config_path, config_dir = mcp_config.write_temp_file()
                 temp_dirs.append(config_dir)
@@ -470,9 +398,6 @@ class ClaudeCodeProvider:
                     command.append("--strict-mcp-config")
             for directory in dict.fromkeys(temp_dirs):
                 command.extend(["--add-dir", directory])
-            if stream_input is None:
-                command.append("--")
-                command.append(prompt)
             env = os.environ.copy()
             env["CLAUDE_CODE_OAUTH_TOKEN"] = self.config.oauth_token
             completed = self._runner(
@@ -490,36 +415,11 @@ class ClaudeCodeProvider:
         if completed.returncode != 0:
             stderr = (completed.stderr or completed.stdout or "").strip()
             raise RuntimeError(f"Claude Code error {completed.returncode}: {stderr[:500]}")
-        if stream_input is not None:
-            final_text, events = self._parse_stream_json_events(completed.stdout)
-            return CompletionResult(
-                message=ConversationMessage(role="assistant", content=final_text),
-                raw_response={"events": events, "stdout": completed.stdout, "stderr": completed.stderr},
-            )
+        final_text, events = self._parse_stream_json_events(completed.stdout)
         return CompletionResult(
-            message=ConversationMessage(role="assistant", content=(completed.stdout or "").strip()),
-            raw_response={"stdout": completed.stdout, "stderr": completed.stderr},
+            message=ConversationMessage(role="assistant", content=final_text),
+            raw_response={"events": events, "stdout": completed.stdout, "stderr": completed.stderr},
         )
-
-    def _build_system_prompt(self, system_prompt: str, tools: list[AgentTool]) -> str:
-        loop_contract = (
-            "You are the reasoning engine inside an external Python agent loop.\n"
-            "You cannot execute tools yourself. The host application will execute any tool calls you request.\n"
-            "Do not mention the host application, JSON schema, or hidden coordination protocol in the final answer.\n"
-            "When tool results appear in the conversation transcript, treat them as authoritative.\n"
-            "If the prompt includes local image file paths marked as attached image inputs, those images are already "
-            "provided as visual inputs. Inspect them directly. Do not say that you need the user to upload or embed "
-            "the image again, and do not treat attached image inspection as a separate tool.\n"
-        )
-        if tools:
-            loop_contract += (
-                "If you need external information or actions, set action to tool_call and request at most one tool per turn.\n"
-                "When requesting a tool, return only a valid tool name and a compact JSON object encoded as tool_arguments_json.\n"
-                "If you already have enough information, set action to final and place the user-visible reply in final_text.\n"
-            )
-        else:
-            loop_contract += "No tools are available in this turn. Return a final answer directly.\n"
-        return f"{system_prompt}\n\n{loop_contract}".strip()
 
     def _build_native_system_prompt(
         self,
@@ -538,42 +438,6 @@ class ClaudeCodeProvider:
                 "Prefer the minimum number of tool actions needed.\n"
             )
         return f"{system_prompt}\n\n{native_contract}".strip()
-
-    def _build_prompt(
-        self,
-        messages: list[ConversationMessage],
-        tools: list[AgentTool],
-        *,
-        materialized_images: list[tuple[Path, str]],
-        temp_dirs: list[str],
-    ) -> str:
-        parts = [
-            "Conversation transcript:",
-            self._render_messages(messages, materialized_images=materialized_images, temp_dirs=temp_dirs),
-        ]
-        if materialized_images:
-            parts.insert(
-                0,
-                "Attached image inputs:\n"
-                + "\n".join(
-                    f"- {path} (inspect directly as a visual input)"
-                    for path, _mime_type in materialized_images
-                ),
-            )
-        if tools:
-            tool_lines = ["Available tools:"]
-            for tool in tools:
-                params = json.dumps(tool.parameters, ensure_ascii=True, sort_keys=True)
-                tool_lines.append(f"- {tool.name}: {tool.description}")
-                tool_lines.append(f"  parameters={params}")
-            parts.append("\n".join(tool_lines))
-            parts.append(
-                "Choose the next step. Either return a final answer or request tool calls. "
-                "Prefer the minimum number of tool calls needed."
-            )
-        else:
-            parts.append("Return the best possible final answer.")
-        return "\n\n".join(part for part in parts if part.strip())
 
     def _build_native_prompt(
         self,
@@ -676,8 +540,6 @@ class ClaudeCodeProvider:
                 flush_text=_flush_text,
             ) or saw_streamable_image
 
-        if not saw_streamable_image:
-            return None
         if allowed_tools:
             text_parts.append(
                 "\n\nNative Claude tools available in this turn: "
@@ -888,41 +750,6 @@ class ClaudeCodeProvider:
         materialized_images.append((path, mime_type))
         return path
 
-    def _response_schema(self, tools: list[AgentTool]) -> dict[str, Any]:
-        if not tools:
-            return {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "final_text": {"type": "string"},
-                },
-                "required": ["final_text"],
-            }
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "action": {"type": "string", "enum": ["final", "tool_call"]},
-                "final_text": {"type": "string"},
-                "tool_name": {"type": "string", "enum": ["", *[tool.name for tool in tools]]},
-                "tool_arguments_json": {"type": "string"},
-            },
-            "required": ["action", "final_text", "tool_name", "tool_arguments_json"],
-        }
-
-    def _parse_cli_payload(self, raw_stdout: str) -> dict[str, Any]:
-        text = raw_stdout.strip()
-        if not text:
-            raise RuntimeError("Claude Code returned empty stdout.")
-        for candidate in reversed([line for line in text.splitlines() if line.strip()]):
-            try:
-                parsed = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                return parsed
-        raise RuntimeError(f"Claude Code returned non-JSON output: {text[:500]}")
-
     def _parse_stream_json_events(self, raw_stdout: str) -> tuple[str, list[dict[str, Any]]]:
         events: list[dict[str, Any]] = []
         final_text = ""
@@ -964,48 +791,3 @@ class ClaudeCodeProvider:
             raise RuntimeError(f"Claude Code returned no assistant text in stream-json output: {text[:500]}")
         return final_text, events
 
-    def _decode_completion(self, body: dict[str, Any], tools: list[AgentTool]) -> CompletionResult:
-        structured = body.get("structured_output")
-        if tools:
-            if not isinstance(structured, dict):
-                raise RuntimeError(f"Claude Code returned no structured_output: {json.dumps(body)[:500]}")
-            action = str(structured.get("action", "")).strip()
-            final_text = str(structured.get("final_text", "") or "")
-            if action == "final":
-                return CompletionResult(
-                    message=ConversationMessage(role="assistant", content=final_text),
-                    raw_response=body,
-                )
-            if action != "tool_call":
-                raise RuntimeError(f"Claude Code returned invalid action: {action or '<empty>'}")
-            tool_name = str(structured.get("tool_name", "")).strip()
-            if not tool_name:
-                raise RuntimeError("Claude Code requested tool_call but returned no tool_name.")
-            raw_arguments = str(structured.get("tool_arguments_json", "") or "").strip()
-            try:
-                arguments = json.loads(raw_arguments or "{}")
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(f"Claude Code returned invalid tool_arguments_json: {raw_arguments}") from exc
-            if not isinstance(arguments, dict):
-                raise RuntimeError("Claude Code tool_arguments_json must decode to a JSON object.")
-            tool_calls = [
-                ToolCall(
-                    call_id=f"claude_code_call_{uuid4().hex[:12]}",
-                    name=tool_name,
-                    arguments=arguments,
-                )
-            ]
-            content = final_text or None
-            return CompletionResult(
-                message=ConversationMessage(role="assistant", content=content, tool_calls=tool_calls),
-                raw_response=body,
-            )
-        final_text = ""
-        if isinstance(structured, dict):
-            final_text = str(structured.get("final_text", "") or "")
-        if not final_text:
-            final_text = str(body.get("result", "") or "")
-        return CompletionResult(
-            message=ConversationMessage(role="assistant", content=final_text),
-            raw_response=body,
-        )

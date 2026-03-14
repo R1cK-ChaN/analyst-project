@@ -65,3 +65,4 @@ class AgentLoopResult:
     messages: list[ConversationMessage]
     final_text: str
     events: list[LoopEvent]
+    raw_response: dict[str, Any] = field(default_factory=dict)

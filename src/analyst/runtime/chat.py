@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from analyst.agents import RolePromptContext, get_role_spec
-from analyst.env import get_env_value
 from analyst.engine import (
     AgentExecutor,
     AgentRunRequest,
@@ -17,6 +16,7 @@ from analyst.engine import (
     build_agent_executor,
     coerce_agent_executor,
 )
+from analyst.engine.backends import ClaudeCodeProvider
 from analyst.engine.agent_loop import AgentLoopConfig
 from analyst.engine.backends.factory import build_llm_provider_from_env
 from analyst.engine.live_types import AgentTool, ConversationMessage, LLMProvider, MessageContent
@@ -240,6 +240,7 @@ def system_prompt_with_memory(
     tools: list[AgentTool] | None = None,
     native_tool_names: tuple[str, ...] = (),
     mcp_tool_names: tuple[str, ...] = (),
+    engine_context: str = "",
 ) -> str:
     del persona_mode
     resolved_executor = coerce_agent_executor(executor) if executor is not None else None
@@ -249,6 +250,9 @@ def system_prompt_with_memory(
         native_tool_names=native_tool_names,
         mcp_tool_names=mcp_tool_names,
     )
+    local_context = companion_local_context
+    if engine_context:
+        local_context = f"{local_context}\n\n{engine_context}".strip() if local_context else engine_context
     base_prompt = get_role_spec("companion").build_system_prompt(
         RolePromptContext(
             memory_context=memory_context,
@@ -256,7 +260,7 @@ def system_prompt_with_memory(
             user_lang=user_lang,
             group_context=group_context,
             proactive_kind=proactive_kind,
-            companion_local_context=companion_local_context,
+            companion_local_context=local_context,
         )
     )
     return f"{base_prompt}\n\n{capability_overlay}".strip() if capability_overlay else base_prompt
@@ -290,20 +294,12 @@ def _build_capability_overlay(
         lines.append("Shared analyst tools available now: " + ", ".join(mcp_tool_names))
     if executor and executor.backend is ExecutorBackend.CLAUDE_CODE and native_tool_names:
         lines.append(
-            "Use native Claude web tools for open-web lookup. Use shared analyst tools for product-owned market, calendar, archive, or portfolio data."
+            "Market context, regime state, and calendar are pre-loaded above. "
+            "Use native Claude web tools for open-web lookup. Use shared analyst tools for live data queries."
         )
     elif tool_names:
         lines.append("For time-sensitive market or news questions, call the appropriate live tool before answering.")
     return "\n".join(lines)
-
-
-def _claude_native_agent_enabled() -> bool:
-    return get_env_value("ANALYST_CLAUDE_CODE_USE_NATIVE_AGENT", default="").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 
 
 def _extract_media(messages: list[ConversationMessage]) -> list[MediaItem]:
@@ -348,6 +344,77 @@ def _extract_media(messages: list[ConversationMessage]) -> list[MediaItem]:
         ref = data.get("image_path") or data.get("image_url", "")
         if ref:
             media.append(MediaItem(kind="photo", url=ref, cleanup_paths=cleanup_paths))
+    return media
+
+
+def _extract_media_from_events(events: list[dict[str, Any]]) -> list[MediaItem]:
+    """Extract media from stream-json events (MCP tool call results in native mode)."""
+    media: list[MediaItem] = []
+    for event in events:
+        if event.get("type") != "assistant":
+            continue
+        message = event.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            tool_name = str(block.get("tool_use_name", "") or "")
+            # MCP tool names are prefixed with server name (e.g. "analyst__generate_image")
+            bare_name = tool_name.split("__", 1)[-1] if "__" in tool_name else tool_name
+            if bare_name not in {"generate_image", "generate_live_photo"}:
+                continue
+            raw_content = block.get("content")
+            text = ""
+            if isinstance(raw_content, str):
+                text = raw_content
+            elif isinstance(raw_content, list):
+                text = "".join(
+                    str(item.get("text", ""))
+                    for item in raw_content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                )
+            if not text:
+                continue
+            try:
+                data = json.loads(text)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(data, dict) or data.get("status") != "ok":
+                continue
+            cleanup_paths = tuple(
+                str(path)
+                for path in data.get("cleanup_paths", [])
+                if isinstance(path, str) and path
+            )
+            if bare_name == "generate_live_photo" and data.get("fallback_kind") != "image":
+                ref = (
+                    data.get("delivery_video_path")
+                    or data.get("delivery_video_url")
+                    or data.get("live_photo_video_path")
+                    or data.get("live_photo_video_url", "")
+                )
+                if ref:
+                    metadata = {
+                        key: str(data[key])
+                        for key in ("asset_id", "live_photo_image_path", "live_photo_video_path", "live_photo_manifest_path")
+                        if key in data and data[key]
+                    }
+                    media.append(
+                        MediaItem(
+                            kind="video",
+                            url=ref,
+                            cleanup_paths=cleanup_paths,
+                            metadata=metadata,
+                        )
+                    )
+                continue
+            ref = data.get("image_path") or data.get("image_url", "")
+            if ref:
+                media.append(MediaItem(kind="photo", url=ref, cleanup_paths=cleanup_paths))
     return media
 
 
@@ -396,6 +463,34 @@ def _extract_tool_audit(messages: list[ConversationMessage]) -> list[dict[str, A
                 entry[key] = value
         audit.append(entry)
     return audit
+
+
+def _build_engine_context(engine: OpenRouterAnalystEngine | Any) -> str:
+    sections: list[str] = []
+    try:
+        regime = engine.get_regime_summary()
+        if regime and getattr(regime, "body_markdown", ""):
+            sections.append(f"## Macro Regime\n{regime.body_markdown}")
+    except Exception:
+        pass
+    try:
+        calendar_items = engine.get_calendar(limit=5)
+        if calendar_items:
+            lines = [
+                f"- {item.indicator} ({item.country}) | "
+                f"预期 {item.expected or '待定'} | 前值 {item.previous or '未知'} | {item.notes}"
+                for item in calendar_items
+            ]
+            sections.append("## Upcoming Calendar\n" + "\n".join(lines))
+    except Exception:
+        pass
+    try:
+        briefing = engine.build_premarket_briefing()
+        if briefing and getattr(briefing, "body_markdown", ""):
+            sections.append(f"## Pre-Market Briefing\n{briefing.body_markdown}")
+    except Exception:
+        pass
+    return "\n\n".join(sections)
 
 
 SPLIT_MARKER = "[SPLIT]"
@@ -641,23 +736,6 @@ def _should_prefer_direct_visual_reply(
     )
 
 
-def _should_use_claude_native_agent(
-    *,
-    executor: AgentExecutor,
-    user_text: str,
-    user_content: MessageContent | None,
-) -> bool:
-    if executor.backend is not ExecutorBackend.CLAUDE_CODE:
-        return False
-    if not _claude_native_agent_enabled():
-        return False
-    if _requires_image_tool_path(user_text):
-        return False
-    if _has_attached_image(user_content) and not _is_visual_analysis_request(user_text):
-        return False
-    return True
-
-
 def resolve_turn_execution_plan(
     *,
     executor: AgentExecutor,
@@ -668,23 +746,24 @@ def resolve_turn_execution_plan(
     native_tool_names: tuple[str, ...] = (),
 ) -> TurnExecutionPlan:
     user_lang = _detect_language(user_text, fallback=preferred_language)
+    if executor.backend is ExecutorBackend.CLAUDE_CODE:
+        return TurnExecutionPlan(
+            user_lang=user_lang,
+            use_native_execution=True,
+            active_tools=[],
+            native_tool_names=native_tool_names or CLAUDE_CODE_NATIVE_TOOL_NAMES,
+            mcp_tool_names=executor.mcp_tool_names,
+        )
     prefer_direct_reply = _should_prefer_direct_visual_reply(
         user_text=user_text,
         user_content=user_content,
     )
-    use_native_agent = _should_use_claude_native_agent(
-        executor=executor,
-        user_text=user_text,
-        user_content=user_content,
-    )
-    use_native_execution = prefer_direct_reply or use_native_agent
-    native_tool_names_for_turn = CLAUDE_CODE_NATIVE_TOOL_NAMES if use_native_agent else ()
     return TurnExecutionPlan(
         user_lang=user_lang,
-        use_native_execution=use_native_execution,
-        active_tools=[] if use_native_execution else tools,
-        native_tool_names=native_tool_names or native_tool_names_for_turn,
-        mcp_tool_names=executor.mcp_tool_names if use_native_agent else (),
+        use_native_execution=prefer_direct_reply,
+        active_tools=[] if prefer_direct_reply else tools,
+        native_tool_names=native_tool_names,
+        mcp_tool_names=(),
     )
 
 
@@ -768,6 +847,7 @@ def generate_chat_reply(
     companion_local_context: str = "",
     persona_mode: str | ChatPersonaMode | None = None,
     native_tool_names: tuple[str, ...] = (),
+    engine: OpenRouterAnalystEngine | Any | None = None,
 ) -> ChatReply:
     del persona_mode
     executor = coerce_agent_executor(agent_loop)
@@ -783,6 +863,9 @@ def generate_chat_reply(
         preferred_language=preferred_language,
         native_tool_names=native_tool_names,
     )
+    engine_context = ""
+    if engine is not None and executor.backend is ExecutorBackend.CLAUDE_CODE:
+        engine_context = _build_engine_context(engine)
     system_prompt = system_prompt_with_memory(
         memory_context,
         user_text=user_text,
@@ -793,6 +876,7 @@ def generate_chat_reply(
         tools=plan.active_tools,
         native_tool_names=plan.native_tool_names,
         mcp_tool_names=plan.mcp_tool_names,
+        engine_context=engine_context,
     )
     result = executor.run_turn(
         AgentRunRequest(
@@ -813,6 +897,9 @@ def generate_chat_reply(
     if not response_text:
         response_text = "嗯"
     media = _extract_media(result.messages)
+    if not media:
+        raw_events = result.raw_response.get("events", []) if isinstance(result.raw_response, dict) else []
+        media = _extract_media_from_events(raw_events)
     tool_audit = _extract_tool_audit(result.messages)
     if contains_image_placeholder and not media:
         repaired_media, repaired_audit = _repair_missing_image_media(

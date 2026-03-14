@@ -10,12 +10,15 @@ from analyst.tools import (
     build_article_tool,
     build_country_indicators_tool,
     build_fed_comms_tool,
+    build_image_gen_tool,
     build_indicator_history_tool,
     build_live_calendar_tool,
     build_live_markets_tool,
     build_live_news_tool,
+    build_optional_live_photo_tool,
     build_portfolio_holdings_tool,
     build_portfolio_risk_tool,
+    build_portfolio_sync_tool,
     build_rate_expectations_tool,
     build_reference_rates_tool,
     build_research_search_tool,
@@ -36,6 +39,13 @@ class SharedMcpToolSpec:
 
 def _stateless(builder: Callable[[], AgentTool]) -> ToolBuilder:
     def _build(_store: SQLiteEngineStore | None) -> AgentTool:
+        return builder()
+
+    return _build
+
+
+def _optional_stateless(builder: Callable[[], AgentTool | None]) -> ToolBuilder:
+    def _build(_store: SQLiteEngineStore | None) -> AgentTool | None:
         return builder()
 
     return _build
@@ -70,6 +80,15 @@ STORE_SHARED_MCP_TOOL_NAMES: tuple[str, ...] = (
     "get_portfolio_holdings",
 )
 
+MEDIA_SHARED_MCP_TOOL_NAMES: tuple[str, ...] = (
+    "generate_image",
+    "generate_live_photo",
+)
+
+MUTATION_SHARED_MCP_TOOL_NAMES: tuple[str, ...] = (
+    "sync_portfolio_from_broker",
+)
+
 
 SHARED_MCP_TOOL_SPECS: dict[str, SharedMcpToolSpec] = {
     "fetch_live_news": SharedMcpToolSpec("fetch_live_news", _stateless(build_live_news_tool)),
@@ -86,6 +105,9 @@ SHARED_MCP_TOOL_SPECS: dict[str, SharedMcpToolSpec] = {
     "search_research_notes": SharedMcpToolSpec("search_research_notes", _store_bound(build_research_search_tool), requires_store=True),
     "get_portfolio_risk": SharedMcpToolSpec("get_portfolio_risk", _store_bound(build_portfolio_risk_tool), requires_store=True),
     "get_portfolio_holdings": SharedMcpToolSpec("get_portfolio_holdings", _store_bound(build_portfolio_holdings_tool), requires_store=True),
+    "generate_image": SharedMcpToolSpec("generate_image", _stateless(build_image_gen_tool)),
+    "generate_live_photo": SharedMcpToolSpec("generate_live_photo", _optional_stateless(build_optional_live_photo_tool)),
+    "sync_portfolio_from_broker": SharedMcpToolSpec("sync_portfolio_from_broker", _store_bound(build_portfolio_sync_tool), requires_store=True),
 }
 
 

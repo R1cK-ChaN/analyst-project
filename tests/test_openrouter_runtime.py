@@ -210,39 +210,14 @@ class OpenRouterProviderTest(unittest.TestCase):
 
 
 class ClaudeCodeProviderTest(unittest.TestCase):
-    def test_complete_without_tools_uses_structured_output(self) -> None:
-        completed = Mock(returncode=0, stdout=json.dumps({"structured_output": {"final_text": "ok"}}), stderr="")
-        runner = Mock(return_value=completed)
-        provider = ClaudeCodeProvider(
-            ClaudeCodeConfig(oauth_token="token", model="sonnet"),
-            runner=runner,
-        )
-
-        result = provider.complete(
-            system_prompt="system",
-            messages=[ConversationMessage(role="user", content="hi")],
-            tools=[],
-            max_tokens=100,
-            temperature=0.2,
-        )
-
-        self.assertEqual(result.message.content, "ok")
-        command = runner.call_args.args[0]
-        self.assertIn("--tools", command)
-        self.assertIn("", command)
-
-    def test_complete_with_tools_returns_tool_calls(self) -> None:
+    def test_complete_native_always_uses_stream_json(self) -> None:
         completed = Mock(
             returncode=0,
-            stdout=json.dumps(
-                {
-                    "structured_output": {
-                        "action": "tool_call",
-                        "final_text": "",
-                        "tool_name": "web_search",
-                        "tool_arguments_json": "{\"query\":\"rates today\"}",
-                    }
-                }
+            stdout="\n".join(
+                [
+                    json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "ok"}]}}),
+                    json.dumps({"type": "result", "is_error": False, "result": "ok"}),
+                ]
             ),
             stderr="",
         )
@@ -251,67 +226,55 @@ class ClaudeCodeProviderTest(unittest.TestCase):
             ClaudeCodeConfig(oauth_token="token", model="sonnet"),
             runner=runner,
         )
-        tool = AgentTool(
-            name="web_search",
-            description="Search the web",
-            parameters={"type": "object", "properties": {"query": {"type": "string"}}},
-            handler=lambda _: {},
-        )
 
-        result = provider.complete(
+        result = provider.complete_native(
             system_prompt="system",
             messages=[ConversationMessage(role="user", content="hi")],
-            tools=[tool],
-            max_tokens=100,
-            temperature=0.2,
         )
 
-        self.assertEqual(len(result.message.tool_calls), 1)
-        self.assertEqual(result.message.tool_calls[0].name, "web_search")
-        self.assertEqual(result.message.tool_calls[0].arguments, {"query": "rates today"})
+        self.assertEqual(result.message.content, "ok")
+        command = runner.call_args.args[0]
+        self.assertIn("--input-format", command)
+        self.assertIn("stream-json", command)
+        self.assertIn("--max-turns", command)
 
-    def test_complete_materializes_image_blocks_for_claude_code(self) -> None:
-        completed = Mock(returncode=0, stdout="red\n", stderr="")
+    def test_complete_native_includes_max_turns(self) -> None:
+        completed = Mock(
+            returncode=0,
+            stdout="\n".join(
+                [
+                    json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "ok"}]}}),
+                    json.dumps({"type": "result", "is_error": False, "result": "ok"}),
+                ]
+            ),
+            stderr="",
+        )
         runner = Mock(return_value=completed)
         provider = ClaudeCodeProvider(
-            ClaudeCodeConfig(oauth_token="token", model="sonnet"),
+            ClaudeCodeConfig(oauth_token="token", model="sonnet", max_turns=10),
             runner=runner,
         )
 
-        result = provider.complete(
+        provider.complete_native(
             system_prompt="system",
-            messages=[
-                ConversationMessage(
-                    role="user",
-                    content=[
-                        {"type": "text", "text": "What color is this image? Answer one word."},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": "data:image/png;base64,"
-                                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jkO8AAAAASUVORK5CYII="
-                            },
-                        },
-                    ],
-                )
-            ],
-            tools=[],
-            max_tokens=100,
-            temperature=0.2,
+            messages=[ConversationMessage(role="user", content="hi")],
         )
 
-        self.assertEqual(result.message.content, "red")
         command = runner.call_args.args[0]
-        self.assertIn("--add-dir", command)
-        prompt = command[-1]
-        marker = "Attached local image file: "
-        self.assertIn(marker, prompt)
-        image_line = next(line for line in prompt.splitlines() if line.startswith(marker))
-        image_path = Path(image_line.split(marker, 1)[1].split(". Inspect it directly", 1)[0].strip())
-        self.assertFalse(image_path.exists())
+        max_turns_idx = command.index("--max-turns")
+        self.assertEqual(command[max_turns_idx + 1], "10")
 
     def test_complete_native_wires_mcp_config_for_claude_code(self) -> None:
-        completed = Mock(returncode=0, stdout="ok\n", stderr="")
+        completed = Mock(
+            returncode=0,
+            stdout="\n".join(
+                [
+                    json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "ok"}]}}),
+                    json.dumps({"type": "result", "is_error": False, "result": "ok"}),
+                ]
+            ),
+            stderr="",
+        )
         runner = Mock(return_value=completed)
         provider = ClaudeCodeProvider(
             ClaudeCodeConfig(oauth_token="token", model="sonnet"),
