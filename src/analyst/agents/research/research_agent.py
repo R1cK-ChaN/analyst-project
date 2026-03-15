@@ -98,6 +98,8 @@ def _build_research_tools(dependencies: RoleDependencies) -> list[AgentTool]:
     kit.add(build_rate_expectations_tool())
     kit.add(build_vix_regime_tool())
     kit.add(build_python_analysis_tool())
+    from analyst.tools._analysis_operators import build_analysis_operator_tool
+    kit.add(build_analysis_operator_tool(dependencies.store))
     if dependencies.store is not None:
         from analyst.tools._artifact_cache import build_artifact_lookup_tool, build_artifact_store_tool
         kit.add(build_artifact_lookup_tool(dependencies.store))

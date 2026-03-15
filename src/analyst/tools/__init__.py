@@ -1,3 +1,4 @@
+from ._analysis_operators import build_analysis_operator_tool
 from ._artifact_cache import build_artifact_lookup_tool, build_artifact_store_tool
 from ._image_gen import ImageGenConfig, build_image_gen_tool
 from ._live_article import build_article_tool
@@ -32,6 +33,7 @@ __all__ = [
     "SeedDanceConfig",
     "ToolKit",
     "WebSearchConfig",
+    "build_analysis_operator_tool",
     "build_artifact_lookup_tool",
     "build_artifact_store_tool",
     "build_article_tool",
