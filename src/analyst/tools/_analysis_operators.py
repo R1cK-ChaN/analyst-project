@@ -27,8 +27,10 @@ class AnalysisOperatorHandler:
         inputs = arguments.get("inputs") or {}
         parameters = arguments.get("parameters") or {}
 
+        context = {"store": self._store} if self._store else {}
+
         try:
-            result = run_operator(operator, inputs, parameters)
+            result = run_operator(operator, inputs, parameters, context=context)
         except KeyError as exc:
             return {"error": str(exc)}
         except Exception as exc:

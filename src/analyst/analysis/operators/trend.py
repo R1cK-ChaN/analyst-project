@@ -39,6 +39,7 @@ def compute_trend(*, inputs: dict[str, Any], parameters: dict[str, Any]) -> dict
 
     return {
         "operator": "trend",
+        "result_type": "metric",
         "direction": direction,
         "slope": round(slope, 6),
         "intercept": round(intercept, 4),
@@ -56,6 +57,6 @@ register_operator(OperatorSpec(
     description="Compute linear trend direction and slope over a numeric series.",
     required_inputs=("values",),
     optional_parameters=("window",),
-    output_type="trend_result",
+    output_type="metric",
     handler=compute_trend,
 ))

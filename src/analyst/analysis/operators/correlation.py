@@ -45,6 +45,7 @@ def compute_correlation(*, inputs: dict[str, Any], parameters: dict[str, Any]) -
 
     return {
         "operator": "correlation",
+        "result_type": "metric",
         "correlation": round(corr, 4),
         "strength": strength,
         "direction": "positive" if corr > 0 else "negative" if corr < 0 else "none",
@@ -60,6 +61,6 @@ register_operator(OperatorSpec(
     description="Compute Pearson correlation between two numeric series with strength classification.",
     required_inputs=("series_a", "series_b"),
     optional_parameters=("label_a", "label_b"),
-    output_type="correlation_result",
+    output_type="metric",
     handler=compute_correlation,
 ))

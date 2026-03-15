@@ -40,6 +40,7 @@ def rolling_stat(*, inputs: dict[str, Any], parameters: dict[str, Any]) -> dict[
 
     return {
         "operator": "rolling_stat",
+        "result_type": "series",
         "stat": stat,
         "window": window,
         "values": rolling,
@@ -54,6 +55,6 @@ register_operator(OperatorSpec(
     description="Compute rolling window statistics (mean, std, min, max, median) over a numeric series.",
     required_inputs=("values",),
     optional_parameters=("window", "stat"),
-    output_type="rolling_result",
+    output_type="series",
     handler=rolling_stat,
 ))

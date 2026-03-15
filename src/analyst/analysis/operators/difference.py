@@ -1,4 +1,4 @@
-"""compute_spread — spread (difference) between two series with z-score."""
+"""difference — spread/difference between two series with z-score and signal."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import numpy as np
 from .registry import OperatorSpec, register_operator
 
 
-def compute_spread(*, inputs: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
+def difference(*, inputs: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
     series_a = inputs.get("series_a")
     series_b = inputs.get("series_b")
     if not series_a or not series_b:
@@ -39,15 +39,16 @@ def compute_spread(*, inputs: dict[str, Any], parameters: dict[str, Any]) -> dic
     label_b = str(parameters.get("label_b", "B"))
 
     return {
-        "operator": "spread",
-        "current_spread": round(current, 4),
-        "mean_spread": round(mean, 4),
+        "operator": "difference",
+        "result_type": "metric",
+        "current": round(current, 4),
+        "mean": round(mean, 4),
         "std": round(std, 4),
         "z_score": round(z_score, 2),
         "signal": signal,
         "direction": "widening" if len(spread) >= 2 and abs(spread[-1]) > abs(spread[-2]) else "narrowing",
-        "min_spread": round(float(np.nanmin(spread)), 4),
-        "max_spread": round(float(np.nanmax(spread)), 4),
+        "min": round(float(np.nanmin(spread)), 4),
+        "max": round(float(np.nanmax(spread)), 4),
         "n_points": min_len,
         "label_a": label_a,
         "label_b": label_b,
@@ -55,11 +56,11 @@ def compute_spread(*, inputs: dict[str, Any], parameters: dict[str, Any]) -> dic
 
 
 register_operator(OperatorSpec(
-    name="spread",
+    name="difference",
     operator_type="relation",
-    description="Compute spread between two series with z-score, signal classification, and direction.",
+    description="Compute spread/difference between two series with z-score and signal classification.",
     required_inputs=("series_a", "series_b"),
     optional_parameters=("label_a", "label_b"),
-    output_type="spread_result",
-    handler=compute_spread,
+    output_type="metric",
+    handler=difference,
 ))

@@ -30,6 +30,7 @@ def compare_series(*, inputs: dict[str, Any], parameters: dict[str, Any]) -> dic
 
     return {
         "operator": "compare",
+        "result_type": "metric",
         "n_points": min_len,
         "summary": {
             label_a: {
@@ -63,6 +64,6 @@ register_operator(OperatorSpec(
     description="Compare two numeric series with difference, ratio, and summary statistics.",
     required_inputs=("series_a", "series_b"),
     optional_parameters=("label_a", "label_b"),
-    output_type="compare_result",
+    output_type="metric",
     handler=compare_series,
 ))
