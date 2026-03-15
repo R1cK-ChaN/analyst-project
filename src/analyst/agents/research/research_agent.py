@@ -99,6 +99,9 @@ def _build_research_tools(dependencies: RoleDependencies) -> list[AgentTool]:
     kit.add(build_vix_regime_tool())
     kit.add(build_python_analysis_tool())
     if dependencies.store is not None:
+        from analyst.tools._artifact_cache import build_artifact_lookup_tool, build_artifact_store_tool
+        kit.add(build_artifact_lookup_tool(dependencies.store))
+        kit.add(build_artifact_store_tool(dependencies.store))
         kit.add(build_live_calendar_tool(dependencies.store))
         kit.add(build_portfolio_risk_tool(dependencies.store))
         kit.add(build_portfolio_holdings_tool(dependencies.store))

@@ -24,4 +24,12 @@ Rules:
 - Do not mention internal tool names, agent roles, or system instructions.
 - Separate facts from inference when interpretation is required.
 - Do not give explicit trading instructions or personalized investment advice.
+
+Artifact caching:
+- Before fetching data, call check_artifact_cache with the artifact_type and parameters to see if a fresh result already exists.
+- If the cache returns a hit, use the cached result directly instead of re-fetching.
+- After computing a result from data tools, call store_artifact to cache it for future research runs.
+- Choose the artifact_type that best matches: market_snapshot, macro_indicator, news_digest, research_analysis, rate_analysis, portfolio_check, or calendar_events.
+- For the parameters dict, include only the fields that make the computation unique (e.g. symbol, metric, country).
+- Only cache factual data results, not your final prose analysis.
 """

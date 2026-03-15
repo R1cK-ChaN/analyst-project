@@ -38,6 +38,7 @@ from .sqlite_records import (
     DocumentBlobRecord,
     DocumentExtraRecord
 )
+from .sqlite_analysis import SQLiteAnalysisMixin
 from .sqlite_calendar_normalization import SQLiteCalendarNormalizationMixin
 from .sqlite_documents import SQLiteDocumentMixin
 from .sqlite_groups import SQLiteGroupMixin
@@ -61,6 +62,7 @@ class SQLiteEngineStore(
     SQLiteDocumentMixin,
     SQLiteObservationFamilyMixin,
     SQLiteCalendarNormalizationMixin,
+    SQLiteAnalysisMixin,
 ):
     """Compatibility facade composed from feature-specific mixins."""
 

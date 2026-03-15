@@ -1,3 +1,4 @@
+from ._artifact_cache import build_artifact_lookup_tool, build_artifact_store_tool
 from ._image_gen import ImageGenConfig, build_image_gen_tool
 from ._live_article import build_article_tool
 from ._live_calendar import build_live_calendar_tool
@@ -31,6 +32,8 @@ __all__ = [
     "SeedDanceConfig",
     "ToolKit",
     "WebSearchConfig",
+    "build_artifact_lookup_tool",
+    "build_artifact_store_tool",
     "build_article_tool",
     "build_fed_comms_tool",
     "build_image_gen_tool",

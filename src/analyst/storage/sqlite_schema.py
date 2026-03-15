@@ -691,6 +691,30 @@ class SQLiteSchemaMixin:
                 )
                 """
             )
+            # -- Analysis artifact cache -------------------------------------------
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS analysis_artifacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    artifact_id TEXT NOT NULL UNIQUE,
+                    artifact_type TEXT NOT NULL,
+                    parameters_json TEXT NOT NULL DEFAULT '{}',
+                    time_context_json TEXT NOT NULL DEFAULT '{}',
+                    dependencies_json TEXT NOT NULL DEFAULT '[]',
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_analysis_artifacts_type "
+                "ON analysis_artifacts(artifact_type, created_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_analysis_artifacts_expires "
+                "ON analysis_artifacts(expires_at)"
+            )
             # -- Three-layer memory: group tables --------------------------------
             connection.execute(
                 """
