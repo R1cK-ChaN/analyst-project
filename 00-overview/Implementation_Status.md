@@ -162,9 +162,46 @@ Implemented in `src/analyst/sandbox/`:
 - Docker security constraints: `--network none`, `--read-only`, `--tmpfs /tmp`, `--tmpfs /workspace`, `--memory=512m`, `--cpus=1`, no host env vars passed (`env={}`)
 - graceful degradation: if Docker is unavailable, the tool returns a structured error dict instead of crashing
 
+### Analysis layer
+
+Implemented in `src/analyst/analysis/`:
+
+- **artifact cache** (`artifact.py`, `store.py`):
+  - `ArtifactIdentity`: deterministic 16-hex-char SHA-256 ID from (artifact_type, parameters, time_context)
+  - `Artifact` frozen dataclass with result dict, dependencies list, created_at, expires_at
+  - `DEFAULT_TTL_SECONDS`: per-type TTL (market_snapshot: 1h, macro_indicator: 24h, research_analysis: 4h, etc.)
+  - SQLite-backed storage via `SQLiteAnalysisMixin` (upsert, get_fresh with TTL check, expire_stale, list_by_type)
+  - `ArtifactStore` convenience wrapper for the mixin
+
+- **operator algebra** (`operators/`): 13 deterministic compute operators across 6 categories:
+  - Data: `fetch_series` (wraps store indicator history → typed Series), `fetch_dataset` (calendar/news/fed/prices → typed Dataset)
+  - Transform: `pct_change` (MoM/QoQ/YoY), `rolling_stat` (mean/std/min/max/median), `resample` (frequency change), `align` (time-axis alignment), `combine` (multi-series aggregation)
+  - Metric: `trend` (linear direction + slope), `difference` (spread with z-score), `regression` (OLS with R²)
+  - Relation: `compare` (two-series summary), `correlation` (Pearson r with strength)
+  - Signal: `threshold_signal` (classification with crossover detection)
+  - All operators run in host process via numpy — no Docker overhead
+  - Auto-cache results as artifacts via the artifact cache
+
+- **type system** (`operators/types.py`):
+  - 5 canonical types: Series, Dataset, Metric, Signal, Text
+  - Every `OperatorSpec` declares `input_types` (what type each input expects) and `output_type` (what it produces)
+  - `is_compatible()` with coercion rules (Dataset can downcast to Series)
+  - `check_composability()` validates upstream → downstream type compatibility
+  - `validate_chain()` checks two OperatorSpecs can be composed
+  - `run_operator()` auto-validates typed inputs at runtime
+  - `TypeMismatchError` with clear messages for debugging
+
+- **operator registry** (`operators/registry.py`):
+  - `OperatorSpec` frozen dataclass with name, operator_type, description, input_types, output_type, handler
+  - `OPERATOR_REGISTRY` global dict of all registered operators
+  - `run_operator()` with context injection for store-dependent operators (fetch_series, fetch_dataset)
+  - Future-ready for planner validation and graph builder
+
+- **soft pipeline policy**: research agent system prompt enforces PLAN → ACQUIRE → COMPUTE → INTERPRET workflow with tool priority (analysis operators > data tools > python sandbox)
+
 ### Tools layer
 
-Implemented in `src/analyst/tools/` — 14 tool builders across 13 files:
+Implemented in `src/analyst/tools/` — 17 tool builders across 16 files:
 
 - `ToolKit` composable builder (`_registry.py`): per-agent tool assembly with `add()`, `merge()`, and `to_list()` — not a global registry, each agent builds its own kit
 - **shared MCP bridge** (`src/analyst/mcp/`): local stdio MCP server exposing a safe read-only subset of analyst-owned tools to Claude Code
@@ -213,6 +250,8 @@ Implemented in `src/analyst/tools/` — 14 tool builders across 13 files:
   - if SeedDance video generation fails after a selfie still was generated, the tool falls back to that still image; if video generation succeeds but Apple packaging is unavailable, the tool still returns a motion video result
   - `build_optional_live_photo_tool()` registers whenever SeedDance is configured; unsupported runtimes log that they are running in motion-video mode
 - **sandboxed Python analysis tool** (`_python_analysis.py`): `run_python_analysis` — executes Python code in a Docker sandbox for data analysis, statistical calculations, and chart generation; code is AST-validated via `sandbox/policy.py` before execution; available to research agent, user chat surface, and `data_deep_dive` / `research_lookup` sub-agents
+- **analysis operator tool** (`_analysis_operators.py`): `run_analysis` — unified dispatch tool for 13 built-in operators; auto-caches results as artifacts; preferred over python sandbox for standard computations
+- **artifact cache tools** (`_artifact_cache.py`): `check_artifact_cache` (lookup before compute) + `store_artifact` (cache after compute) — enables cross-run result reuse with TTL-based freshness
 - both `LiveAnalystEngine._build_tools()` and `build_user_chat_tools()` now use `ToolKit` to assemble their tool lists, with universal tools (web search, live calendar, web fetch) composed per-agent
 - all live-data tool builders route through the `MacroDataClient` seam — no direct scraper imports in `tools/`
 - the user chat agent's `ToolKit` includes all 13 tools when live-photo generation is configured (6 live data + 3 universal + live calendar + portfolio sync + image generation + live-photo generation); otherwise the motion tool is omitted without breaking startup
@@ -245,8 +284,10 @@ Implemented in `src/analyst/storage/`:
 
 Validated on March 15, 2026:
 
-- full test suite: `450 passed` (scraper tests moved to `macro-data-service`)
+- full test suite: `528 passed` (scraper tests moved to `macro-data-service`)
 - sandbox tests: `36 passed` (policy, container runner, manager, tool — all mocked, no Docker needed)
+- artifact cache tests: `24 passed` (identity determinism, storage round-trip, TTL expiry, tool handlers)
+- analysis operator tests: `54 passed` (all 13 operators, type system, composability validation, registry, tool handler)
 - live sandbox tests: 8 scenarios verified against real Docker (numpy, pandas, scipy, matplotlib, data pass-through, policy rejection, runtime error, stdout capture)
 
 ### Memory layer
@@ -331,10 +372,12 @@ Implemented in `src/analyst/integration/`:
 
 ### Tests
 
-Implemented in `tests/` — 450 tests total:
+Implemented in `tests/` — 528 tests total:
 
 - `test_broker_ibkr.py` (54 tests) for broker adapter layer: IBKR, Longbridge, Tiger position mapping + session validation + factory
 - `test_sandbox.py` (36 tests) for sandbox policy (AST validation), container runner (Docker CLI mock), manager (orchestration), and tool builder
+- `test_artifact_cache.py` (24 tests) for artifact identity determinism, SQLite storage round-trip, TTL expiry, upsert overwrite, lookup/store tool handlers
+- `test_analysis_operators.py` (54 tests) for all 13 operators, type system (composability, coercion, mismatch detection), registry dispatch, auto-caching, tool builder schema
 - `test_memory.py` for research/trader/sales pipeline memory behavior, client isolation, delivery gating, profile accumulation, emotional trend/stress level persistence
 - `test_product_layer.py` for product-layer smoke tests
 - `test_telegram.py` for Telegram formatter, truncation, routing, bot wiring, agent-loop chat flow, media delivery cleanup
@@ -429,8 +472,9 @@ Done:
 - regime state scoring with clamped numeric axes and cross-asset implications
 - environment resolver with multi-file `.env` fallback
 - CLI commands: refresh, schedule, flash, briefing, wrap, regime-refresh, live-calendar, news-refresh, news-latest, news-search, news-feeds, portfolio-import, portfolio-risk, portfolio-sync
-- agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, surprise summaries, recent news, news search, web search, live calendar fetch, portfolio risk, portfolio holdings, VIX regime, portfolio sync from broker, image generation, live-photo generation, and sandboxed Python analysis
-- unified tools layer (`src/analyst/tools/`): `ToolKit` composable builder + `web_search` via OpenRouter plugins API + `fetch_live_calendar` via MacroDataClient + `generate_image` via Volcengine Ark + `generate_live_photo` via SeedDance + `run_python_analysis` via Docker sandbox
+- agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, surprise summaries, recent news, news search, web search, live calendar fetch, portfolio risk, portfolio holdings, VIX regime, portfolio sync from broker, image generation, live-photo generation, sandboxed Python analysis, analysis operators (13 built-in), and artifact cache (lookup + store)
+- unified tools layer (`src/analyst/tools/`): `ToolKit` composable builder + `web_search` via OpenRouter plugins API + `fetch_live_calendar` via MacroDataClient + `generate_image` via Volcengine Ark + `generate_live_photo` via SeedDance + `run_python_analysis` via Docker sandbox + `run_analysis` via operator registry + `check_artifact_cache` / `store_artifact` via SQLite artifact store
+- research agent has 20 tools total with soft pipeline policy (PLAN → ACQUIRE → COMPUTE → INTERPRET) and typed operator algebra for composable analysis
 - local MCP bridge (`src/analyst/mcp/`) so Claude Code native turns can use selected analyst-owned read-only tools without duplicating tool logic
 - portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime, agent-actionable tools
 - auto-refresh staleness check on `get_today_calendar` and `get_upcoming_calendar` tools (refreshes calendar if data is >1 hour stale)

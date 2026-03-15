@@ -10,7 +10,10 @@ Current status on March 15, 2026:
 - the implemented source set is FRED, Fed RSS, Investing.com, ForexFactory, TradingEconomics, yfinance, and macro-finance RSS news ingestion
 - the news layer now includes article fetch/extraction, structured metadata, SQLite persistence, FTS-backed search, and time-decay ranking
 - the memory layer records all chat messages and extracts 17 client profile dimensions that accumulate across conversations, including emotional trend tracking, stress level monitoring, and personal facts memory (up to 20 facts with recency-refresh dedup)
-- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 14 tool builders (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation + sandboxed Python analysis); all tools route live data operations through the `MacroDataClient` boundary, and a shared MCP bridge exposes a safe read-only subset to Claude Code native turns
+- a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 17 tool builders (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation + sandboxed Python analysis + analysis operators + artifact cache lookup + artifact cache store); all tools route live data operations through the `MacroDataClient` boundary, and a shared MCP bridge exposes a safe read-only subset to Claude Code native turns
+- an analysis operator algebra (`src/analyst/analysis/operators/`) provides 13 deterministic compute operators with typed I/O (Series/Dataset/Metric/Signal): data (fetch_series, fetch_dataset), transform (pct_change, rolling_stat, resample, align, combine), metric (trend, difference, regression), relation (compare, correlation), signal (threshold_signal); operators run in host process via numpy, auto-cache results as artifacts, and are accessible through the unified `run_analysis` tool
+- an artifact cache (`src/analyst/analysis/`) provides deterministic identity (SHA-256), SQLite-backed storage with TTL, and `check_artifact_cache` / `store_artifact` tools so the research agent can reuse prior computation results
+- the research agent system prompt enforces a soft pipeline policy (PLAN → ACQUIRE → COMPUTE → INTERPRET) and tool priority (analysis operators > data tools > python sandbox)
 - the `ingestion/` package has been fully removed from `analyst-project` — all scraper and data-fetching code now lives exclusively in the standalone `macro-data-service` repo; tools and storage have zero ingestion imports; utility functions (`normalize_indicator_name`, `canonicalize_url`, `content_hash`) were extracted to `src/analyst/utils.py`
 - a Docker-based sandbox module (`src/analyst/sandbox/`) provides isolated Python code execution for agent-driven data analysis; code is AST-validated against a security policy, then executed in an ephemeral container with `--network none`, `--read-only`, and resource limits; the `run_python_analysis` tool is available to the research agent, user chat, and data_deep_dive / research_lookup sub-agents
 - the execution layer is now split between product-owned host-loop orchestration and provider-native execution: OpenRouter/Anthropic models run through the Python tool-calling loop, while Claude Code can run as a native agent and still access selected analyst tools via the local MCP bridge; the layered conversation stack now lives under `src/analyst/runtime/` (`chat.py`, `conversation_service.py`, `environment_adapter.py`, `platform/telegram.py`, and `capabilities.py`), backend imports are fronted through `src/analyst/engine/backends/`, and `src/analyst/delivery/user_chat.py` remains as a compatibility facade for legacy callers
@@ -37,6 +40,8 @@ analyst-project/
 ├── tests/                          ← LOCAL VALIDATION
 │   ├── test_broker_ibkr.py         Broker adapter layer: IBKR, Longbridge, Tiger position mapping + session + factory
 │   ├── test_sandbox.py             Sandbox policy, container runner, manager, and tool tests (36 tests, all mocked)
+│   ├── test_artifact_cache.py      Artifact identity, SQLite storage, TTL, lookup/store tools (24 tests)
+│   ├── test_analysis_operators.py  13 operators, type system, registry, composability validation (54 tests)
 │   ├── test_product_layer.py       End-to-end contract and routing smoke tests
 │   ├── test_telegram.py            Telegram formatter, bot wiring, and transport regression tests
 │   └── test_ws1_engine.py          WS1 live engine + calendar: store, env, CLI, regime parsing
@@ -49,7 +54,8 @@ analyst-project/
 │   ├── macro_data/                 Macro-data client boundary + local compatibility service
 │   ├── information/                Local information layer using bundled demo data
 │   ├── runtime/                    Runtime and prompt profiles, including chat orchestration, environment adapters, platform policy, and capability registry
-│   ├── tools/                      14 agent tools — ToolKit builder + live data scrapers + web search/fetch + calendar + portfolio sync + image gen + live photo + sandboxed Python analysis
+│   ├── analysis/                   Artifact cache + 13 analysis operators with typed I/O + operator registry
+│   ├── tools/                      17 agent tools — ToolKit builder + live data scrapers + web search/fetch + calendar + portfolio sync + image gen + live photo + sandbox + analysis operators + artifact cache
 │   ├── sandbox/                    Docker-based sandboxed Python execution (policy, container runner, manager, Dockerfile)
 │   ├── mcp/                        Local MCP bridge exposing selected analyst-owned tools to Claude Code
 │   ├── engine/                     Engine service boundary + live engine + executor layer + host loop + provider adapters, with backend namespace in `engine/backends/`
@@ -196,8 +202,9 @@ This validates the current standalone implementation:
 - WS1 live engine: macro-data client boundary, calendar/news query surface, executor split (host loop vs Claude Code native path), backend namespace under `engine/backends/`, and provider adapters
 - extracted service communication: standalone `macro-data-service` HTTP API verified against the agent via `tests/test_macro_data_integration.py`
 - sub-agent execution: scoped tag extraction uses word-boundary matching, memory retrieval respects punctuation boundaries, and both success and error runs are audited with preserved scope tags
-- unified tools layer: ToolKit composable builder + 14 tools (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + Volcengine image generation + Seedance motion/live-photo generation + sandboxed Python analysis) plus a local MCP bridge for sharing selected read-only analyst tools with Claude Code
+- unified tools layer: ToolKit composable builder + 17 tools (6 live data + web search/fetch + calendar + article + portfolio sync + image gen + live photo + sandbox + analysis operators + artifact cache) plus a local MCP bridge for sharing selected read-only analyst tools with Claude Code
 - Docker-based sandbox: AST policy validation + ephemeral container execution (--network none, --read-only, resource-limited) for agent-driven Python data analysis
+- analysis operator algebra: 13 deterministic operators with typed I/O (Series/Dataset/Metric/Signal), composability validation, auto-caching, and soft pipeline policy (PLAN → ACQUIRE → COMPUTE → INTERPRET)
 - portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime signals, agent-actionable tools
 - WeCom and Telegram formatters
 - Telegram agent bot with persona (陈襄), group chat support, 13 host-loop tools, inbound image reading from user photos/image documents, Seedream image generation with AI watermark disabled by default and photo delivery, Seedance motion-selfie delivery as Telegram video, and Claude Code native-agent support behind `ANALYST_CLAUDE_CODE_USE_NATIVE_AGENT=1`
