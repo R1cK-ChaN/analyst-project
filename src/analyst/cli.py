@@ -84,36 +84,6 @@ def build_parser() -> argparse.ArgumentParser:
     news_search.add_argument("query")
     news_search.add_argument("--limit", type=int, default=20)
 
-    news_feeds_parser = subparsers.add_parser("news-feeds")
-    news_feeds_parser.add_argument("--category", default=None)
-
-    oecd_dataflows = subparsers.add_parser("oecd-dataflows")
-    oecd_dataflows.add_argument("--query", default=None)
-    oecd_dataflows.add_argument("--limit", type=int, default=20)
-    oecd_dataflows.add_argument("--agency-prefix", default="OECD")
-
-    oecd_structure = subparsers.add_parser("oecd-structure")
-    oecd_structure.add_argument("--dataflow", required=True)
-    oecd_structure.add_argument("--agency-id", default="OECD.SDD.STES")
-    oecd_structure.add_argument("--version", default="latest")
-
-    oecd_generate = subparsers.add_parser("oecd-generate-configs")
-    oecd_generate.add_argument("--dataflow", action="append", dest="dataflows", default=None)
-    oecd_generate.add_argument("--agency-id", default=None)
-    oecd_generate.add_argument("--query", default=None)
-    oecd_generate.add_argument("--agency-prefix", default="OECD")
-    oecd_generate.add_argument("--dataflow-limit", type=int, default=3)
-    oecd_generate.add_argument("--series-per-dataflow", type=int, default=3)
-
-    oecd_refresh = subparsers.add_parser("oecd-refresh-catalog")
-    oecd_refresh.add_argument("--dataflow", action="append", dest="dataflows", default=None)
-    oecd_refresh.add_argument("--agency-id", default=None)
-    oecd_refresh.add_argument("--query", default=None)
-    oecd_refresh.add_argument("--agency-prefix", default="OECD")
-    oecd_refresh.add_argument("--dataflow-limit", type=int, default=3)
-    oecd_refresh.add_argument("--latest-observations", type=int, default=1)
-    oecd_refresh.add_argument("--sleep-seconds", type=float, default=1.2)
-    oecd_refresh.add_argument("--db-path", default=None)
 
     portfolio_import = subparsers.add_parser("portfolio-import")
     portfolio_import.add_argument("csv_path", help="Path to CSV file with holdings")
@@ -551,76 +521,6 @@ def _run_rag(args: argparse.Namespace) -> int:
     return macro_data_main(["rag", args.rag_command])
 
 
-def _run_oecd_dataflows(args: argparse.Namespace) -> int:
-    from analyst.macro_data.cli import main as macro_data_main
-
-    argv = ["oecd-dataflows", "--limit", str(args.limit), "--agency-prefix", args.agency_prefix]
-    if args.query is not None:
-        argv.extend(["--query", args.query])
-    return macro_data_main(argv)
-
-
-def _run_oecd_structure(args: argparse.Namespace) -> int:
-    from analyst.macro_data.cli import main as macro_data_main
-
-    return macro_data_main(
-        [
-            "oecd-structure",
-            "--dataflow",
-            args.dataflow,
-            "--agency-id",
-            args.agency_id,
-            "--version",
-            args.version,
-        ]
-    )
-
-
-def _run_oecd_generate_configs(args: argparse.Namespace) -> int:
-    from analyst.macro_data.cli import main as macro_data_main
-
-    argv = [
-        "oecd-generate-configs",
-        "--agency-prefix",
-        args.agency_prefix,
-        "--dataflow-limit",
-        str(args.dataflow_limit),
-        "--series-per-dataflow",
-        str(args.series_per_dataflow),
-    ]
-    if args.agency_id is not None:
-        argv.extend(["--agency-id", args.agency_id])
-    if args.query is not None:
-        argv.extend(["--query", args.query])
-    for dataflow in args.dataflows or []:
-        argv.extend(["--dataflow", dataflow])
-    return macro_data_main(argv)
-
-
-def _run_oecd_refresh_catalog(args: argparse.Namespace) -> int:
-    from analyst.macro_data.cli import main as macro_data_main
-
-    argv = [
-        "oecd-refresh-catalog",
-        "--agency-prefix",
-        args.agency_prefix,
-        "--dataflow-limit",
-        str(args.dataflow_limit),
-        "--latest-observations",
-        str(args.latest_observations),
-        "--sleep-seconds",
-        str(args.sleep_seconds),
-    ]
-    if args.agency_id is not None:
-        argv.extend(["--agency-id", args.agency_id])
-    if args.query is not None:
-        argv.extend(["--query", args.query])
-    if args.db_path is not None:
-        argv.extend(["--db-path", args.db_path])
-    for dataflow in args.dataflows or []:
-        argv.extend(["--dataflow", dataflow])
-    return macro_data_main(argv)
-
 
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
@@ -726,21 +626,6 @@ def main(argv: list[str] | None = None) -> int:
             for article in articles:
                 print(format_news_headline(article))
         return 0
-    if args.command == "news-feeds":
-        from analyst.ingestion.news_feeds import get_feeds
-        feeds = get_feeds(args.category)
-        for feed in feeds:
-            print(f"[{feed.category:<16}] {feed.name}")
-        print(f"\nTotal: {len(feeds)} feeds")
-        return 0
-    if args.command == "oecd-dataflows":
-        return _run_oecd_dataflows(args)
-    if args.command == "oecd-structure":
-        return _run_oecd_structure(args)
-    if args.command == "oecd-generate-configs":
-        return _run_oecd_generate_configs(args)
-    if args.command == "oecd-refresh-catalog":
-        return _run_oecd_refresh_catalog(args)
     if args.command == "portfolio-sync":
         return _run_portfolio_sync(args)
     if args.command == "portfolio-import":

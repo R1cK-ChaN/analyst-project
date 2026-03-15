@@ -80,7 +80,6 @@ def coerce_macro_data_client(
     *,
     data_client: MacroDataClient | None = None,
     store: Any | None = None,
-    ingestion: Any | None = None,
     retriever: Any | None = None,
 ) -> MacroDataClient:
     if data_client is not None:
@@ -88,7 +87,7 @@ def coerce_macro_data_client(
     config = MacroDataHttpConfig.from_env()
     if config is not None:
         return HttpMacroDataClient(config)
-    if store is not None or ingestion is not None or retriever is not None:
+    if store is not None or retriever is not None:
         from analyst.storage import SQLiteEngineStore
 
         from .service import LocalMacroDataService
@@ -97,7 +96,6 @@ def coerce_macro_data_client(
         return LocalMacroDataClient(
             LocalMacroDataService(
                 store=resolved_store,
-                ingestion=ingestion,
                 retriever=retriever,
             )
         )
@@ -107,7 +105,6 @@ def coerce_macro_data_client(
 def build_local_macro_data_client(
     *,
     db_path: Path | None = None,
-    ingestion: Any | None = None,
     retriever: Any | None = None,
 ) -> MacroDataClient:
     from analyst.storage import SQLiteEngineStore
@@ -116,7 +113,7 @@ def build_local_macro_data_client(
 
     store = SQLiteEngineStore(db_path=db_path)
     return LocalMacroDataClient(
-        LocalMacroDataService(store=store, ingestion=ingestion, retriever=retriever)
+        LocalMacroDataService(store=store, retriever=retriever)
     )
 
 

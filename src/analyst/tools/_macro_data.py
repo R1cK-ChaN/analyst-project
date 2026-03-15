@@ -12,14 +12,12 @@ class MacroDataOperationHandler:
         *,
         data_client: MacroDataClient | None = None,
         store: Any | None = None,
-        ingestion: Any | None = None,
         retriever: Any | None = None,
     ) -> None:
         self._operation = operation
         self._client = coerce_macro_data_client(
             data_client=data_client,
             store=store,
-            ingestion=ingestion,
             retriever=retriever,
         )
 

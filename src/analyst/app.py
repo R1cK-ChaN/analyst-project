@@ -8,7 +8,6 @@ from analyst.contracts import ChannelMessage, InteractionMode, RegimeState, Rese
 from analyst.delivery import WeComFormatter
 from analyst.engine import AnalystEngine, LiveAnalystEngine
 from analyst.engine.live_types import LLMProvider
-from analyst.ingestion import IngestionOrchestrator
 from analyst.information import AnalystInformationService, FileBackedInformationRepository
 from analyst.integration import AnalystIntegrationService
 from analyst.macro_data import LocalMacroDataService, coerce_macro_data_client
@@ -134,7 +133,6 @@ def build_live_engine_app(
     macro_data_client = coerce_macro_data_client(
         data_client=None,
         store=store,
-        ingestion=IngestionOrchestrator(store),
         retriever=_build_optional_retriever(),
     )
     engine = LiveAnalystEngine(
@@ -158,6 +156,5 @@ def build_local_macro_data_service(db_path: Path | None = None) -> LocalMacroDat
     store = SQLiteEngineStore(db_path=db_path)
     return LocalMacroDataService(
         store=store,
-        ingestion=IngestionOrchestrator(store),
         retriever=_build_optional_retriever(),
     )

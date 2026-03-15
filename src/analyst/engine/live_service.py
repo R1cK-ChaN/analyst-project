@@ -82,7 +82,6 @@ class LiveAnalystEngine:
         *,
         provider: LLMProvider | None = None,
         data_client: MacroDataClient | None = None,
-        ingestion: Any | None = None,
         config: LiveEngineConfig | None = None,
         retriever: Any = None,
     ) -> None:
@@ -91,7 +90,6 @@ class LiveAnalystEngine:
         self.data_client = coerce_macro_data_client(
             data_client=data_client,
             store=store,
-            ingestion=ingestion,
             retriever=retriever,
         )
         self.config = config or LiveEngineConfig()

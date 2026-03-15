@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from analyst.ingestion.url_canon import canonicalize_url, content_hash, normalize_title
+from analyst.utils import canonicalize_url, content_hash, normalize_title
 
 
 class TestCanonicalizeUrl:

@@ -169,16 +169,17 @@ class LiveEngineTest(unittest.TestCase):
             self.assertIsNotNone(latest_cpi)
             self.assertEqual(latest_cpi.event_id, "evt-cpi")
 
-    def test_refresh_all_sources_does_not_require_provider(self) -> None:
+    def test_refresh_all_sources_without_remote_service_returns_empty(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
-            engine = LiveAnalystEngine(store=store, ingestion=FakeIngestion(), provider=None)
-            self.assertEqual(engine.refresh_all_sources(), {"calendar": 2, "fed": 1})
+            engine = LiveAnalystEngine(store=store, provider=None)
+            result = engine.refresh_all_sources()
+            self.assertEqual(result, {})
 
     def test_generate_flash_commentary_requires_released_event(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
-            engine = LiveAnalystEngine(store=store, ingestion=FakeIngestion(), provider=None)
+            engine = LiveAnalystEngine(store=store, provider=None)
             with self.assertRaisesRegex(RuntimeError, "No released calendar event available"):
                 engine.generate_flash_commentary()
 
@@ -241,7 +242,7 @@ class LiveEngineTest(unittest.TestCase):
                     ),
                 ]
             )
-            engine = LiveAnalystEngine(store=store, provider=provider, ingestion=FakeIngestion())
+            engine = LiveAnalystEngine(store=store, provider=provider)
 
             note = engine.generate_flash_commentary()
 
@@ -289,22 +290,10 @@ class LiveEngineTest(unittest.TestCase):
 
         self.assertEqual(DEFAULT_ENV_FILES, (PROJECT_ROOT / ".env",))
 
-    def test_fred_client_reads_project_env_file(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            env_file = Path(temp_dir) / ".env"
-            env_file.write_text("FRED_API_KEY=test-fred-key\n", encoding="utf-8")
-            with patch("analyst.env.DEFAULT_ENV_FILES", (env_file,)):
-                with patch.dict("os.environ", {}, clear=True):
-                    clear_env_cache()
-                    from analyst.ingestion.sources import FREDIngestionClient
-
-                    client = FREDIngestionClient()
-            self.assertEqual(client.api_key, "test-fred-key")
-
     def test_extract_regime_payload_skips_invalid_json_and_merges_nested_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
-            engine = LiveAnalystEngine(store=store, ingestion=FakeIngestion(), provider=None)
+            engine = LiveAnalystEngine(store=store, provider=None)
             fallback = engine._baseline_regime()
 
             payload = engine._extract_regime_payload(
@@ -471,33 +460,6 @@ class CalendarEnhancementsTest(unittest.TestCase):
             self.assertEqual(len(events), 1)
             self.assertEqual(events[0].currency, "USD")
 
-    def test_fetch_range_aggregates_days(self) -> None:
-        with patch("analyst.ingestion.sources.InvestingCalendarClient.fetch") as mock_fetch:
-            mock_fetch.return_value = [
-                StoredEventRecord(
-                    source="investing", event_id="evt-x", timestamp=int(datetime(2026, 3, 7, 12, 0, tzinfo=timezone.utc).timestamp()),
-                    country="US", indicator="CPI", category="inflation", importance="high",
-                    raw_json={},
-                )
-            ]
-            from analyst.ingestion.sources import InvestingCalendarClient
-            client = InvestingCalendarClient()
-            with patch("analyst.ingestion.sources.time.sleep"):
-                events = client.fetch_range(days_back=1, days_forward=1)
-            # days_back=1, days_forward=1 => 3 days: -1, 0, +1
-            self.assertEqual(mock_fetch.call_count, 3)
-            self.assertEqual(len(events), 3)  # 1 event per day * 3 days
-
-    def test_fetch_retries_then_raises(self) -> None:
-        from analyst.ingestion.sources import InvestingCalendarClient
-
-        client = InvestingCalendarClient()
-        client.session.post = Mock(side_effect=RuntimeError("boom"))
-        with patch("analyst.ingestion.sources.time.sleep"):
-            with self.assertRaisesRegex(RuntimeError, "Investing calendar fetch failed after 3 attempts"):
-                client.fetch(date_from="2026-03-07", date_to="2026-03-07")
-        self.assertEqual(client.session.post.call_count, 3)
-
     def test_tool_indicator_trend(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
@@ -511,7 +473,7 @@ class CalendarEnhancementsTest(unittest.TestCase):
                         surprise=float(i * 10), raw_json={},
                     )
                 )
-            engine = LiveAnalystEngine(store=store, ingestion=FakeIngestion(), provider=None)
+            engine = LiveAnalystEngine(store=store, provider=None)
             result = engine._tool_indicator_trend({"indicator_keyword": "Nonfarm"})
             self.assertEqual(len(result["releases"]), 3)
             self.assertEqual(result["indicator_keyword"], "Nonfarm")
