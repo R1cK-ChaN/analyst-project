@@ -1,6 +1,6 @@
 # Analyst — Implementation Status
 
-**Status date:** March 13, 2026 (updated after codebase reconstruction, targeted regression verification, and live scraper integration validation)
+**Status date:** March 15, 2026 (updated after ingestion removal, macro-data decoupling completion, and sandbox module addition)
 
 This document is the current implementation snapshot for `analyst-project/`.
 
@@ -47,17 +47,16 @@ As of March 13, 2026, the largest production modules in storage, delivery, and i
 
 ### Macro-data service split
 
-Implemented now:
+Implemented and completed:
 
 - standalone sibling service repo at `/home/rick/Desktop/analyst/macro-data-service`
 - service-side packages extracted there: `src/analyst/macro_data/`, `src/analyst/ingestion/`, `src/analyst/storage/`, `src/analyst/rag/`
-- `src/analyst/macro_data/client.py` in `analyst-project` now prefers `HttpMacroDataClient` when `ANALYST_MACRO_DATA_BASE_URL` is configured
+- `src/analyst/macro_data/client.py` in `analyst-project` prefers `HttpMacroDataClient` when `ANALYST_MACRO_DATA_BASE_URL` is configured
 - end-to-end HTTP verification test in `tests/test_macro_data_integration.py`
-
-Current limitation:
-
-- the service repo is not yet independently versioned with a remote git origin
-- `analyst-project` still retains transitional local copies of the service-side modules for compatibility and local fallback
+- **decoupling completed**: `ingestion/` package fully removed from `analyst-project` — all scraper and data-fetching code lives exclusively in `macro-data-service`
+- `tools/` and `storage/` have zero ingestion imports — all data operations route through `MacroDataClient`
+- `LocalMacroDataService` retains store-based operations (calendar, news, indicators from SQLite); live-fetch operations return a clear "requires macro-data-service" error
+- utility functions (`normalize_indicator_name`, `canonicalize_url`, `content_hash`) extracted to `src/analyst/utils.py`
 
 ### Shared contracts
 
@@ -150,9 +149,22 @@ Implemented in `src/analyst/portfolio/`:
   - `__init__.py`: `create_broker_adapter(broker, **kwargs)` factory with generic `(AdapterClass, ConfigClass)` registry — adding a new broker is one file + one registry entry
   - env vars: `ANALYST_IBKR_GATEWAY_URL`, `ANALYST_IBKR_ACCOUNT_ID`, `ANALYST_LONGBRIDGE_APP_KEY/APP_SECRET/ACCESS_TOKEN`, `ANALYST_TIGER_ID/PRIVATE_KEY/ACCOUNT`
 
+### Sandbox layer
+
+Implemented in `src/analyst/sandbox/`:
+
+- `policy.py`: AST-based code validation — blocks forbidden modules (`os`, `subprocess`, `socket`, etc.), forbidden builtins (`exec`, `eval`, `open`, etc.), and dunder attribute access (`__subclasses__`, `__globals__`, etc.)
+- `container_runner.py`: Docker CLI wrapper with dependency injection for testability (same `runner=subprocess.run` pattern as `ClaudeCodeProvider` and `LivePhotoPackager`)
+- `manager.py`: public `SandboxManager` API — validates code via policy, executes in ephemeral Docker container, returns structured result
+- `limits.py`: `SandboxLimits` config with `from_env()` classmethod (memory, CPU, timeout, image name)
+- `docker/Dockerfile`: minimal Python 3.11 image with numpy, pandas, scipy, matplotlib, statsmodels
+- `docker/runner.py`: in-container executor — reads JSON from stdin, execs code, captures `result` variable and print output, writes JSON to stdout
+- Docker security constraints: `--network none`, `--read-only`, `--tmpfs /tmp`, `--tmpfs /workspace`, `--memory=512m`, `--cpus=1`, no host env vars passed (`env={}`)
+- graceful degradation: if Docker is unavailable, the tool returns a structured error dict instead of crashing
+
 ### Tools layer
 
-Implemented in `src/analyst/tools/` — 13 tool builders across 12 files:
+Implemented in `src/analyst/tools/` — 14 tool builders across 13 files:
 
 - `ToolKit` composable builder (`_registry.py`): per-agent tool assembly with `add()`, `merge()`, and `to_list()` — not a global registry, each agent builds its own kit
 - **shared MCP bridge** (`src/analyst/mcp/`): local stdio MCP server exposing a safe read-only subset of analyst-owned tools to Claude Code
@@ -200,8 +212,9 @@ Implemented in `src/analyst/tools/` — 13 tool builders across 12 files:
   - returns structured JSON with `delivery_video_path` in all successful motion cases, and includes paired Live Photo asset paths / `asset_id` only when Apple packaging is available
   - if SeedDance video generation fails after a selfie still was generated, the tool falls back to that still image; if video generation succeeds but Apple packaging is unavailable, the tool still returns a motion video result
   - `build_optional_live_photo_tool()` registers whenever SeedDance is configured; unsupported runtimes log that they are running in motion-video mode
+- **sandboxed Python analysis tool** (`_python_analysis.py`): `run_python_analysis` — executes Python code in a Docker sandbox for data analysis, statistical calculations, and chart generation; code is AST-validated via `sandbox/policy.py` before execution; available to research agent, user chat surface, and `data_deep_dive` / `research_lookup` sub-agents
 - both `LiveAnalystEngine._build_tools()` and `build_user_chat_tools()` now use `ToolKit` to assemble their tool lists, with universal tools (web search, live calendar, web fetch) composed per-agent
-- the live-data, stored-data, and RAG-facing tool builders can now proxy through the `MacroDataClient` seam instead of binding directly to local storage or retriever implementations
+- all live-data tool builders route through the `MacroDataClient` seam — no direct scraper imports in `tools/`
 - the user chat agent's `ToolKit` includes all 13 tools when live-photo generation is configured (6 live data + 3 universal + live calendar + portfolio sync + image generation + live-photo generation); otherwise the motion tool is omitted without breaking startup
 - adding future universal tools follows the same pattern: create `_new_tool.py` with handler + `build_*_tool()` factory, export from `__init__.py`, agents opt in via `kit.add()`
 
@@ -228,22 +241,13 @@ Implemented in `src/analyst/storage/`:
 - upsert semantics with UNIQUE constraints for deduplication
 - foreign-key-enforced lineage from trader outputs back to `research_artifacts`
 
-### Refactor validation
+### Test validation
 
-Validated on March 13, 2026:
+Validated on March 15, 2026:
 
-- targeted regression suite passed locally:
-  - `tests/test_oecd.py`
-  - `tests/test_oecd_sources.py`
-  - `tests/test_gov_report.py`
-  - `tests/test_companion_checkins.py`
-  - `tests/test_telegram.py`
-  - `tests/test_memory.py`
-  - `tests/test_news_ingestion.py`
-  - result: `221 passed`
-- live integration suite passed against real endpoints:
-  - `pytest tests/test_scrapers.py -m live -v`
-  - result: `5 passed`
+- full test suite: `450 passed` (scraper tests moved to `macro-data-service`)
+- sandbox tests: `36 passed` (policy, container runner, manager, tool — all mocked, no Docker needed)
+- live sandbox tests: 8 scenarios verified against real Docker (numpy, pandas, scipy, matplotlib, data pass-through, policy rejection, runtime error, stdout capture)
 
 ### Memory layer
 
@@ -263,29 +267,9 @@ Implemented in `src/analyst/memory/`:
 
 ### Ingestion layer
 
-Implemented in `src/analyst/ingestion/`:
+**Removed from `analyst-project` as of March 15, 2026.** All scraper and data-fetching code now lives exclusively in the standalone `macro-data-service` repo at `/home/rick/Desktop/analyst/macro-data-service`.
 
-- `InvestingCalendarClient`: economic calendar scraper (Investing.com) — uses `curl_cffi` for Cloudflare TLS bypass
-- `ForexFactoryCalendarClient`: economic calendar scraper (ForexFactory) — uses `curl_cffi` for Cloudflare TLS bypass
-- `TradingEconomicsCalendarClient`: economic calendar scraper with per-event importance (3 requests) — uses `curl_cffi`
-- `http_transport.py`: transport factory (`create_cf_session`) using `curl_cffi` browser impersonation with graceful fallback to `requests.Session`
-- `FREDIngestionClient`: FRED API adapter for 25+ macro series (inflation, employment, growth, rates, liquidity, FX, credit)
-- `FedIngestionClient`: Fed RSS feed parser for press releases, speeches, and testimony
-- `MarketPriceClient`: cross-asset price scraper via yfinance (equities, FX, bonds, commodities, crypto)
-- `NewsIngestionClient`: macro-finance RSS pipeline with URL deduplication, article fetch, structured extraction, and persistence
-- `news_feeds.py`: 140+ curated RSS/Google News feed definitions by category
-- `news_fetcher.py`: article extraction with Google News proxy resolution + readability/markdownify
-- `news_extract.py`: LLM metadata extraction with keyword fallback and canonical finance category mapping
-- `IngestionOrchestrator`: refresh-all and schedule orchestrator with configurable intervals
-- Investing calendar retry/backoff and multi-day refresh window (`days_back=1`, `days_forward=3`)
-- Investing calendar parsing for currency text and revised previous values
-- scheduled news refresh every 15 minutes
-- standalone scrapers (`src/analyst/ingestion/scrapers/`):
-  - `InvestingNewsClient`: news with pagination (`page` param + `fetch_all_news`), comment count capture
-  - `ForexFactoryNewsClient`: news with pagination, thumbnail capture
-  - `TradingEconomicsNewsClient`: news stream with pagination (`start`/`count` + `fetch_all_news`), image/thumbnail/html/type capture
-  - `TradingEconomicsIndicatorsClient`: indicator tables with native tab-pane taxonomy (falls back to keyword heuristic)
-  - `TradingEconomicsMarketsClient`: market quotes with `data-symbol` and `data-decimals` capture
+The `analyst-project` consumes data through `MacroDataClient` (HTTP when `ANALYST_MACRO_DATA_BASE_URL` is set, or `LocalMacroDataService` store-based fallback for read-only operations).
 
 ### Environment resolver
 
@@ -347,14 +331,17 @@ Implemented in `src/analyst/integration/`:
 
 ### Tests
 
-Implemented in `tests/`:
+Implemented in `tests/` — 450 tests total:
 
-- `test_broker_ibkr.py` (54 tests) for broker adapter layer: IBKR asset class mapping + position mapping (single/empty/mixed currencies/zero skipped/short abs/weight sum/symbol fallback) + session validation (valid/expired/401/unreachable); Longbridge symbol normalization (US/HK pad/Shanghai/Shenzhen/passthrough) + position mapping (single/empty/zero skipped/mixed currencies/cost basis warning/market value preferred/weight sum) + session validation (valid/expired/missing creds/unreachable); Tiger sec_type mapping + position mapping (single/empty/zero skipped/mixed currencies/weight sum) + session validation (missing creds/auth failure/unreachable/cryptography not installed); factory tests (create all 3 brokers, unknown raises, available listed in error)
-- `test_news_ingestion.py` for RSS feed registry, classifier utility, article fetcher, SQLite news storage, extraction fallback behavior, and news ingestion/retrieval regressions
-- `test_memory.py` for research/trader/sales pipeline memory behavior, client isolation, delivery gating, profile accumulation, trader lineage constraints, naive/aware timestamp handling in absence calculation, personal facts persistence and recency-refresh dedup under cap, and emotional trend/stress level persistence
+- `test_broker_ibkr.py` (54 tests) for broker adapter layer: IBKR, Longbridge, Tiger position mapping + session validation + factory
+- `test_sandbox.py` (36 tests) for sandbox policy (AST validation), container runner (Docker CLI mock), manager (orchestration), and tool builder
+- `test_memory.py` for research/trader/sales pipeline memory behavior, client isolation, delivery gating, profile accumulation, emotional trend/stress level persistence
 - `test_product_layer.py` for product-layer smoke tests
-- `test_telegram.py` for Telegram formatter, truncation, routing, bot wiring, agent-loop chat flow (persona, history, tools, truncation, error fallback), reply-to-message context extraction, and media delivery cleanup
-- `test_ws1_engine.py` for WS1 live engine and calendar paths: store CRUD/upsert/filter/range queries, scraper retry behavior, flash commentary tool-calling loop with persistence, no-event error path, regime payload parsing with malformed JSON, env fallback chain, and CLI routing for refresh/flash/regime-refresh/live-calendar
+- `test_telegram.py` for Telegram formatter, truncation, routing, bot wiring, agent-loop chat flow, media delivery cleanup
+- `test_ws1_engine.py` for WS1 live engine and calendar paths: store CRUD, flash commentary loop, regime payload parsing, env fallback chain, CLI routing
+- `test_url_canon.py` for URL canonicalization and content fingerprinting utilities (now imported from `analyst.utils`)
+- `test_web_fetch.py` for web fetch tool factory and MacroDataClient integration
+- `test_cli.py` for CLI companion chat, media gen commands
 
 ---
 
@@ -362,13 +349,11 @@ Implemented in `tests/`:
 
 ### Data ingestion (remaining)
 
-Not yet implemented inside `analyst-project/`:
+All ingestion code now lives in the standalone `macro-data-service` repo. Not yet implemented there:
 
 - live government-report crawling (BLS, BEA beyond FRED)
 - China-specific sources (PBOC, NBS, Xinhua, Caixin)
 - live document parsing
-
-Note: calendar scraping (Investing.com, ForexFactory), FRED series, Fed RSS, yfinance market prices, and RSS-based news ingestion are now implemented in `src/analyst/ingestion/`.
 
 ### Agent backend (remaining)
 
@@ -444,8 +429,8 @@ Done:
 - regime state scoring with clamped numeric axes and cross-asset implications
 - environment resolver with multi-file `.env` fallback
 - CLI commands: refresh, schedule, flash, briefing, wrap, regime-refresh, live-calendar, news-refresh, news-latest, news-search, news-feeds, portfolio-import, portfolio-risk, portfolio-sync
-- agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, surprise summaries, recent news, news search, web search, live calendar fetch, portfolio risk, portfolio holdings, VIX regime, portfolio sync from broker, image generation, and live-photo generation
-- unified tools layer (`src/analyst/tools/`): `ToolKit` composable builder + `web_search` via OpenRouter plugins API + `fetch_live_calendar` via curl_cffi (agent-initiated) + `generate_image` via Volcengine Ark (`doubao-seedream-5-0-260128`) + `generate_live_photo` via SeedDance with Telegram video delivery and optional macOS `makelive` packaging for future Apple channels
+- agent tools for recent releases, today's calendar, indicator trends, market snapshot, Fed comms, indicator history, latest regime state, surprise summaries, recent news, news search, web search, live calendar fetch, portfolio risk, portfolio holdings, VIX regime, portfolio sync from broker, image generation, live-photo generation, and sandboxed Python analysis
+- unified tools layer (`src/analyst/tools/`): `ToolKit` composable builder + `web_search` via OpenRouter plugins API + `fetch_live_calendar` via MacroDataClient + `generate_image` via Volcengine Ark + `generate_live_photo` via SeedDance + `run_python_analysis` via Docker sandbox
 - local MCP bridge (`src/analyst/mcp/`) so Claude Code native turns can use selected analyst-owned read-only tools without duplicating tool logic
 - portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime, agent-actionable tools
 - auto-refresh staleness check on `get_today_calendar` and `get_upcoming_calendar` tools (refreshes calendar if data is >1 hour stale)
@@ -566,6 +551,9 @@ For reference only:
 From `analyst-project/`:
 
 ```bash
+# Build the sandbox Docker image (required for run_python_analysis tool)
+docker build -t analyst-python-sandbox src/analyst/sandbox/docker/
+
 # Preferred decoupled path
 cd /home/rick/Desktop/analyst/macro-data-service
 python -m venv .venv
