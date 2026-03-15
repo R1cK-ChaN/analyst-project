@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Any
 
 from analyst.engine.live_types import AgentTool
-from analyst.ingestion.news_fetcher import ArticleFetcher
+from analyst.macro_data import MacroDataClient
 
-logger = logging.getLogger(__name__)
+from ._macro_data import MacroDataOperationHandler
 
 
 @dataclass(frozen=True)
@@ -19,54 +18,21 @@ class FetchPageConfig:
     max_return_chars: int = 8_000
 
 
-class FetchPageHandler:
-    """Stateful callable that fetches and extracts page content via ArticleFetcher."""
-
-    def __init__(self, config: FetchPageConfig) -> None:
-        self._config = config
-        self._fetcher: ArticleFetcher | None = None
-
-    def _get_fetcher(self) -> ArticleFetcher:
-        if self._fetcher is None:
-            self._fetcher = ArticleFetcher(
-                timeout=self._config.timeout,
-                max_content_chars=self._config.max_content_chars,
-            )
-        return self._fetcher
-
-    def __call__(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        url = str(arguments.get("url", "")).strip()
-        if not url:
-            return {"error": "url is required", "content": "", "fetched": False}
-
-        try:
-            article = self._get_fetcher().fetch_article(url, rss_description="")
-        except Exception as exc:
-            logger.warning("web_fetch_page failed for %s: %s", url, exc)
-            return {"error": str(exc), "content": "", "fetched": False}
-
-        if not article.fetched:
-            return {
-                "error": article.error or "fetch failed",
-                "content": "",
-                "fetched": False,
-            }
-
-        content = article.content
-        if len(content) > self._config.max_return_chars:
-            content = content[: self._config.max_return_chars]
-
-        return {
-            "content": content,
-            "fetched": True,
-            "content_length": len(content),
-        }
-
-
-def build_web_fetch_tool(config: FetchPageConfig | None = None) -> AgentTool:
-    """Factory: create a web_fetch_page AgentTool backed by ArticleFetcher."""
+def build_web_fetch_tool(
+    config: FetchPageConfig | None = None,
+    *,
+    data_client: MacroDataClient | None = None,
+) -> AgentTool:
+    """Factory: create a web_fetch_page AgentTool backed by MacroDataClient."""
     resolved_config = config or FetchPageConfig()
-    handler = FetchPageHandler(resolved_config)
+    op_handler = MacroDataOperationHandler("web_fetch_page", data_client=data_client)
+
+    def handler(arguments: dict[str, Any]) -> dict[str, Any]:
+        arguments.setdefault("timeout", resolved_config.timeout)
+        arguments.setdefault("max_content_chars", resolved_config.max_content_chars)
+        arguments.setdefault("max_return_chars", resolved_config.max_return_chars)
+        return op_handler(arguments)
+
     return AgentTool(
         name="web_fetch_page",
         description=(

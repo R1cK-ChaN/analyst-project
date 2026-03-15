@@ -645,6 +645,29 @@ class LocalMacroDataService:
             "datetime_utc": format_epoch_iso(price.timestamp),
         }
 
+    def _op_web_fetch_page(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        from analyst.ingestion.news_fetcher import ArticleFetcher
+
+        url = str(arguments.get("url", "")).strip()
+        if not url:
+            return {"error": "url is required", "content": "", "fetched": False}
+        timeout = int(arguments.get("timeout", 20))
+        max_content_chars = int(arguments.get("max_content_chars", 15_000))
+        max_return_chars = int(arguments.get("max_return_chars", 8_000))
+        try:
+            article = ArticleFetcher(
+                timeout=timeout, max_content_chars=max_content_chars,
+            ).fetch_article(url, rss_description="")
+        except Exception as exc:
+            logger.warning("web_fetch_page failed for %s: %s", url, exc)
+            return {"error": str(exc), "content": "", "fetched": False}
+        if not article.fetched:
+            return {"error": article.error or "fetch failed", "content": "", "fetched": False}
+        content = article.content
+        if len(content) > max_return_chars:
+            content = content[:max_return_chars]
+        return {"content": content, "fetched": True, "content_length": len(content)}
+
     def _comm_to_dict(self, communication: Any) -> dict[str, Any]:
         summary = communication.summary
         if len(summary) > 800:

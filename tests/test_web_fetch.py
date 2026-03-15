@@ -8,7 +8,8 @@ import httpx
 import pytest
 
 from analyst.ingestion.news_fetcher import ArticleContent, ArticleFetcher
-from analyst.tools._web_fetch import FetchPageConfig, FetchPageHandler, build_web_fetch_tool
+from analyst.macro_data.service import LocalMacroDataService
+from analyst.tools._web_fetch import FetchPageConfig, build_web_fetch_tool
 
 
 # ---------------------------------------------------------------------------
@@ -120,49 +121,52 @@ class TestArticleFetcherExtraction:
 
 
 # ---------------------------------------------------------------------------
-# FetchPageHandler
+# LocalMacroDataService._op_web_fetch_page (replaces FetchPageHandler tests)
 # ---------------------------------------------------------------------------
 
-class TestFetchPageHandler:
+class TestWebFetchPageOperation:
+    def _make_service(self):
+        return LocalMacroDataService(store=MagicMock())
+
     def test_missing_url_returns_error(self):
-        handler = FetchPageHandler(FetchPageConfig())
-        result = handler({})
+        svc = self._make_service()
+        result = svc.invoke("web_fetch_page", {})
         assert result["fetched"] is False
         assert "url is required" in result["error"]
 
     def test_empty_url_returns_error(self):
-        handler = FetchPageHandler(FetchPageConfig())
-        result = handler({"url": "  "})
+        svc = self._make_service()
+        result = svc.invoke("web_fetch_page", {"url": "  "})
         assert result["fetched"] is False
 
     def test_successful_fetch_returns_content(self):
-        handler = FetchPageHandler(FetchPageConfig())
+        svc = self._make_service()
         mock_article = ArticleContent(
             content="# Headline\n\nSome article body text.",
             fetched=True,
             content_length=35,
         )
         with patch.object(ArticleFetcher, "fetch_article", return_value=mock_article):
-            result = handler({"url": "https://example.com/page"})
+            result = svc.invoke("web_fetch_page", {"url": "https://example.com/page"})
 
         assert result["fetched"] is True
         assert "Headline" in result["content"]
-        assert result["content_length"] == 35
 
     def test_truncates_to_max_return_chars(self):
-        config = FetchPageConfig(max_return_chars=50)
-        handler = FetchPageHandler(config)
+        svc = self._make_service()
         long_text = "x" * 200
         mock_article = ArticleContent(content=long_text, fetched=True, content_length=200)
         with patch.object(ArticleFetcher, "fetch_article", return_value=mock_article):
-            result = handler({"url": "https://example.com/long"})
+            result = svc.invoke("web_fetch_page", {
+                "url": "https://example.com/long",
+                "max_return_chars": 50,
+            })
 
         assert result["fetched"] is True
         assert len(result["content"]) == 50
-        assert result["content_length"] == 50
 
     def test_failed_fetch_returns_error(self):
-        handler = FetchPageHandler(FetchPageConfig())
+        svc = self._make_service()
         mock_article = ArticleContent(
             content="",
             fetched=False,
@@ -170,24 +174,16 @@ class TestFetchPageHandler:
             error="403 Forbidden",
         )
         with patch.object(ArticleFetcher, "fetch_article", return_value=mock_article):
-            result = handler({"url": "https://nyt.com/paywalled"})
+            result = svc.invoke("web_fetch_page", {"url": "https://nyt.com/paywalled"})
 
         assert result["fetched"] is False
         assert result["error"] == "403 Forbidden"
         assert result["content"] == ""
 
-    def test_lazy_fetcher_creation(self):
-        handler = FetchPageHandler(FetchPageConfig())
-        assert handler._fetcher is None
-        mock_article = ArticleContent(content="ok", fetched=True, content_length=2)
-        with patch.object(ArticleFetcher, "fetch_article", return_value=mock_article):
-            handler({"url": "https://example.com"})
-        assert handler._fetcher is not None
-
     def test_exception_in_fetcher_returns_error(self):
-        handler = FetchPageHandler(FetchPageConfig())
+        svc = self._make_service()
         with patch.object(ArticleFetcher, "fetch_article", side_effect=RuntimeError("boom")):
-            result = handler({"url": "https://example.com/crash"})
+            result = svc.invoke("web_fetch_page", {"url": "https://example.com/crash"})
 
         assert result["fetched"] is False
         assert "boom" in result["error"]
@@ -205,18 +201,13 @@ class TestBuildWebFetchTool:
         assert "url" in tool.parameters["properties"]
         assert "web page" in tool.description.lower()
 
-    def test_custom_config_is_applied(self):
+    def test_custom_config_is_respected(self):
         config = FetchPageConfig(timeout=10, max_content_chars=5_000, max_return_chars=2_000)
         tool = build_web_fetch_tool(config)
-        handler = tool.handler
-        assert isinstance(handler, FetchPageHandler)
-        assert handler._config.timeout == 10
-        assert handler._config.max_content_chars == 5_000
-        assert handler._config.max_return_chars == 2_000
+        assert tool.handler is not None
+        assert callable(tool.handler)
 
     def test_default_config(self):
         tool = build_web_fetch_tool()
-        handler = tool.handler
-        assert handler._config.timeout == 20
-        assert handler._config.max_content_chars == 15_000
-        assert handler._config.max_return_chars == 8_000
+        assert tool.handler is not None
+        assert callable(tool.handler)

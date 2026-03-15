@@ -162,7 +162,7 @@ class SQLiteCalendarNormalizationMixin:
     def resolve_calendar_alias(
         self, alias_text: str, source: str, country: str,
     ) -> str | None:
-        from analyst.ingestion.scrapers._common import normalize_indicator_name
+        from analyst.utils import normalize_indicator_name
         normalized = normalize_indicator_name(alias_text)
         with self._connection(commit=False) as connection:
             row = connection.execute(
@@ -195,7 +195,7 @@ class SQLiteCalendarNormalizationMixin:
     def seed_calendar_indicators(self) -> None:
         """Populate calendar_indicator and calendar_indicator_alias tables
         from the module-level seed data constants."""
-        from analyst.ingestion.scrapers._common import normalize_indicator_name
+        from analyst.utils import normalize_indicator_name
         now = utc_now().isoformat()
 
         for ind_id, canon, topic, cc, freq, unit, obs_fam in _CALENDAR_INDICATOR_DEFS:
@@ -225,7 +225,7 @@ class SQLiteCalendarNormalizationMixin:
     def backfill_calendar_indicator_ids(self) -> int:
         """Set indicator_id on existing calendar_events rows from the alias table.
         Returns the number of rows updated."""
-        from analyst.ingestion.scrapers._common import normalize_indicator_name  # noqa: F811
+        from analyst.utils import normalize_indicator_name  # noqa: F811
         with self._connection(commit=True) as connection:
             cur = connection.execute(
                 """

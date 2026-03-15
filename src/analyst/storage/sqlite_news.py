@@ -365,7 +365,7 @@ class SQLiteNewsMixin:
 
     def backfill_fingerprints(self) -> int:
         """One-time migration: compute fingerprints for all existing news_articles."""
-        from analyst.ingestion.url_canon import canonicalize_url, content_hash
+        from analyst.utils import canonicalize_url, content_hash
 
         with self._connection(commit=False) as connection:
             rows = connection.execute(

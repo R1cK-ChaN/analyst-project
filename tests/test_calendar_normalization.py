@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from analyst.ingestion.scrapers._common import normalize_indicator_name
+from analyst.utils import normalize_indicator_name
 from analyst.storage.sqlite import (
     CalendarIndicatorRecord,
     CalendarIndicatorAliasRecord,
