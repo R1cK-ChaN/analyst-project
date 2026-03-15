@@ -55,6 +55,7 @@ register_operator(OperatorSpec(
     name="trend",
     operator_type="metric",
     description="Compute linear trend direction and slope over a numeric series.",
+    input_types={"values": "series"},
     required_inputs=("values",),
     optional_parameters=("window",),
     output_type="metric",

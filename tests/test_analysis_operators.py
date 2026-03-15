@@ -8,7 +8,11 @@ from pathlib import Path
 
 from analyst.analysis.operators import (
     OPERATOR_REGISTRY,
+    TypeMismatchError,
+    check_composability,
+    is_compatible,
     run_operator,
+    validate_chain,
     compute_trend,
     pct_change,
     rolling_stat,
@@ -48,6 +52,68 @@ class TestOperatorRegistry(unittest.TestCase):
         for name, spec in OPERATOR_REGISTRY.items():
             self.assertIn(spec.output_type, ("series", "dataset", "metric", "signal", "dict"),
                           f"Operator {name} has unexpected output_type: {spec.output_type}")
+
+
+# ---------------------------------------------------------------------------
+# Type System — composability and validation
+# ---------------------------------------------------------------------------
+
+class TestTypeSystem(unittest.TestCase):
+    def test_series_compatible_with_series(self):
+        self.assertTrue(is_compatible("series", "series"))
+
+    def test_dataset_compatible_with_series(self):
+        self.assertTrue(is_compatible("dataset", "series"))
+
+    def test_metric_not_compatible_with_series(self):
+        self.assertFalse(is_compatible("metric", "series"))
+
+    def test_signal_not_compatible_with_series(self):
+        self.assertFalse(is_compatible("signal", "series"))
+
+    def test_check_composability_passes(self):
+        check_composability("series", "series")  # should not raise
+
+    def test_check_composability_raises(self):
+        with self.assertRaises(TypeMismatchError):
+            check_composability("metric", "series", upstream_name="trend", downstream_name="pct_change")
+
+    def test_validate_chain_compatible(self):
+        pct = OPERATOR_REGISTRY["pct_change"]
+        trend = OPERATOR_REGISTRY["trend"]
+        validate_chain(pct, trend, via_input="values")  # series → series: ok
+
+    def test_validate_chain_incompatible(self):
+        trend = OPERATOR_REGISTRY["trend"]
+        corr = OPERATOR_REGISTRY["correlation"]
+        with self.assertRaises(TypeMismatchError):
+            validate_chain(trend, corr, via_input="series_a")  # metric → series: fail
+
+    def test_every_operator_has_input_types_dict(self):
+        for name, spec in OPERATOR_REGISTRY.items():
+            self.assertIsInstance(spec.input_types, dict, f"{name} missing input_types")
+
+    def test_all_input_types_are_valid(self):
+        valid = {"series", "dataset", "metric", "signal", "text"}
+        for name, spec in OPERATOR_REGISTRY.items():
+            for input_name, input_type in spec.input_types.items():
+                self.assertIn(input_type, valid, f"{name}.{input_name} has invalid type '{input_type}'")
+
+    def test_run_operator_validates_typed_upstream_output(self):
+        """When an input is an upstream operator output dict with result_type, validate it."""
+        metric_output = {"result_type": "metric", "value": 42}
+        with self.assertRaises(TypeMismatchError):
+            # trend expects values: series, but we pass a metric output
+            run_operator("trend", {"values": metric_output})
+
+    def test_run_operator_accepts_compatible_typed_input(self):
+        series_output = {"result_type": "series", "values": [1, 2, 3]}
+        # This should NOT raise — series is compatible with series
+        # But the actual operator expects a list, not a dict, so it will return an error
+        # (operator-level validation, not type-level)
+        r = run_operator("trend", {"values": series_output})
+        # The type check passes, but operator gets a dict instead of list → error
+        self.assertIn("error", r)
 
 
 # ---------------------------------------------------------------------------

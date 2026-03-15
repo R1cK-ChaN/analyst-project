@@ -64,6 +64,7 @@ register_operator(OperatorSpec(
     name="fetch_dataset",
     operator_type="dataset",
     description="Fetch tabular data (calendar, news, fed_comms, market_prices) from store as typed Dataset.",
+    input_types={},
     required_inputs=("dataset",),
     optional_parameters=("limit", "days"),
     output_type="dataset",

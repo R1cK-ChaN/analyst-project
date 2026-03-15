@@ -57,6 +57,7 @@ register_operator(OperatorSpec(
     name="threshold_signal",
     operator_type="signal",
     description="Classify the latest value against a threshold (e.g. inflation > 3% → 'high'). Detects crossovers.",
+    input_types={"values": "series"},
     required_inputs=("values",),
     optional_parameters=("threshold", "above_label", "below_label"),
     output_type="signal",

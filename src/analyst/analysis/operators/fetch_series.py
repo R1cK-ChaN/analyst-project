@@ -44,6 +44,7 @@ register_operator(OperatorSpec(
     name="fetch_series",
     operator_type="dataset",
     description="Fetch indicator time series from store and normalize to typed Series output.",
+    input_types={},
     required_inputs=("series_id",),
     optional_parameters=("limit",),
     output_type="series",

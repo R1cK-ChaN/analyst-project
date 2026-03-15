@@ -46,6 +46,7 @@ register_operator(OperatorSpec(
     name="pct_change",
     operator_type="transform",
     description="Compute period-over-period percentage changes (MoM, QoQ, YoY).",
+    input_types={"values": "series"},
     required_inputs=("values",),
     optional_parameters=("period",),
     output_type="series",

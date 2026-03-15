@@ -62,6 +62,7 @@ register_operator(OperatorSpec(
     name="align",
     operator_type="transform",
     description="Align two series to a common time axis (inner join by labels, or tail-truncate if no labels).",
+    input_types={"values_a": "series", "values_b": "series"},
     required_inputs=("values_a", "values_b"),
     optional_parameters=(),
     output_type="dataset",

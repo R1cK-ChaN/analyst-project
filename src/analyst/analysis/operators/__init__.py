@@ -12,13 +12,13 @@ from .difference import difference
 from .fetch_dataset import fetch_dataset
 from .fetch_series import fetch_series
 from .pct_change import pct_change
-from .registry import OPERATOR_REGISTRY, OperatorSpec, run_operator
+from .registry import OPERATOR_REGISTRY, OperatorSpec, run_operator, validate_chain
 from .regression import regression
 from .resample import resample_series
 from .rolling import rolling_stat
 from .threshold import threshold_signal
 from .trend import compute_trend
-from .types import DATASET, METRIC, SERIES, SIGNAL
+from .types import DATASET, METRIC, SERIES, SIGNAL, TEXT, TypeMismatchError, check_composability, is_compatible
 
 __all__ = [
     "DATASET",
@@ -27,6 +27,11 @@ __all__ = [
     "OperatorSpec",
     "SERIES",
     "SIGNAL",
+    "TEXT",
+    "TypeMismatchError",
+    "check_composability",
+    "is_compatible",
+    "validate_chain",
     "align_series",
     "combine_series",
     "compare_series",

@@ -59,6 +59,7 @@ register_operator(OperatorSpec(
     name="correlation",
     operator_type="relation",
     description="Compute Pearson correlation between two numeric series with strength classification.",
+    input_types={"series_a": "series", "series_b": "series"},
     required_inputs=("series_a", "series_b"),
     optional_parameters=("label_a", "label_b"),
     output_type="metric",

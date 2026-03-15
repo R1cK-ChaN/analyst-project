@@ -54,6 +54,7 @@ register_operator(OperatorSpec(
     name="combine",
     operator_type="transform",
     description="Combine multiple series into one via aggregation (mean, sum, weighted, min, max, median).",
+    input_types={"series_list": "series"},
     required_inputs=("series_list",),
     optional_parameters=("method", "weights"),
     output_type="series",

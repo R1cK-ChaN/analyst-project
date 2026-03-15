@@ -53,6 +53,7 @@ register_operator(OperatorSpec(
     name="rolling_stat",
     operator_type="transform",
     description="Compute rolling window statistics (mean, std, min, max, median) over a numeric series.",
+    input_types={"values": "series"},
     required_inputs=("values",),
     optional_parameters=("window", "stat"),
     output_type="series",

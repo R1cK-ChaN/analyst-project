@@ -58,6 +58,7 @@ register_operator(OperatorSpec(
     name="resample",
     operator_type="transform",
     description="Resample a series by aggregating every N points (e.g. daily→monthly with factor=21, method=mean).",
+    input_types={"values": "series"},
     required_inputs=("values",),
     optional_parameters=("factor", "method"),
     output_type="series",

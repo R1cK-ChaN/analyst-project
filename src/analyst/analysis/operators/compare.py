@@ -62,6 +62,7 @@ register_operator(OperatorSpec(
     name="compare",
     operator_type="relation",
     description="Compare two numeric series with difference, ratio, and summary statistics.",
+    input_types={"series_a": "series", "series_b": "series"},
     required_inputs=("series_a", "series_b"),
     optional_parameters=("label_a", "label_b"),
     output_type="metric",

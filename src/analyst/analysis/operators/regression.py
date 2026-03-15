@@ -61,6 +61,7 @@ register_operator(OperatorSpec(
     name="regression",
     operator_type="relation",
     description="Linear regression (Y = alpha + beta*X) with R², residuals, and coefficient estimates.",
+    input_types={"series_x": "series", "series_y": "series"},
     required_inputs=("series_x", "series_y"),
     optional_parameters=("label_x", "label_y"),
     output_type="metric",
