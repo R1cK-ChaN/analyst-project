@@ -16,6 +16,7 @@ from analyst.tools import (
     build_live_news_tool,
     build_portfolio_holdings_tool,
     build_portfolio_risk_tool,
+    build_python_analysis_tool,
     build_rate_expectations_tool,
     build_reference_rates_tool,
     build_research_search_tool,
@@ -96,6 +97,7 @@ def _build_research_tools(dependencies: RoleDependencies) -> list[AgentTool]:
     kit.add(build_reference_rates_tool())
     kit.add(build_rate_expectations_tool())
     kit.add(build_vix_regime_tool())
+    kit.add(build_python_analysis_tool())
     if dependencies.store is not None:
         kit.add(build_live_calendar_tool(dependencies.store))
         kit.add(build_portfolio_risk_tool(dependencies.store))

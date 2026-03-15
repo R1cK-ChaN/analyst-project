@@ -3,6 +3,7 @@ from ._live_article import build_article_tool
 from ._live_calendar import build_live_calendar_tool
 from ._live_indicators import build_country_indicators_tool
 from ._live_photo import SeedDanceConfig, build_live_photo_tool, build_optional_live_photo_tool
+from ._python_analysis import build_python_analysis_tool
 from ._live_markets import build_live_markets_tool
 from ._live_news import build_live_news_tool
 from ._live_portfolio import build_portfolio_holdings_tool, build_portfolio_risk_tool, build_portfolio_sync_tool, build_vix_regime_tool
@@ -43,6 +44,7 @@ __all__ = [
     "build_portfolio_holdings_tool",
     "build_portfolio_risk_tool",
     "build_portfolio_sync_tool",
+    "build_python_analysis_tool",
     "build_rate_expectations_tool",
     "build_reference_rates_tool",
     "build_research_search_tool",

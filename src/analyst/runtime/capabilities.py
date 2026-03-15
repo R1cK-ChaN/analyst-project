@@ -22,6 +22,7 @@ from analyst.tools import (
     build_portfolio_holdings_tool,
     build_portfolio_risk_tool,
     build_portfolio_sync_tool,
+    build_python_analysis_tool,
     build_rate_expectations_tool,
     build_reference_rates_tool,
     build_research_search_tool,
@@ -57,6 +58,7 @@ RESEARCH_SUB_AGENT_PARENT_TOOL_NAMES: dict[str, tuple[str, ...]] = {
         "get_surprise_summary",
         "get_recent_releases",
         "get_today_calendar",
+        "run_python_analysis",
     ),
     "market_scanner": (
         "get_market_snapshot",
@@ -86,6 +88,7 @@ USER_SUB_AGENT_PARENT_TOOL_NAMES: dict[str, tuple[str, ...]] = {
         "get_regime_summary",
         "get_calendar",
         "web_search",
+        "run_python_analysis",
     ),
     "portfolio_analyst": (
         "get_portfolio_risk",
@@ -136,6 +139,7 @@ USER_CHAT_STATIC_TOOL_BUILDERS: tuple[Callable[[], AgentTool | None], ...] = (
     build_reference_rates_tool,
     build_rate_expectations_tool,
     build_vix_regime_tool,
+    build_python_analysis_tool,
 )
 
 USER_CHAT_OPTIONAL_TOOL_BUILDERS: tuple[Callable[[], AgentTool | None], ...] = (
