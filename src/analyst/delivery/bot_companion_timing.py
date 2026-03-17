@@ -143,11 +143,13 @@ def evaluate_relationship_checkin_kind(
     *,
     last_user_message_at: str | None = None,
     now: Any = None,
+    outreach_metrics: Any = None,
+    last_outreach_sent_at: str | None = None,
 ) -> str:
     """Determine if relationship state warrants a proactive check-in.
 
     Returns a check-in kind string or "" if none needed.
-    Priority: streak_save > emotional_concern > stage_milestone.
+    Priority: streak_save > emotional_concern > stage_milestone > warm_up_share.
     """
     if relationship is None:
         return ""
@@ -164,6 +166,15 @@ def evaluate_relationship_checkin_kind(
             emotional_trend = _compute_emotional_trend(mood_history, now=now)
         except Exception:
             pass
+
+    # If response rate is very low and stage regressing, only allow warm_up_share
+    metrics_rate = getattr(outreach_metrics, "response_rate", 1.0) if outreach_metrics else 1.0
+    _ORDER = {"stranger": 0, "acquaintance": 1, "familiar": 2, "close": 3}
+    is_regressing = prev_stage and _ORDER.get(prev_stage, 0) > _ORDER.get(stage, 0)
+    if metrics_rate < 0.3 and is_regressing:
+        if _should_warm_up_share(relationship, outreach_metrics, last_outreach_sent_at, now):
+            return "warm_up_share"
+        return ""
 
     # Streak about to break: had a streak of 3+ days and last interaction was yesterday
     if streak >= 3 and last_date and now is not None:
@@ -182,11 +193,62 @@ def evaluate_relationship_checkin_kind(
         return "emotional_concern"
 
     # Stage milestone: just transitioned upward (previous_stage is lower)
-    _ORDER = {"stranger": 0, "acquaintance": 1, "familiar": 2, "close": 3}
     if prev_stage and _ORDER.get(prev_stage, 0) < _ORDER.get(stage, 0):
         return "stage_milestone"
 
+    # Warm-up share for cooling relationships (lower priority)
+    if _should_warm_up_share(relationship, outreach_metrics, last_outreach_sent_at, now):
+        return "warm_up_share"
+
     return ""
+
+
+def _should_warm_up_share(
+    relationship: Any,
+    outreach_metrics: Any,
+    last_outreach_sent_at: str | None,
+    now: Any,
+) -> bool:
+    """Check if warm_up_share outreach should be triggered.
+
+    ALL conditions must be true:
+    1. Stage regressed OR intimacy decayed > 0.1 from peak
+    2. Response rate < 0.4
+    3. Last outreach >= 72 hours ago
+    """
+    if relationship is None or now is None:
+        return False
+
+    _ORDER = {"stranger": 0, "acquaintance": 1, "familiar": 2, "close": 3}
+    stage = str(getattr(relationship, "relationship_stage", "stranger") or "stranger")
+    prev_stage = str(getattr(relationship, "previous_stage", "") or "")
+    intimacy = float(getattr(relationship, "intimacy_level", 0.0) or 0.0)
+    peak = float(getattr(relationship, "peak_intimacy_level", 0.0) or 0.0)
+
+    # Condition 1: stage regressed OR intimacy decayed > 0.1 from peak
+    stage_regressed = prev_stage and _ORDER.get(prev_stage, 0) > _ORDER.get(stage, 0)
+    intimacy_decayed = peak > 0 and (peak - intimacy) > 0.1
+    if not stage_regressed and not intimacy_decayed:
+        return False
+
+    # Condition 2: response rate < 0.4
+    metrics_rate = getattr(outreach_metrics, "response_rate", 1.0) if outreach_metrics else 1.0
+    if metrics_rate >= 0.4:
+        return False
+
+    # Condition 3: last outreach >= 72 hours ago
+    if last_outreach_sent_at:
+        try:
+            last_dt = datetime.fromisoformat(last_outreach_sent_at)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=now.tzinfo)
+            hours_since = (now - last_dt).total_seconds() / 3600
+            if hours_since < 72:
+                return False
+        except (ValueError, TypeError):
+            pass
+
+    return True
 
 
 def _needs_emotional_follow_up(text: str, profile: Any) -> bool:

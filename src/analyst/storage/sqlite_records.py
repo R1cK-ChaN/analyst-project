@@ -308,6 +308,10 @@ class CompanionRelationshipStateRecord:
     last_stage_transition_at: str  # ISO timestamp
     created_at: str
     updated_at: str
+    outreach_paused: bool = False
+    outreach_paused_at: str = ""
+    peak_intimacy_level: float = 0.0
+    tendency_damping_json: str = "{}"
 
 
 @dataclass(frozen=True)

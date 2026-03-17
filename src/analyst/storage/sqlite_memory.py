@@ -631,6 +631,10 @@ class SQLiteMemoryMixin:
         last_interaction_date: str | None = None,
         last_stage_transition_at: str | None = None,
         emotional_trend: str | None = None,
+        outreach_paused: bool | None = None,
+        outreach_paused_at: str | None = None,
+        peak_intimacy_level: float | None = None,
+        tendency_damping_json: str | None = None,
     ) -> CompanionRelationshipStateRecord:
         with self._connection(commit=True) as connection:
             return self._upsert_companion_relationship_state_in_connection(
@@ -651,6 +655,10 @@ class SQLiteMemoryMixin:
                 last_interaction_date=last_interaction_date,
                 last_stage_transition_at=last_stage_transition_at,
                 emotional_trend=emotional_trend,
+                outreach_paused=outreach_paused,
+                outreach_paused_at=outreach_paused_at,
+                peak_intimacy_level=peak_intimacy_level,
+                tendency_damping_json=tendency_damping_json,
             )
 
     def create_companion_reminder(
@@ -1420,6 +1428,10 @@ class SQLiteMemoryMixin:
             last_stage_transition_at=row["last_stage_transition_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            outreach_paused=bool(row["outreach_paused"]),
+            outreach_paused_at=row["outreach_paused_at"],
+            peak_intimacy_level=float(row["peak_intimacy_level"]),
+            tendency_damping_json=row["tendency_damping_json"],
         )
 
     def _get_companion_relationship_state_in_connection(
@@ -1451,6 +1463,10 @@ class SQLiteMemoryMixin:
         last_interaction_date: str | None = None,
         last_stage_transition_at: str | None = None,
         emotional_trend: str | None = None,
+        outreach_paused: bool | None = None,
+        outreach_paused_at: str | None = None,
+        peak_intimacy_level: float | None = None,
+        tendency_damping_json: str | None = None,
     ) -> CompanionRelationshipStateRecord:
         current = self._get_companion_relationship_state_in_connection(connection, client_id=client_id)
         now_iso = utc_now().isoformat()
@@ -1470,6 +1486,10 @@ class SQLiteMemoryMixin:
         next_prev_stage = previous_stage if previous_stage is not None else current.previous_stage
         next_lid = last_interaction_date if last_interaction_date is not None else current.last_interaction_date
         next_lst = last_stage_transition_at if last_stage_transition_at is not None else current.last_stage_transition_at
+        next_outreach_paused = outreach_paused if outreach_paused is not None else current.outreach_paused
+        next_outreach_paused_at = outreach_paused_at if outreach_paused_at is not None else current.outreach_paused_at
+        next_peak = peak_intimacy_level if peak_intimacy_level is not None else current.peak_intimacy_level
+        next_damping = tendency_damping_json if tendency_damping_json is not None else current.tendency_damping_json
 
         connection.execute(
             """
@@ -1479,8 +1499,10 @@ class SQLiteMemoryMixin:
                 streak_days, total_turns, avg_session_turns,
                 mood_history_json, nicknames_json, previous_stage,
                 last_interaction_date, last_stage_transition_at,
+                outreach_paused, outreach_paused_at,
+                peak_intimacy_level, tendency_damping_json,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(client_id) DO UPDATE SET
                 intimacy_level = excluded.intimacy_level,
                 relationship_stage = excluded.relationship_stage,
@@ -1496,6 +1518,10 @@ class SQLiteMemoryMixin:
                 previous_stage = excluded.previous_stage,
                 last_interaction_date = excluded.last_interaction_date,
                 last_stage_transition_at = excluded.last_stage_transition_at,
+                outreach_paused = excluded.outreach_paused,
+                outreach_paused_at = excluded.outreach_paused_at,
+                peak_intimacy_level = excluded.peak_intimacy_level,
+                tendency_damping_json = excluded.tendency_damping_json,
                 updated_at = excluded.updated_at
             """,
             (
@@ -1514,6 +1540,10 @@ class SQLiteMemoryMixin:
                 next_prev_stage,
                 next_lid,
                 next_lst,
+                int(next_outreach_paused),
+                next_outreach_paused_at,
+                next_peak,
+                next_damping,
                 created_at,
                 now_iso,
             ),
@@ -1536,6 +1566,10 @@ class SQLiteMemoryMixin:
             last_stage_transition_at=next_lst,
             created_at=created_at,
             updated_at=now_iso,
+            outreach_paused=next_outreach_paused,
+            outreach_paused_at=next_outreach_paused_at,
+            peak_intimacy_level=next_peak,
+            tendency_damping_json=next_damping,
         )
 
     def _row_to_companion_lifestyle_state(

@@ -635,6 +635,10 @@ class SQLiteSchemaMixin:
                 table_name="companion_relationship_state",
                 columns={
                     "previous_stage": "TEXT NOT NULL DEFAULT ''",
+                    "outreach_paused": "INTEGER NOT NULL DEFAULT 0",
+                    "outreach_paused_at": "TEXT NOT NULL DEFAULT ''",
+                    "peak_intimacy_level": "REAL NOT NULL DEFAULT 0.0",
+                    "tendency_damping_json": "TEXT NOT NULL DEFAULT '{}'",
                 },
             )
             connection.execute(

@@ -967,6 +967,16 @@ def _proactive_companion_instruction(kind: str) -> str:
             "Express this naturally — maybe note that chatting with them has become a highlight, "
             "or that you feel more comfortable now. Brief, genuine, no over-the-top declarations."
         )
+    if normalized == "warm_up_share":
+        return (
+            "【触达类型：随手分享】\n"
+            "这次不要关心对方、不要问\"你怎么了\"、不要表达想念。\n"
+            "像一个朋友随手分享一个有趣的小事：\n"
+            "- 分享一首歌、一个有趣的发现、一个段子\n"
+            "- 如果记忆中有相关信息，自然关联（比如用户养猫→\"今天看到一只猫…\"）\n"
+            "- 语气轻松，不施加任何回复压力\n"
+            "- 结尾不要用问号，不要问\"你觉得呢\""
+        )
     return (
         "Send a gentle inactivity check-in now. The user has been quiet for a while. "
         "Write like a warm companion casually checking in, with no guilt or pressure. Keep it brief."

@@ -370,12 +370,53 @@ async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> Non
             except Exception:
                 logger.exception("Failed to send companion inactivity check-in")
             continue
-        # Relationship-aware proactive check-in
+        # Relationship-aware proactive check-in (with response rate throttling)
         if _in_window and not state.pending_kind:
             try:
+                from analyst.delivery.outreach_metrics import (
+                    compute_outreach_metrics,
+                    compute_outreach_throttle,
+                    should_send_outreach,
+                )
+
+                recent_outreach = store.list_recent_companion_outreach(client_id=state.client_id, days=7)
+                metrics = compute_outreach_metrics(recent_outreach)
+                throttle = compute_outreach_throttle(metrics)
+
+                # If paused, update relationship state and skip
+                if throttle.paused:
+                    store.update_companion_relationship_state(
+                        client_id=state.client_id,
+                        outreach_paused=True,
+                        outreach_paused_at=now.isoformat(),
+                    )
+                    continue
+
+                today_count = store.count_outreach_sent_today(
+                    client_id=state.client_id, channel=state.channel, thread_id=state.thread_id,
+                )
+                last_sent = store.get_last_outreach_sent_at(
+                    client_id=state.client_id, channel=state.channel, thread_id=state.thread_id,
+                )
+                hours_since = 999.0
+                if last_sent:
+                    try:
+                        _last_dt = datetime.fromisoformat(last_sent)
+                        if _last_dt.tzinfo is None:
+                            _last_dt = _last_dt.replace(tzinfo=now.tzinfo)
+                        hours_since = (now - _last_dt).total_seconds() / 3600
+                    except (ValueError, TypeError):
+                        pass
+                if not should_send_outreach(throttle, outreach_count_today=today_count, hours_since_last_outreach=hours_since):
+                    continue
+
                 rel_state = store.get_companion_relationship_state(client_id=state.client_id)
                 rel_kind = evaluate_relationship_checkin_kind(
-                    rel_state, last_user_message_at=last_user_message_at, now=now,
+                    rel_state,
+                    last_user_message_at=last_user_message_at,
+                    now=now,
+                    outreach_metrics=metrics,
+                    last_outreach_sent_at=last_sent,
                 )
                 if rel_kind and not _is_same_local_day(state.last_sent_at, now):
                     await _send_companion_proactive_message(
@@ -806,6 +847,7 @@ def _make_message_handler(
             needs_emotional_follow_up=_needs_emotional_follow_up,
         )
         # Attribute user reply to most recent outreach (within 4h window)
+        # and resume outreach if paused (user initiating = organic engagement)
         try:
             store.mark_outreach_replied(
                 client_id=conversation.user_id,
@@ -813,6 +855,13 @@ def _make_message_handler(
                 thread_id=thread_id,
                 replied_at=now_utc.isoformat(),
             )
+            _rel = store.get_companion_relationship_state(client_id=conversation.user_id)
+            if getattr(_rel, "outreach_paused", False):
+                store.update_companion_relationship_state(
+                    client_id=conversation.user_id,
+                    outreach_paused=False,
+                    outreach_paused_at="",
+                )
         except Exception:
             logger.debug("Outreach reply attribution skipped", exc_info=True)
         bubbles = rendered_bubbles or [(bubble, []) for bubble in split_into_bubbles(rendered_reply_text)]

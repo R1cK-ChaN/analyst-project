@@ -132,6 +132,11 @@ def compute_relationship_update(
     new_intimacy = min(1.0, max(0.0, decayed + delta))
     updates["intimacy_level"] = round(new_intimacy, 4)
 
+    # 3b. Track peak intimacy for cold outreach detection
+    current_peak = getattr(current, "peak_intimacy_level", 0.0) or 0.0
+    if new_intimacy > current_peak:
+        updates["peak_intimacy_level"] = round(new_intimacy, 4)
+
     # 4. Stage transition (can also regress on heavy decay)
     transition = _maybe_transition_stage(
         current.relationship_stage,
