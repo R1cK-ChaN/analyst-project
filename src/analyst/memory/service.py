@@ -918,6 +918,21 @@ def _render_companion_profile(
             "语气稍微收一点但不要完全变陌生人，可以自然提起好久不见。"
         )
 
+    # -- Tendency spike hint (ambiguous window) --
+    if rel_valid:
+        damping_json = getattr(relationship, "tendency_damping_json", "{}") or "{}"
+        try:
+            import json as _json
+            damping_state = _json.loads(damping_json) if isinstance(damping_json, str) else {}
+            spike_consecutive = int(damping_state.get("spike_consecutive", 0))
+            if 1 <= spike_consecutive < 3:
+                lines.append(
+                    "- [用户这条消息的风格和之前不太一样，可能在开玩笑或试探。"
+                    "不要过度反应，用轻松的方式回应，观察对方是否持续这个方向。]"
+                )
+        except (ValueError, TypeError):
+            pass
+
     # -- Interaction stats --
     stats_parts: list[str] = []
     turns = relationship.total_turns if rel_valid else profile.total_interactions

@@ -5,6 +5,7 @@ No I/O — all functions take current state + signals and return update dicts.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -149,7 +150,7 @@ def compute_relationship_update(
         updates["relationship_stage"] = transition[0]
         updates["last_stage_transition_at"] = transition[1]
 
-    # 5. Tendency distribution
+    # 5. Tendency distribution (with spike damping)
     tf, tr, tc, tm = _update_tendencies(
         current.tendency_friend,
         current.tendency_romantic,
@@ -157,6 +158,34 @@ def compute_relationship_update(
         current.tendency_mentor,
         signal=signal,
     )
+    # Apply damping if there's a primary nudge target this turn
+    damping_json = getattr(current, "tendency_damping_json", "{}") or "{}"
+    try:
+        damping_state = json.loads(damping_json) if isinstance(damping_json, str) else {}
+    except (json.JSONDecodeError, TypeError):
+        damping_state = {}
+    primary_target = _get_primary_nudge_target(signal)
+    if primary_target:
+        tendencies_dict = {
+            "friend": current.tendency_friend,
+            "romantic": current.tendency_romantic,
+            "confidant": current.tendency_confidant,
+            "mentor": current.tendency_mentor,
+        }
+        effective_amount, damping_state = apply_tendency_damping(
+            tendencies_dict, primary_target, _TENDENCY_NUDGE_AMOUNT, damping_state,
+        )
+        if effective_amount != _TENDENCY_NUDGE_AMOUNT:
+            # Recompute with damped amount
+            tf, tr, tc, tm = current.tendency_friend, current.tendency_romantic, current.tendency_confidant, current.tendency_mentor
+            tf, tr, tc, tm = _nudge(tf, tr, tc, tm, primary_target, effective_amount)
+            if signal.is_personal_sharing:
+                tf, tr, tc, tm = _nudge(tf, tr, tc, tm, "confidant", 0.015)
+            if signal.is_late_night:
+                for tendency, amount in _LATE_NIGHT_TENDENCY_NUDGES.items():
+                    tf, tr, tc, tm = _nudge(tf, tr, tc, tm, tendency, amount)
+            tf, tr, tc, tm = _normalize_tendencies(tf, tr, tc, tm)
+        updates["tendency_damping_json"] = json.dumps(damping_state, ensure_ascii=False)
     updates["tendency_friend"] = tf
     updates["tendency_romantic"] = tr
     updates["tendency_confidant"] = tc
@@ -303,6 +332,19 @@ def _maybe_transition_stage(
 # ---------------------------------------------------------------------------
 
 
+def _get_primary_nudge_target(signal: RelationshipSignalUpdate) -> str:
+    """Determine the primary tendency nudge target for this turn's signal."""
+    if signal.interaction_mode:
+        target = _INTERACTION_MODE_TENDENCY_MAP.get(signal.interaction_mode)
+        if target:
+            return target
+    if signal.active_topic_category:
+        target = _CATEGORY_TENDENCY_MAP.get(signal.active_topic_category)
+        if target:
+            return target
+    return ""
+
+
 def _update_tendencies(
     friend: float,
     romantic: float,
@@ -367,6 +409,92 @@ def _normalize_tendencies(
         round(confidant / total, 4),
         round(mentor / total, 4),
     )
+
+
+# ---------------------------------------------------------------------------
+# Tendency spike damping
+# ---------------------------------------------------------------------------
+
+_DAMPING_DOMINANT_THRESHOLD = 0.35
+_DAMPING_CONSECUTIVE_TO_CONFIRM = 3
+_DAMPING_FACTOR = 0.5
+
+
+def _get_dominant_tendency(tendencies: dict[str, float]) -> tuple[str, float]:
+    """Return (name, ratio) of the dominant tendency."""
+    if not tendencies:
+        return ("friend", 0.25)
+    name = max(tendencies, key=tendencies.get)  # type: ignore[arg-type]
+    return (name, tendencies[name])
+
+
+def apply_tendency_damping(
+    tendencies: dict[str, float],
+    nudge_target: str,
+    nudge_amount: float,
+    damping_state: dict,
+) -> tuple[float, dict]:
+    """Apply spike damping to a tendency nudge.
+
+    Returns (effective_nudge_amount, updated_damping_state).
+    """
+    if not nudge_target or nudge_amount <= 0:
+        return (nudge_amount, damping_state)
+
+    state = dict(damping_state)
+    dominant = state.get("dominant_20", "")
+    dominant_ratio = float(state.get("dominant_ratio", 0.0))
+
+    # Recompute dominant from current tendencies
+    d_name, d_ratio = _get_dominant_tendency(tendencies)
+    state["dominant_20"] = d_name
+    state["dominant_ratio"] = round(d_ratio, 4)
+
+    # If nudge aligns with dominant → normal, reset spike tracking
+    if nudge_target == d_name:
+        state["spike_target"] = ""
+        state["spike_consecutive"] = 0
+        state["accumulated_dampened"] = {}
+        return (nudge_amount, state)
+
+    # If no strong dominant pattern → normal nudge
+    if d_ratio <= _DAMPING_DOMINANT_THRESHOLD:
+        state["spike_target"] = ""
+        state["spike_consecutive"] = 0
+        state["accumulated_dampened"] = {}
+        return (nudge_amount, state)
+
+    # Opposing a strong dominant pattern
+    current_spike = state.get("spike_target", "")
+    consecutive = int(state.get("spike_consecutive", 0))
+    accumulated = dict(state.get("accumulated_dampened", {}))
+
+    if nudge_target != current_spike:
+        # New spike direction — reset
+        consecutive = 1
+        accumulated = {nudge_target: nudge_amount * (1 - _DAMPING_FACTOR)}
+        state["spike_target"] = nudge_target
+        state["spike_consecutive"] = consecutive
+        state["accumulated_dampened"] = accumulated
+        return (nudge_amount * _DAMPING_FACTOR, state)
+
+    # Same spike direction continuing
+    consecutive += 1
+    state["spike_consecutive"] = consecutive
+
+    if consecutive >= _DAMPING_CONSECUTIVE_TO_CONFIRM:
+        # Confirmed shift — apply full amount + accumulated dampened
+        retroactive = float(accumulated.get(nudge_target, 0.0))
+        state["spike_target"] = ""
+        state["spike_consecutive"] = 0
+        state["accumulated_dampened"] = {}
+        return (nudge_amount + retroactive, state)
+
+    # Still in ambiguous window — halve the nudge, accumulate the rest
+    dampened_delta = nudge_amount * (1 - _DAMPING_FACTOR)
+    accumulated[nudge_target] = float(accumulated.get(nudge_target, 0.0)) + dampened_delta
+    state["accumulated_dampened"] = accumulated
+    return (nudge_amount * _DAMPING_FACTOR, state)
 
 
 # ---------------------------------------------------------------------------
