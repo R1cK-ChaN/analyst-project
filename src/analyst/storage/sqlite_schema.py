@@ -848,6 +848,15 @@ class SQLiteSchemaMixin:
                 "CREATE INDEX IF NOT EXISTS idx_group_members_group "
                 "ON group_members(group_id, last_seen_at DESC)"
             )
+            self._ensure_table_columns(
+                connection,
+                table_name="group_profiles",
+                columns={
+                    "autonomous_messages_today": "INTEGER NOT NULL DEFAULT 0",
+                    "autonomous_messages_date": "TEXT NOT NULL DEFAULT ''",
+                    "last_autonomous_at": "TEXT NOT NULL DEFAULT ''",
+                },
+            )
             # -- Document storage: 5-table normalized schema --------------------
             connection.execute(
                 """

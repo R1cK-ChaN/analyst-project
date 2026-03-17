@@ -241,6 +241,7 @@ def system_prompt_with_memory(
     native_tool_names: tuple[str, ...] = (),
     mcp_tool_names: tuple[str, ...] = (),
     engine_context: str = "",
+    group_autonomous: bool = False,
 ) -> str:
     del persona_mode
     resolved_executor = coerce_agent_executor(executor) if executor is not None else None
@@ -261,6 +262,7 @@ def system_prompt_with_memory(
             group_context=group_context,
             proactive_kind=proactive_kind,
             companion_local_context=local_context,
+            group_autonomous=group_autonomous,
         )
     )
     return f"{base_prompt}\n\n{capability_overlay}".strip() if capability_overlay else base_prompt
@@ -849,6 +851,7 @@ def generate_chat_reply(
     native_tool_names: tuple[str, ...] = (),
     engine: OpenRouterAnalystEngine | Any | None = None,
     injection_detected: bool = False,
+    group_autonomous: bool = False,
 ) -> ChatReply:
     del persona_mode
     executor = coerce_agent_executor(agent_loop)
@@ -878,6 +881,7 @@ def generate_chat_reply(
         native_tool_names=plan.native_tool_names,
         mcp_tool_names=plan.mcp_tool_names,
         engine_context=engine_context,
+        group_autonomous=group_autonomous,
     )
     if injection_detected:
         from analyst.delivery.injection_scanner import build_injection_defense_block

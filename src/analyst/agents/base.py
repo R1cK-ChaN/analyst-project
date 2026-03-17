@@ -15,6 +15,7 @@ class RolePromptContext:
     proactive_kind: str = ""
     companion_local_context: str = ""
     current_time_label: str = ""
+    group_autonomous: bool = False
 
 
 @dataclass(frozen=True)

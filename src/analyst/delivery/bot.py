@@ -97,6 +97,12 @@ from .bot_group_chat import (  # noqa: E402
     _should_reply_in_group,
     _strip_bot_mention,
 )
+from .group_intervention import (  # noqa: E402
+    BOT_DISPLAY_NAMES,
+    BOT_USER_ID,
+    evaluate_group_intervention,
+    should_cancel_intervention,
+)
 from .bot_history import _append_history, _get_history, _send_bot_bubbles  # noqa: E402
 from .bot_media import (  # noqa: E402
     _cleanup_generated_media,
@@ -796,6 +802,183 @@ def _make_premarket_handler(
     return premarket
 
 
+_AUTONOMOUS_INSTRUCTIONS: dict[str, str] = {
+    "name_mention": "(群里有人提到了你的名字，自然回应一句。)",
+    "interest_match": "(群里有人在讨论你感兴趣的话题，可以轻轻接一句。)",
+    "unanswered_question": "(群里有个问题好像没人回答，你可以简短答一句。)",
+    "emotional_gap": "(群里有人好像不太开心，没人回应，你可以轻轻说一句关心的话。)",
+}
+
+
+async def _maybe_schedule_autonomous_intervention(
+    *,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    store: SQLiteEngineStore,
+    agent_loop: AgentExecutor,
+    tools: list[AgentTool],
+    group_id: str,
+    thread_id: str,
+    user_id: str,
+    now_utc: datetime,
+) -> None:
+    """Evaluate whether to autonomously intervene, and schedule if appropriate."""
+    try:
+        # Send window check
+        try:
+            _rel = store.get_companion_relationship_state(client_id=user_id)
+            _stage = str(getattr(_rel, "relationship_stage", "familiar") or "familiar")
+            _rom = float(getattr(_rel, "tendency_romantic", 0.0) or 0.0)
+            _msgs_ts = store.list_recent_message_timestamps(client_id=user_id, limit=50)
+            _prof = store.get_client_profile(user_id)
+            _tz = _prof.timezone_name or DEFAULT_USER_TIMEZONE
+            _late = compute_late_night_activity_pct(_msgs_ts, _tz)
+            _win = get_send_window(_stage, tendency_romantic=_rom, late_night_activity_pct=_late)
+            send_window_active = is_within_send_window(now_utc, window=_win, timezone_name=_tz)
+        except Exception:
+            send_window_active = True  # default open if lookup fails
+
+        today_str = now_utc.strftime("%Y-%m-%d")
+        interest_count = store.get_autonomous_message_count_today(group_id, today_str)
+        recent = store.list_group_messages(group_id, thread_id, limit=30)
+        messages = [
+            {
+                "message_id": m.message_id,
+                "user_id": m.user_id,
+                "content": m.content,
+                "display_name": m.display_name,
+                "created_at": m.created_at,
+            }
+            for m in recent
+        ]
+        current = messages[-1] if messages else {}
+
+        result = evaluate_group_intervention(
+            messages=messages,
+            current_message=current,
+            bot_display_names=BOT_DISPLAY_NAMES,
+            persona_mode="companion",
+            send_window_active=send_window_active,
+            bot_user_id=BOT_USER_ID,
+            interest_triggers_today=interest_count,
+            now=now_utc,
+        )
+
+        if not result.should_intervene or result.trigger is None:
+            return
+
+        asyncio.ensure_future(
+            _delayed_autonomous_reply(
+                update=update,
+                context=context,
+                store=store,
+                agent_loop=agent_loop,
+                tools=tools,
+                group_id=group_id,
+                thread_id=thread_id,
+                trigger=result.trigger,
+                trigger_message_id=result.trigger_message_id,
+                delay_seconds=result.delay_seconds,
+            )
+        )
+    except Exception:
+        logger.debug("Autonomous intervention evaluation failed", exc_info=True)
+
+
+async def _delayed_autonomous_reply(
+    *,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    store: SQLiteEngineStore,
+    agent_loop: AgentExecutor,
+    tools: list[AgentTool],
+    group_id: str,
+    thread_id: str,
+    trigger: Any,
+    trigger_message_id: int,
+    delay_seconds: float,
+) -> None:
+    """Wait, re-evaluate, then send an autonomous reply if still appropriate."""
+
+    try:
+        await asyncio.sleep(delay_seconds)
+
+        # Re-evaluate: check messages that arrived during the delay
+        new_messages = store.list_group_messages_since(group_id, thread_id, trigger_message_id)
+        msgs_dicts = [
+            {"content": m.content, "user_id": m.user_id, "display_name": m.display_name}
+            for m in new_messages
+        ]
+        if should_cancel_intervention(messages_since_trigger=msgs_dicts, trigger=trigger):
+            logger.debug(
+                "Autonomous intervention cancelled for group=%s trigger=%s",
+                group_id, trigger.kind,
+            )
+            return
+
+        # Build synthetic instruction
+        instruction = _AUTONOMOUS_INSTRUCTIONS.get(trigger.kind, "")
+        group_context_str = _render_group_context(context, thread_id)
+
+        # Use the most recent messages for context
+        recent = store.list_group_messages(group_id, thread_id, limit=30)
+        history_lines = [f"{m.display_name}: {m.content}" for m in recent[-15:]]
+        group_ctx = "\n".join(history_lines) if history_lines else group_context_str
+
+        conversation = ConversationInput(
+            user_id=BOT_USER_ID,
+            channel="telegram",
+            channel_id=f"telegram:{group_id}",
+            thread_id=thread_id,
+            message=instruction,
+            current_user_text=instruction,
+            group_context=group_ctx,
+            group_id=group_id,
+            persona_mode="companion",
+            group_autonomous=True,
+        )
+
+        reply = await asyncio.to_thread(
+            run_companion_turn_for_input,
+            conversation=conversation,
+            store=store,
+            agent_loop=agent_loop,
+            tools=tools,
+            memory_context_builder=build_chat_context,
+            group_memory_context_builder=build_group_chat_context,
+            reply_generator=generate_chat_reply,
+        )
+        response_text = reply.text
+        if not response_text or response_text == "嗯":
+            return
+
+        bubbles = split_into_bubbles(response_text)
+        chat_id = int(group_id)
+        await _send_bot_bubbles(context.bot, chat_id=chat_id, bubbles=bubbles)
+
+        # Record to group buffer and store
+        _append_group_buffer(context, thread_id, "陈襄", response_text, role="assistant")
+        store.append_group_message(
+            group_id=group_id,
+            thread_id=thread_id,
+            user_id=BOT_USER_ID,
+            display_name="陈襄",
+            content=response_text,
+        )
+
+        # Increment autonomous message count
+        now_iso = utc_now().isoformat()
+        today_str = now_iso[:10]
+        store.increment_autonomous_message_count(group_id, today_str, now_iso)
+
+        logger.info(
+            "Autonomous intervention sent: group=%s trigger=%s",
+            group_id, trigger.kind,
+        )
+    except Exception:
+        logger.exception("Autonomous intervention reply failed for group=%s", group_id)
+
+
 def _make_message_handler(
     agent_loop: AgentExecutor,
     tools: list[AgentTool],
@@ -857,6 +1040,19 @@ def _make_message_handler(
             refresh_group_member_public_inference(store=store, group_id=group_id)
 
             if not _should_reply_in_group(update, context):
+                asyncio.ensure_future(
+                    _maybe_schedule_autonomous_intervention(
+                        update=update,
+                        context=context,
+                        store=store,
+                        agent_loop=agent_loop,
+                        tools=tools,
+                        group_id=group_id,
+                        thread_id=thread_id,
+                        user_id=user_id,
+                        now_utc=now_utc,
+                    )
+                )
                 return
 
             bot_username = context.bot.username or ""

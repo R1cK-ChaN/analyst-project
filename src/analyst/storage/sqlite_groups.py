@@ -204,16 +204,17 @@ class SQLiteGroupMixin:
         user_id: str,
         display_name: str,
         content: str,
-    ) -> None:
+    ) -> int:
         now = utc_now().isoformat()
         with self._connection(commit=True) as connection:
-            connection.execute(
+            cursor = connection.execute(
                 """
                 INSERT INTO group_messages (group_id, thread_id, user_id, display_name, content, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (group_id, thread_id, user_id, display_name, content, now),
             )
+            return cursor.lastrowid or 0
 
     def list_group_messages(
         self,
@@ -279,4 +280,89 @@ class SQLiteGroupMixin:
         ]
         records.reverse()  # chronological order
         return records
+
+    def list_group_messages_since(
+        self,
+        group_id: str,
+        thread_id: str,
+        since_message_id: int,
+        *,
+        limit: int = 50,
+    ) -> list[GroupMessageRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, group_id, thread_id, user_id, display_name, content, created_at
+                FROM group_messages
+                WHERE group_id = ? AND thread_id = ? AND id > ?
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (group_id, thread_id, since_message_id, limit),
+            ).fetchall()
+        return [
+            GroupMessageRecord(
+                message_id=row["id"],
+                group_id=row["group_id"],
+                thread_id=row["thread_id"],
+                user_id=row["user_id"],
+                display_name=row["display_name"],
+                content=row["content"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    def get_autonomous_message_count_today(
+        self,
+        group_id: str,
+        today_date: str,
+    ) -> int:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT autonomous_messages_today, autonomous_messages_date "
+                "FROM group_profiles WHERE group_id = ? LIMIT 1",
+                (group_id,),
+            ).fetchone()
+        if row is None:
+            return 0
+        if row["autonomous_messages_date"] != today_date:
+            return 0
+        return int(row["autonomous_messages_today"])
+
+    def increment_autonomous_message_count(
+        self,
+        group_id: str,
+        today_date: str,
+        now_iso: str,
+    ) -> int:
+        with self._connection(commit=True) as connection:
+            row = connection.execute(
+                "SELECT autonomous_messages_today, autonomous_messages_date "
+                "FROM group_profiles WHERE group_id = ? LIMIT 1",
+                (group_id,),
+            ).fetchone()
+            if row is None:
+                # Create a minimal profile row first
+                connection.execute(
+                    "INSERT OR IGNORE INTO group_profiles "
+                    "(group_id, group_name, group_topic, group_notes, member_count, "
+                    "created_at, updated_at, autonomous_messages_today, "
+                    "autonomous_messages_date, last_autonomous_at) "
+                    "VALUES (?, '', '', '', 0, ?, ?, 1, ?, ?)",
+                    (group_id, now_iso, now_iso, today_date, now_iso),
+                )
+                return 1
+            if row["autonomous_messages_date"] != today_date:
+                new_count = 1
+            else:
+                new_count = int(row["autonomous_messages_today"]) + 1
+            connection.execute(
+                "UPDATE group_profiles SET "
+                "autonomous_messages_today = ?, autonomous_messages_date = ?, "
+                "last_autonomous_at = ?, updated_at = ? "
+                "WHERE group_id = ?",
+                (new_count, today_date, now_iso, now_iso, group_id),
+            )
+            return new_count
 

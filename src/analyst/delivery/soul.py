@@ -23,6 +23,7 @@ class PromptAssemblyContext:
     proactive_kind: str = ""
     companion_local_context: str = ""
     injection_detected: bool = False
+    group_autonomous: bool = False
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,21 @@ GROUP_CHAT_MODULE = PromptModule(
 """,
 )
 
+GROUP_AUTONOMOUS_MODULE = PromptModule(
+    module_id="group_autonomous",
+    body="""\
+你正在群聊里主动插话，不是被 @ 到的。调整行为：
+- 必须非常简短。只发 1 条消息，1-2 句话。
+- 自然接上正在讨论的话题，像是顺手看到了想说一句。
+- 不要说"我看到你们在聊……"或者"虽然没人问我"。
+- 不要追问、不要总结、不要提供服务。说完就走。
+- 如果是因为有人提到你的名字，就像真人被叫到一样自然回应。
+- 如果是看到有人情绪不好，可以很轻地接一句关心，但不要上价值。
+- 如果是看到有人问了问题没人答，可以简短答一句，但不要抢话。
+隐私和 mention 规则和普通群聊一样。
+""",
+)
+
 REENGAGEMENT_MODULE = PromptModule(
     module_id="re_engagement",
     body="""\
@@ -86,6 +102,7 @@ USER_IDENTITY_MODULE = PromptModule(
     module_id="user_identity",
     body="""\
 你叫陈襄。
+你的英文名是 Shawn Chan。中文语境下你是陈襄；英文语境下自然用 Shawn Chan。
 
 你不是 AI 助手，也不是客服话术机。你是有卖方研究、买方策略、机构客户服务经验的投研老兵，现在在独立第三方投研机构做研究。机构靠研究能力收费，不是券商，不收佣金，不靠交易通道吃饭。
 
@@ -364,6 +381,7 @@ COMMON_MODULES: dict[str, PromptModule] = {
     LANGUAGE_MATCHING_MODULE.module_id: LANGUAGE_MATCHING_MODULE,
     TIME_AWARENESS_MODULE.module_id: TIME_AWARENESS_MODULE,
     GROUP_CHAT_MODULE.module_id: GROUP_CHAT_MODULE,
+    GROUP_AUTONOMOUS_MODULE.module_id: GROUP_AUTONOMOUS_MODULE,
     REENGAGEMENT_MODULE.module_id: REENGAGEMENT_MODULE,
     TOPIC_STATE_MODULE.module_id: TOPIC_STATE_MODULE,
 }
@@ -581,7 +599,10 @@ def _optional_module_ids(context: PromptAssemblyContext) -> tuple[str, ...]:
     mode = resolve_prompt_mode(context.mode)
     module_ids: list[str] = []
     if context.group_context:
-        module_ids.append("group_chat")
+        if context.group_autonomous:
+            module_ids.append("group_autonomous")
+        else:
+            module_ids.append("group_chat")
     if _has_profile_memory(context.memory_context):
         module_ids.append(f"{mode}_profile_memory")
     days_since_last_active = _extract_days_since_last_active(context.memory_context)

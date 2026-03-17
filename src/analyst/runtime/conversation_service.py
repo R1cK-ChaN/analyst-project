@@ -197,6 +197,7 @@ def run_companion_turn_for_input(
             companion_local_context=companion_local_context,
             persona_mode=conversation.persona_mode,
             injection_detected=injection_detected,
+            group_autonomous=conversation.group_autonomous,
         )
 
 

@@ -21,6 +21,7 @@ class ConversationInput:
     companion_local_context: str = ""
     attached_image: RequestImageInput | None = None
     persona_mode: str = "companion"
+    group_autonomous: bool = False
 
 
 @dataclass(frozen=True)

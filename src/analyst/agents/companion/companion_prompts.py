@@ -27,6 +27,7 @@ def build_companion_system_prompt(context: RolePromptContext) -> str:
             current_time_label=now.strftime("%Y-%m-%d %H:%M %A") + " (Asia/Singapore)",
             proactive_kind=context.proactive_kind,
             companion_local_context=context.companion_local_context,
+            group_autonomous=context.group_autonomous,
         )
     ).prompt
     return f"{base_prompt}\n\n{_RESEARCH_DELEGATION_MODULE}"
