@@ -61,6 +61,7 @@ from analyst.tools._request_context import RequestImageInput, bind_request_image
 from .bot_companion_timing import (  # noqa: E402
     _companion_local_context,
     _derive_companion_routine_state,
+    evaluate_relationship_checkin_kind,
     _first_reply_delay_seconds,
     _is_same_local_day,
     _is_within_checkin_send_window,
@@ -338,6 +339,25 @@ async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> Non
             except Exception:
                 logger.exception("Failed to send companion inactivity check-in")
             continue
+        # Relationship-aware proactive check-in
+        if _is_within_checkin_send_window(now) and not state.pending_kind:
+            try:
+                rel_state = store.get_companion_relationship_state(client_id=state.client_id)
+                rel_kind = evaluate_relationship_checkin_kind(
+                    rel_state, last_user_message_at=last_user_message_at, now=now,
+                )
+                if rel_kind and not _is_same_local_day(state.last_sent_at, now):
+                    await _send_companion_proactive_message(
+                        store=store,
+                        agent_loop=agent_loop,
+                        bot=context.bot,
+                        state=state,
+                        kind=rel_kind,
+                        now=now,
+                    )
+                    continue
+            except Exception:
+                logger.exception("Failed to send relationship-aware check-in")
         routine_kind = _routine_checkin_kind(now)
         if not routine_kind:
             continue

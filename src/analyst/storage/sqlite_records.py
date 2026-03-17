@@ -302,6 +302,7 @@ class CompanionRelationshipStateRecord:
     avg_session_turns: float
     mood_history: list[str]  # last 10 moods
     nicknames: list[dict]  # serialized NicknameEntry dicts
+    previous_stage: str  # stage before last transition (for soft regression)
     last_interaction_date: str  # YYYY-MM-DD for streak calc
     last_stage_transition_at: str  # ISO timestamp
     created_at: str

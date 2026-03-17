@@ -146,6 +146,7 @@ class RelationshipSignalUpdate:
     is_late_night: bool = False
     topic_depth_score: float = 0.0
     active_topic_category: str | None = None  # e.g. "mood / emotional", "joke / banter"
+    interaction_mode: str | None = None  # seeking_advice / venting / flirting / curious_about_ai
     nickname_for_ai: str | None = None
     nickname_for_user: str | None = None
     user_text: str = ""  # raw text for nickname frequency bumping

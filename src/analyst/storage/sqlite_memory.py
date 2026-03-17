@@ -477,6 +477,7 @@ class SQLiteMemoryMixin:
         avg_session_turns: float | None = None,
         mood_history: list[str] | None = None,
         nicknames: list[dict] | None = None,
+        previous_stage: str | None = None,
         last_interaction_date: str | None = None,
         last_stage_transition_at: str | None = None,
         emotional_trend: str | None = None,
@@ -496,6 +497,7 @@ class SQLiteMemoryMixin:
                 avg_session_turns=avg_session_turns,
                 mood_history=mood_history,
                 nicknames=nicknames,
+                previous_stage=previous_stage,
                 last_interaction_date=last_interaction_date,
                 last_stage_transition_at=last_stage_transition_at,
                 emotional_trend=emotional_trend,
@@ -1222,6 +1224,7 @@ class SQLiteMemoryMixin:
                 avg_session_turns=0.0,
                 mood_history=[],
                 nicknames=[],
+                previous_stage="",
                 last_interaction_date="",
                 last_stage_transition_at="",
                 created_at="",
@@ -1240,6 +1243,7 @@ class SQLiteMemoryMixin:
             avg_session_turns=float(row["avg_session_turns"]),
             mood_history=json.loads(row["mood_history_json"]),
             nicknames=json.loads(row["nicknames_json"]),
+            previous_stage=row["previous_stage"],
             last_interaction_date=row["last_interaction_date"],
             last_stage_transition_at=row["last_stage_transition_at"],
             created_at=row["created_at"],
@@ -1271,6 +1275,7 @@ class SQLiteMemoryMixin:
         avg_session_turns: float | None = None,
         mood_history: list[str] | None = None,
         nicknames: list[dict] | None = None,
+        previous_stage: str | None = None,
         last_interaction_date: str | None = None,
         last_stage_transition_at: str | None = None,
         emotional_trend: str | None = None,
@@ -1290,6 +1295,7 @@ class SQLiteMemoryMixin:
         next_avg = avg_session_turns if avg_session_turns is not None else current.avg_session_turns
         next_mood_history = mood_history if mood_history is not None else current.mood_history
         next_nicknames = nicknames if nicknames is not None else current.nicknames
+        next_prev_stage = previous_stage if previous_stage is not None else current.previous_stage
         next_lid = last_interaction_date if last_interaction_date is not None else current.last_interaction_date
         next_lst = last_stage_transition_at if last_stage_transition_at is not None else current.last_stage_transition_at
 
@@ -1299,10 +1305,10 @@ class SQLiteMemoryMixin:
                 client_id, intimacy_level, relationship_stage,
                 tendency_friend, tendency_romantic, tendency_confidant, tendency_mentor,
                 streak_days, total_turns, avg_session_turns,
-                mood_history_json, nicknames_json,
+                mood_history_json, nicknames_json, previous_stage,
                 last_interaction_date, last_stage_transition_at,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(client_id) DO UPDATE SET
                 intimacy_level = excluded.intimacy_level,
                 relationship_stage = excluded.relationship_stage,
@@ -1315,6 +1321,7 @@ class SQLiteMemoryMixin:
                 avg_session_turns = excluded.avg_session_turns,
                 mood_history_json = excluded.mood_history_json,
                 nicknames_json = excluded.nicknames_json,
+                previous_stage = excluded.previous_stage,
                 last_interaction_date = excluded.last_interaction_date,
                 last_stage_transition_at = excluded.last_stage_transition_at,
                 updated_at = excluded.updated_at
@@ -1332,6 +1339,7 @@ class SQLiteMemoryMixin:
                 next_avg,
                 json.dumps(next_mood_history, ensure_ascii=False),
                 json.dumps(next_nicknames, ensure_ascii=False),
+                next_prev_stage,
                 next_lid,
                 next_lst,
                 created_at,
@@ -1351,6 +1359,7 @@ class SQLiteMemoryMixin:
             avg_session_turns=next_avg,
             mood_history=next_mood_history,
             nicknames=next_nicknames,
+            previous_stage=next_prev_stage,
             last_interaction_date=next_lid,
             last_stage_transition_at=next_lst,
             created_at=created_at,

@@ -615,12 +615,20 @@ class SQLiteSchemaMixin:
                     avg_session_turns REAL NOT NULL DEFAULT 0.0,
                     mood_history_json TEXT NOT NULL DEFAULT '[]',
                     nicknames_json TEXT NOT NULL DEFAULT '[]',
+                    previous_stage TEXT NOT NULL DEFAULT '',
                     last_interaction_date TEXT NOT NULL DEFAULT '',
                     last_stage_transition_at TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
                 """
+            )
+            self._ensure_table_columns(
+                connection,
+                table_name="companion_relationship_state",
+                columns={
+                    "previous_stage": "TEXT NOT NULL DEFAULT ''",
+                },
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_analytical_observations_created ON analytical_observations(id DESC)"

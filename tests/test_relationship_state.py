@@ -30,6 +30,7 @@ from analyst.memory.service import (
     _render_companion_profile,
     _detect_personal_sharing,
     _detect_active_topic_category,
+    _detect_interaction_mode,
     _is_late_night_utc8,
 )
 from analyst.storage.sqlite_records import ClientProfileRecord
@@ -56,6 +57,7 @@ def _default_relationship(client_id: str = "u1", **overrides) -> CompanionRelati
         avg_session_turns=0.0,
         mood_history=[],
         nicknames=[],
+        previous_stage="",
         last_interaction_date="",
         last_stage_transition_at="",
         created_at="",
@@ -535,6 +537,153 @@ class TestHelpers(unittest.TestCase):
 
     def test_detect_topic_category_none(self):
         self.assertIsNone(_detect_active_topic_category("嗯"))
+
+
+# ---- Feature: Interaction Mode Signals ----
+
+class TestInteractionMode(unittest.TestCase):
+    def test_detect_flirting(self):
+        self.assertEqual(_detect_interaction_mode("想你了"), "flirting")
+        self.assertEqual(_detect_interaction_mode("你今天穿了什么"), "flirting")
+
+    def test_detect_curious_about_ai(self):
+        self.assertEqual(_detect_interaction_mode("你呢？你喜欢什么"), "curious_about_ai")
+        self.assertEqual(_detect_interaction_mode("what do you like"), "curious_about_ai")
+
+    def test_detect_seeking_advice(self):
+        self.assertEqual(_detect_interaction_mode("你觉得我该不该辞职"), "seeking_advice")
+        self.assertEqual(_detect_interaction_mode("what do you think"), "seeking_advice")
+
+    def test_detect_venting(self):
+        self.assertEqual(_detect_interaction_mode("算了不想说了"), "venting")
+        self.assertEqual(_detect_interaction_mode("受不了了"), "venting")
+
+    def test_no_mode(self):
+        self.assertIsNone(_detect_interaction_mode("今天天气不错"))
+
+    def test_interaction_mode_nudges_tendency(self):
+        from analyst.memory.relationship import _update_tendencies
+        signal = RelationshipSignalUpdate(interaction_mode="flirting")
+        tf, tr, tc, tm = _update_tendencies(0.25, 0.25, 0.25, 0.25, signal=signal)
+        self.assertGreater(tr, 0.25)  # romantic nudged
+
+    def test_seeking_advice_nudges_mentor(self):
+        from analyst.memory.relationship import _update_tendencies
+        signal = RelationshipSignalUpdate(interaction_mode="seeking_advice")
+        tf, tr, tc, tm = _update_tendencies(0.25, 0.25, 0.25, 0.25, signal=signal)
+        self.assertGreater(tm, 0.25)  # mentor nudged
+
+
+# ---- Feature: Soft Stage Regression ----
+
+class TestSoftRegression(unittest.TestCase):
+    def test_regression_note_rendered(self):
+        rel = _default_relationship(
+            intimacy_level=0.12,
+            relationship_stage="acquaintance",
+            previous_stage="familiar",
+            total_turns=100,
+        )
+        profile = _default_profile()
+        lines = _render_companion_profile(profile, relationship=rel)
+        rendered = "\n".join(lines)
+        self.assertIn("疏远", rendered)
+        self.assertIn("familiar", rendered)
+        self.assertIn("好久不见", rendered)
+
+    def test_no_regression_note_on_upgrade(self):
+        rel = _default_relationship(
+            intimacy_level=0.5,
+            relationship_stage="familiar",
+            previous_stage="acquaintance",
+            total_turns=50,
+        )
+        profile = _default_profile()
+        lines = _render_companion_profile(profile, relationship=rel)
+        rendered = "\n".join(lines)
+        self.assertNotIn("疏远", rendered)
+
+    def test_previous_stage_stored_on_transition(self):
+        current = _default_relationship(
+            intimacy_level=0.5,
+            relationship_stage="familiar",
+        )
+        signal = RelationshipSignalUpdate(current_mood="calm")
+        # Simulate heavy decay bringing intimacy below regression threshold
+        current = _default_relationship(
+            intimacy_level=0.20,  # below 0.40 * 0.7 = 0.28... actually 0.20 < 0.28
+            relationship_stage="familiar",
+            last_interaction_date="2026-03-17",
+        )
+        now = datetime(2026, 3, 17, 12, 0, tzinfo=timezone.utc)
+        updates = compute_relationship_update(current, signal=signal, now=now)
+        if "relationship_stage" in updates:
+            self.assertEqual(updates["previous_stage"], "familiar")
+            self.assertEqual(updates["relationship_stage"], "acquaintance")
+
+
+# ---- Feature: Proactive Outreach ----
+
+class TestProactiveOutreach(unittest.TestCase):
+    def test_streak_save_detected(self):
+        from analyst.delivery.bot_companion_timing import evaluate_relationship_checkin_kind
+        rel = _default_relationship(
+            streak_days=5,
+            last_interaction_date="2026-03-16",
+            relationship_stage="familiar",
+        )
+        now = datetime(2026, 3, 17, 12, 0, tzinfo=timezone.utc)
+        kind = evaluate_relationship_checkin_kind(rel, now=now)
+        self.assertEqual(kind, "streak_save")
+
+    def test_no_streak_save_for_short_streak(self):
+        from analyst.delivery.bot_companion_timing import evaluate_relationship_checkin_kind
+        rel = _default_relationship(
+            streak_days=2,
+            last_interaction_date="2026-03-16",
+        )
+        now = datetime(2026, 3, 17, 12, 0, tzinfo=timezone.utc)
+        kind = evaluate_relationship_checkin_kind(rel, now=now)
+        self.assertNotEqual(kind, "streak_save")
+
+    def test_emotional_concern_on_declining(self):
+        from analyst.delivery.bot_companion_timing import evaluate_relationship_checkin_kind
+        now = datetime(2026, 3, 17, 12, 0, tzinfo=timezone.utc)
+        # mood_history that produces "declining" trend
+        rel = _default_relationship(
+            relationship_stage="acquaintance",
+            mood_history=[
+                _mood_entry("happy", 10, now), _mood_entry("calm", 8, now),
+                _mood_entry("optimistic", 6, now),
+                _mood_entry("anxious", 3, now), _mood_entry("stressed", 2, now),
+                _mood_entry("sad", 1, now),
+            ],
+        )
+        kind = evaluate_relationship_checkin_kind(rel, now=now)
+        self.assertEqual(kind, "emotional_concern")
+
+    def test_stage_milestone_on_upgrade(self):
+        from analyst.delivery.bot_companion_timing import evaluate_relationship_checkin_kind
+        rel = _default_relationship(
+            relationship_stage="familiar",
+            previous_stage="acquaintance",
+        )
+        now = datetime(2026, 3, 17, 12, 0, tzinfo=timezone.utc)
+        kind = evaluate_relationship_checkin_kind(rel, now=now)
+        self.assertEqual(kind, "stage_milestone")
+
+    def test_no_proactive_for_stranger(self):
+        from analyst.delivery.bot_companion_timing import evaluate_relationship_checkin_kind
+        rel = _default_relationship()
+        now = datetime(2026, 3, 17, 12, 0, tzinfo=timezone.utc)
+        kind = evaluate_relationship_checkin_kind(rel, now=now)
+        self.assertEqual(kind, "")
+
+    def test_proactive_instructions_exist(self):
+        from analyst.runtime.chat import _proactive_companion_instruction
+        for kind in ("streak_save", "emotional_concern", "stage_milestone"):
+            instr = _proactive_companion_instruction(kind)
+            self.assertTrue(len(instr) > 20, f"Missing instruction for {kind}")
 
 
 if __name__ == "__main__":

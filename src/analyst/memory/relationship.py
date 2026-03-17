@@ -71,6 +71,14 @@ _CATEGORY_TENDENCY_MAP: dict[str, str] = {
 }
 
 _TENDENCY_NUDGE_AMOUNT = 0.02
+
+# Interaction mode → tendency
+_INTERACTION_MODE_TENDENCY_MAP: dict[str, str] = {
+    "seeking_advice": "mentor",
+    "venting": "confidant",
+    "flirting": "romantic",
+    "curious_about_ai": "friend",
+}
 _LATE_NIGHT_TENDENCY_NUDGES: dict[str, float] = {
     "confidant": 0.015,
     "romantic": 0.01,
@@ -132,6 +140,7 @@ def compute_relationship_update(
         now,
     )
     if transition is not None:
+        updates["previous_stage"] = current.relationship_stage
         updates["relationship_stage"] = transition[0]
         updates["last_stage_transition_at"] = transition[1]
 
@@ -314,6 +323,12 @@ def _update_tendencies(
     if signal.is_late_night:
         for tendency, amount in _LATE_NIGHT_TENDENCY_NUDGES.items():
             tf, tr, tc, tm = _nudge(tf, tr, tc, tm, tendency, amount)
+
+    # Interaction mode nudge
+    if signal.interaction_mode:
+        target = _INTERACTION_MODE_TENDENCY_MAP.get(signal.interaction_mode)
+        if target:
+            tf, tr, tc, tm = _nudge(tf, tr, tc, tm, target, _TENDENCY_NUDGE_AMOUNT)
 
     return _normalize_tendencies(tf, tr, tc, tm)
 

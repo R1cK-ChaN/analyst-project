@@ -944,6 +944,22 @@ def _proactive_companion_instruction(kind: str) -> str:
             "Send a light weekend daytime check-in now. It should feel relaxed and off-duty, with no market-open "
             "or workday framing."
         )
+    if normalized == "streak_save":
+        return (
+            "Send a light message now. The user has been chatting with you regularly but hasn't shown up today yet. "
+            "Write like you naturally thought of them, not like you're tracking attendance. No guilt. Keep it brief."
+        )
+    if normalized == "emotional_concern":
+        return (
+            "Send a gentle check-in now. The user's mood has been getting worse recently. "
+            "Write like a warm companion who noticed something is off, not like a therapist. Brief and soft."
+        )
+    if normalized == "stage_milestone":
+        return (
+            "Send a warm message now. You and the user have gotten noticeably closer recently. "
+            "Express this naturally — maybe note that chatting with them has become a highlight, "
+            "or that you feel more comfortable now. Brief, genuine, no over-the-top declarations."
+        )
     return (
         "Send a gentle inactivity check-in now. The user has been quiet for a while. "
         "Write like a warm companion casually checking in, with no guilt or pressure. Keep it brief."

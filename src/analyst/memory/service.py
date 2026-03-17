@@ -363,11 +363,13 @@ def record_chat_interaction(
     now = datetime.now(timezone.utc)
     current_rel = store.get_companion_relationship_state(client_id=client_id)
     active_topic = _detect_active_topic_category(user_text)
+    interaction_mode = _detect_interaction_mode(user_text)
     signal = RelationshipSignalUpdate(
         current_mood=update.current_mood,
         is_personal_sharing=_detect_personal_sharing(user_text),
         is_late_night=_is_late_night_utc8(now),
         active_topic_category=active_topic,
+        interaction_mode=interaction_mode,
         user_text=user_text,
     )
     rel_updates = compute_relationship_update(current_rel, signal=signal, now=now)
@@ -908,6 +910,14 @@ def _render_companion_profile(
     elif rel_valid:
         lines.append(f"- 关系阶段: stranger — {_STAGE_INSTRUCTIONS['stranger']}")
 
+    # -- Soft regression note --
+    if rel_valid and _is_soft_regression(relationship):
+        prev = relationship.previous_stage
+        lines.append(
+            f"- 关系变化: 你们之前是{prev}，最近疏远了。"
+            "语气稍微收一点但不要完全变陌生人，可以自然提起好久不见。"
+        )
+
     # -- Interaction stats --
     stats_parts: list[str] = []
     turns = relationship.total_turns if rel_valid else profile.total_interactions
@@ -981,6 +991,17 @@ _TENDENCY_NUANCE: dict[str, str] = {
     "mentor": "，可以适度引导",
     "friend": "",
 }
+
+_STAGE_ORDER = {"stranger": 0, "acquaintance": 1, "familiar": 2, "close": 3}
+
+
+def _is_soft_regression(rel: CompanionRelationshipStateRecord) -> bool:
+    """Check if the relationship recently regressed (stage dropped from a higher level)."""
+    if not rel.previous_stage:
+        return False
+    prev_rank = _STAGE_ORDER.get(rel.previous_stage, 0)
+    curr_rank = _STAGE_ORDER.get(rel.relationship_stage, 0)
+    return prev_rank > curr_rank
 
 
 def _dominant_tendency(rel: CompanionRelationshipStateRecord) -> str:
@@ -1118,6 +1139,38 @@ def _detect_active_topic_category(text: str) -> str | None:
     for category, keywords in _TOPIC_SIGNALS:
         if any(kw in lowered for kw in keywords):
             return category
+    return None
+
+
+_INTERACTION_MODE_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("flirting", re.compile(
+        r"(?:你今天穿了什么|想你了|抱抱|亲亲|mua|你在想我吗|miss you|想见你|好想你|"
+        r"你的声音|你好可爱|你好温柔|心动|喜欢你|love you)",
+        re.IGNORECASE,
+    )),
+    ("curious_about_ai", re.compile(
+        r"(?:你呢|你喜欢什么|你平时|你觉得你|你有没有|about you|what do you like|"
+        r"你怎么想|你的感受|你开心吗|你累不累|你今天做了什么)",
+        re.IGNORECASE,
+    )),
+    ("seeking_advice", re.compile(
+        r"(?:你觉得我该|帮我分析|你怎么看|你的建议|should i|what do you think|"
+        r"帮我想想|给我点建议|该不该|how should i|你说我)",
+        re.IGNORECASE,
+    )),
+    ("venting", re.compile(
+        r"(?:算了|不想说了|随便吧|无所谓|烦死了|受不了了|我真的|气死我了|"
+        r"i can't|i just can't|whatever|ugh|不管了|懒得)",
+        re.IGNORECASE,
+    )),
+]
+
+
+def _detect_interaction_mode(text: str) -> str | None:
+    """Detect HOW the user is interacting, not just what topic."""
+    for mode, pattern in _INTERACTION_MODE_PATTERNS:
+        if pattern.search(text):
+            return mode
     return None
 
 
