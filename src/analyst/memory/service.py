@@ -8,14 +8,17 @@ from typing import Any
 from analyst.macro_data import MacroDataClient
 from analyst.storage import (
     ClientProfileRecord,
+    CompanionRelationshipStateRecord,
     ConversationMessageRecord,
     DeliveryQueueRecord,
     GroupMemberRecord,
     GroupMessageRecord,
+    NicknameEntry,
     SQLiteEngineStore,
 )
 
-from .profile import ClientProfileUpdate, extract_client_profile_update, merge_client_profile_updates
+from .profile import ClientProfileUpdate, RelationshipSignalUpdate, extract_client_profile_update, merge_client_profile_updates
+from .relationship import compute_relationship_update, extract_nicknames_from_facts
 from .render import RenderBudget, render_context_sections, trim_text
 from .topic_state import ConversationTopicMessage, build_topic_state_lines
 
@@ -231,6 +234,7 @@ def build_chat_context(
 
     limits = budget or RenderBudget()
     profile = store.get_client_profile(client_id)
+    relationship = store.get_companion_relationship_state(client_id=client_id)
     recent_messages = store.list_conversation_messages(
         client_id=client_id,
         channel=channel_id,
@@ -246,7 +250,7 @@ def build_chat_context(
     sections = [
         (
             "client_profile",
-            _render_companion_profile(profile),
+            _render_companion_profile(profile, relationship=relationship),
         ),
         (
             "topic_state",
@@ -355,6 +359,17 @@ def record_chat_interaction(
         },
     )
 
+    # Update companion relationship state
+    now = datetime.now(timezone.utc)
+    current_rel = store.get_companion_relationship_state(client_id=client_id)
+    signal = RelationshipSignalUpdate(
+        current_mood=update.current_mood,
+        is_personal_sharing=_detect_personal_sharing(user_text),
+        is_late_night=_is_late_night_utc8(now),
+    )
+    rel_updates = compute_relationship_update(current_rel, signal=signal, now=now)
+    store.update_companion_relationship_state(client_id=client_id, **rel_updates)
+
 
 def build_group_chat_context(
     *,
@@ -380,7 +395,8 @@ def build_group_chat_context(
     speaker_profile = store.get_client_profile(speaker_user_id)
     is_companion = str(persona_mode).strip().lower() == "companion"
     if is_companion:
-        speaker_lines = _render_companion_profile(speaker_profile)
+        speaker_rel = store.get_companion_relationship_state(client_id=speaker_user_id)
+        speaker_lines = _render_companion_profile(speaker_profile, relationship=speaker_rel)
     else:
         speaker_lines = _render_client_profile(speaker_profile)
 
@@ -866,27 +882,36 @@ def _render_client_profile(profile: ClientProfileRecord) -> list[str]:
     return lines
 
 
-def _render_companion_profile(profile: ClientProfileRecord) -> list[str]:
+def _render_companion_profile(
+    profile: ClientProfileRecord,
+    relationship: CompanionRelationshipStateRecord | None = None,
+) -> list[str]:
     lines: list[str] = []
-    if profile.preferred_language:
-        lines.append(f"- preferred_language: {profile.preferred_language}")
-    if profile.response_style:
-        lines.append(f"- response_style: {profile.response_style}")
-    if profile.current_mood:
-        lines.append(f"- current_mood: {profile.current_mood}")
-    if profile.emotional_trend:
-        lines.append(f"- emotional_trend: {profile.emotional_trend}")
-    if profile.stress_level:
-        lines.append(f"- stress_level: {profile.stress_level}")
-    effective_confidence = profile.confidence or ("low" if profile.total_interactions < 3 else "")
-    if effective_confidence:
-        lines.append(f"- confidence: {effective_confidence}")
-    if profile.notes:
-        lines.append(f"- notes: {trim_text(profile.notes, max_chars=160)}")
-    if profile.personal_facts:
-        lines.append(f"- personal_facts: {'; '.join(profile.personal_facts)}")
-    if profile.total_interactions:
-        lines.append(f"- total_interactions: {profile.total_interactions}")
+
+    # -- Relationship stage → behavioral instruction --
+    rel_valid = (
+        relationship is not None
+        and isinstance(relationship, CompanionRelationshipStateRecord)
+    )
+    if rel_valid and relationship.relationship_stage != "stranger":
+        stage_text = _STAGE_INSTRUCTIONS.get(
+            relationship.relationship_stage,
+            _STAGE_INSTRUCTIONS["stranger"],
+        )
+        dominant = _dominant_tendency(relationship)
+        if dominant and relationship.relationship_stage in ("familiar", "close"):
+            stage_text += _TENDENCY_NUANCE.get(dominant, "")
+        lines.append(f"- 关系阶段: {relationship.relationship_stage} — {stage_text}")
+    elif rel_valid:
+        lines.append(f"- 关系阶段: stranger — {_STAGE_INSTRUCTIONS['stranger']}")
+
+    # -- Interaction stats --
+    stats_parts: list[str] = []
+    turns = relationship.total_turns if rel_valid else profile.total_interactions
+    if turns:
+        stats_parts.append(f"总对话: {turns}轮")
+    if rel_valid and relationship.streak_days > 1:
+        stats_parts.append(f"连续聊天: {relationship.streak_days}天")
     if profile.last_active_at:
         try:
             last = datetime.fromisoformat(profile.last_active_at)
@@ -894,10 +919,149 @@ def _render_companion_profile(profile: ClientProfileRecord) -> list[str]:
                 last = last.replace(tzinfo=timezone.utc)
             days_away = (datetime.now(timezone.utc) - last).days
             if days_away >= 1:
-                lines.append(f"- days_since_last_active: {days_away}")
+                stats_parts.append(f"{days_away}天没聊了")
         except (ValueError, TypeError):
             pass
+    if stats_parts:
+        lines.append(f"- 互动: {' | '.join(stats_parts)}")
+
+    # -- Nicknames --
+    nickname_lines = _render_nickname_context(
+        relationship.nicknames if rel_valid else [],
+        profile.personal_facts,
+    )
+    lines.extend(nickname_lines)
+
+    # -- Emotion & stress → response strategy --
+    mood = profile.current_mood
+    emotional_trend = _get_emotional_trend(profile, relationship if rel_valid else None)
+    stress = profile.stress_level
+
+    if stress in ("high", "critical") and emotional_trend == "declining":
+        lines.append(f"- 情绪状态: {mood or stress}, 趋势declining — 压力很大而且在恶化，优先共情和陪伴")
+    elif stress in ("high", "critical"):
+        lines.append(f"- 情绪状态: {mood or stress} — 压力较大，优先共情，不要讲道理")
+    elif emotional_trend == "declining":
+        lines.append(f"- 情绪状态: {mood or '–'}, 趋势declining — 情绪在变差，比平时更温柔一些")
+    elif emotional_trend == "improving":
+        lines.append(f"- 情绪状态: {mood or '–'}, 趋势improving — 情绪在好转，可以适度轻松")
+    elif mood:
+        lines.append(f"- current_mood: {mood}")
+
+    # -- Personal facts as memories --
+    facts = [f for f in profile.personal_facts if not _is_nickname_fact(f)]
+    if facts:
+        lines.append(f"- 你记得: {'; '.join(facts[-6:])}")
+
+    # -- Language / style (compact) --
+    meta: list[str] = []
+    if profile.preferred_language:
+        meta.append(f"lang:{profile.preferred_language}")
+    if profile.response_style:
+        meta.append(f"style:{profile.response_style}")
+    if meta:
+        lines.append(f"- {', '.join(meta)}")
+
     return lines
+
+
+_STAGE_INSTRUCTIONS: dict[str, str] = {
+    "stranger": "初识，保持礼貌和温暖，不要太过热情",
+    "acquaintance": "认识不久，友好自然，逐渐了解对方",
+    "familiar": "你们已经很熟了，可以撒娇、开小玩笑、偶尔任性一点",
+    "close": "非常亲密，可以耍赖、吃醋、分享脆弱的一面",
+}
+
+_TENDENCY_NUANCE: dict[str, str] = {
+    "romantic": "，跟随对方节奏",
+    "confidant": "，多倾听少建议",
+    "mentor": "，可以适度引导",
+    "friend": "",
+}
+
+
+def _dominant_tendency(rel: CompanionRelationshipStateRecord) -> str:
+    """Return the dominant tendency name, or '' if all equal."""
+    tendencies = {
+        "friend": rel.tendency_friend,
+        "romantic": rel.tendency_romantic,
+        "confidant": rel.tendency_confidant,
+        "mentor": rel.tendency_mentor,
+    }
+    max_val = max(tendencies.values())
+    if all(v == max_val for v in tendencies.values()):
+        return ""
+    return max(tendencies, key=tendencies.get)  # type: ignore[arg-type]
+
+
+def _get_emotional_trend(
+    profile: ClientProfileRecord,
+    relationship: CompanionRelationshipStateRecord | None,
+) -> str:
+    """Get emotional trend from relationship state (computed) or profile (LLM-set)."""
+    if relationship and relationship.mood_history and len(relationship.mood_history) >= 3:
+        from .relationship import _compute_emotional_trend
+        return _compute_emotional_trend(list(relationship.mood_history))
+    return profile.emotional_trend or ""
+
+
+def _render_nickname_context(
+    stored_nicknames: list[dict],
+    personal_facts: list[str],
+) -> list[str]:
+    """Render nickname lines for the companion profile context."""
+    # Merge stored nicknames with those extracted from personal_facts
+    from .relationship import extract_nicknames_from_facts
+    fact_nicknames = extract_nicknames_from_facts(personal_facts)
+
+    # Build lookup from stored nicknames
+    nick_map: dict[tuple[str, str], dict] = {}
+    for n in stored_nicknames:
+        key = (n.get("name", ""), n.get("target", ""))
+        nick_map[key] = n
+    # Merge fact-extracted nicknames (lower priority)
+    for fn in fact_nicknames:
+        key = (fn.name, fn.target)
+        if key not in nick_map:
+            nick_map[key] = {
+                "name": fn.name,
+                "target": fn.target,
+                "created_by": fn.created_by,
+                "sentiment": fn.sentiment,
+                "frequency": fn.frequency,
+                "accepted": fn.accepted,
+            }
+
+    if not nick_map:
+        return []
+
+    lines: list[str] = []
+    ai_names = [n for n in nick_map.values() if n.get("target") == "ai" and n.get("accepted", True)]
+    user_names = [n for n in nick_map.values() if n.get("target") == "user" and n.get("accepted", True)]
+    parts: list[str] = []
+    if ai_names:
+        preferred = max(ai_names, key=lambda n: n.get("frequency", 0))
+        names_str = ", ".join(f'"{n["name"]}"' for n in ai_names)
+        if len(ai_names) > 1:
+            parts.append(f'他叫你: {names_str} (最常用: "{preferred["name"]}")')
+        else:
+            parts.append(f'他叫你"{preferred["name"]}"')
+    if user_names:
+        names_str = ", ".join(f'"{n["name"]}"' for n in user_names)
+        parts.append(f"你叫他: {names_str}")
+    if parts:
+        lines.append(f"- 称呼: {'; '.join(parts)}")
+    return lines
+
+
+_NICKNAME_FACT_PATTERN = re.compile(
+    r"(?:用户|他|她|对方)叫我|我叫(?:他|她|用户)"
+)
+
+
+def _is_nickname_fact(fact: str) -> bool:
+    """Check if a personal_fact is a nickname entry (to avoid duplication in memories)."""
+    return bool(_NICKNAME_FACT_PATTERN.search(fact))
 
 
 def _companion_only_update(update: ClientProfileUpdate) -> ClientProfileUpdate:
@@ -911,6 +1075,27 @@ def _companion_only_update(update: ClientProfileUpdate) -> ClientProfileUpdate:
         notes=update.notes,
         personal_facts=update.personal_facts,
     )
+
+
+_PERSONAL_SHARING_PATTERN = re.compile(
+    r"(?:"
+    r"(?:我|我们|老婆|老公|爸|妈|女朋友|男朋友|家里|家人)"
+    r"|(?:分手|吵架|离婚|失恋|去世|生病|住院|焦虑|抑郁|失眠|不开心|难过|崩溃|想哭)"
+    r"|(?:feel|feeling|lonely|breakup|divorce|depressed|anxious|miss|family|relationship)"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _detect_personal_sharing(text: str) -> bool:
+    """Detect if user text contains personal/emotional disclosure signals."""
+    return bool(_PERSONAL_SHARING_PATTERN.search(text))
+
+
+def _is_late_night_utc8(utc_now_dt: datetime) -> bool:
+    """Check if current time is late night in UTC+8 (23:00-05:00)."""
+    utc8_hour = (utc_now_dt.hour + 8) % 24
+    return utc8_hour >= 23 or utc8_hour <= 5
 
 
 def _format_age(created_at: str) -> str:

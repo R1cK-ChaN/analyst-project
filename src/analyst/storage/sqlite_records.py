@@ -276,6 +276,38 @@ class ClientProfileRecord:
     total_interactions: int
     updated_at: str
 
+
+@dataclass(frozen=True)
+class NicknameEntry:
+    name: str
+    target: str  # "ai" (用户给AI起的) | "user" (AI给用户起的)
+    created_by: str  # "user" | "ai"
+    context: str = ""
+    sentiment: str = ""  # affectionate / playful / casual
+    accepted: bool = True
+    frequency: int = 0
+
+
+@dataclass(frozen=True)
+class CompanionRelationshipStateRecord:
+    client_id: str
+    intimacy_level: float  # 0.0-1.0
+    relationship_stage: str  # stranger / acquaintance / familiar / close
+    tendency_friend: float
+    tendency_romantic: float
+    tendency_confidant: float
+    tendency_mentor: float
+    streak_days: int
+    total_turns: int
+    avg_session_turns: float
+    mood_history: list[str]  # last 10 moods
+    nicknames: list[dict]  # serialized NicknameEntry dicts
+    last_interaction_date: str  # YYYY-MM-DD for streak calc
+    last_stage_transition_at: str  # ISO timestamp
+    created_at: str
+    updated_at: str
+
+
 @dataclass(frozen=True)
 class CompanionCheckInStateRecord:
     client_id: str

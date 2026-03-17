@@ -2,6 +2,7 @@ from .profile import (
     CompanionReminderUpdate,
     CompanionScheduleUpdate,
     ClientProfileUpdate,
+    RelationshipSignalUpdate,
     extract_client_profile_update,
     extract_embedded_profile_update,
     extract_embedded_reminder_update,
@@ -27,6 +28,7 @@ from .subagent import build_subagent_memory
 
 __all__ = [
     "ClientProfileUpdate",
+    "RelationshipSignalUpdate",
     "CompanionReminderUpdate",
     "CompanionScheduleUpdate",
     "RenderBudget",

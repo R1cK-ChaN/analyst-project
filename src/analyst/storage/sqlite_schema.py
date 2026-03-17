@@ -601,6 +601,28 @@ class SQLiteSchemaMixin:
                 """
             )
             connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS companion_relationship_state (
+                    client_id TEXT PRIMARY KEY,
+                    intimacy_level REAL NOT NULL DEFAULT 0.0,
+                    relationship_stage TEXT NOT NULL DEFAULT 'stranger',
+                    tendency_friend REAL NOT NULL DEFAULT 0.25,
+                    tendency_romantic REAL NOT NULL DEFAULT 0.25,
+                    tendency_confidant REAL NOT NULL DEFAULT 0.25,
+                    tendency_mentor REAL NOT NULL DEFAULT 0.25,
+                    streak_days INTEGER NOT NULL DEFAULT 0,
+                    total_turns INTEGER NOT NULL DEFAULT 0,
+                    avg_session_turns REAL NOT NULL DEFAULT 0.0,
+                    mood_history_json TEXT NOT NULL DEFAULT '[]',
+                    nicknames_json TEXT NOT NULL DEFAULT '[]',
+                    last_interaction_date TEXT NOT NULL DEFAULT '',
+                    last_stage_transition_at TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_analytical_observations_created ON analytical_observations(id DESC)"
             )
             connection.execute(

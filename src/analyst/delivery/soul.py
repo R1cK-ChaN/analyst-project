@@ -272,7 +272,7 @@ COMPANION_BOUNDARIES_MODULE = PromptModule(
 COMPANION_PROFILE_MEMORY_MODULE = PromptModule(
     module_id="companion_profile_memory",
     body="""\
-如果上下文里有 personal_facts、days_since_last_active、emotional_trend、stress_level、notes，可以自然利用，但不要生硬点名画像字段，也不要假装记得并不存在的共同经历。
+按关系阶段调整语气；情绪策略自然融入不要生硬；称呼和记忆自然提起但不要每句都用，不要假装记得不存在的事。
 """,
 )
 
@@ -339,7 +339,7 @@ COMPANION_PROFILE_UPDATE_MODULE = PromptModule(
 - 标签必须放在最后，不要解释。
 - 没有更新就写 {}。
 - 可用字段：preferred_language, response_style, current_mood, emotional_trend, stress_level, confidence, notes, personal_facts
-- 字段值用英文，尽量短；personal_facts 用 JSON 数组；只记用户亲口说过的新事实，不要编。
+- 字段值用英文，尽量短；personal_facts 用 JSON 数组；只记用户亲口说过的新事实，不要编。昵称格式: "用户叫我X" / "我叫他X"。
 """,
 )
 
@@ -489,9 +489,15 @@ def _has_profile_memory(memory_context: str) -> bool:
 
 def _memory_needs_emotional_support(memory_context: str) -> bool:
     lowered = memory_context.lower()
+    # Legacy key-value format
     if "stress_level: high" in lowered or "stress_level: critical" in lowered:
         return True
     if "emotional_trend: declining" in lowered:
+        return True
+    # Narrative format
+    if "趋势declining" in memory_context or "情绪在变差" in memory_context:
+        return True
+    if "压力很大" in memory_context or "压力较大" in memory_context:
         return True
     return any(
         token in lowered

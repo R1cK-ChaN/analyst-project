@@ -139,6 +139,16 @@ class CompanionReminderUpdate:
         return bool(self.reminder_text and self.due_at)
 
 
+@dataclass(frozen=True)
+class RelationshipSignalUpdate:
+    current_mood: str | None = None
+    is_personal_sharing: bool = False
+    is_late_night: bool = False
+    topic_depth_score: float = 0.0
+    nickname_for_ai: str | None = None
+    nickname_for_user: str | None = None
+
+
 _WATCHLIST_PATTERNS = {
     "fed": re.compile(r"(?:\b(?:fed|fomc|powell)\b|美联储|联储)", re.IGNORECASE),
     "cpi": re.compile(r"(?:\b(?:cpi|inflation)\b|通胀)", re.IGNORECASE),

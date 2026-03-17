@@ -51,6 +51,7 @@ from .sqlite_records import (
     CompanionCheckInStateRecord,
     CompanionLifestyleStateRecord,
     CompanionDailyScheduleRecord,
+    CompanionRelationshipStateRecord,
     CompanionReminderRecord,
     ConversationMessageRecord,
     DeliveryQueueRecord,
@@ -451,6 +452,53 @@ class SQLiteMemoryMixin:
                 next_plan=next_plan,
                 revision_note=revision_note,
                 last_explicit_update_at=last_explicit_update_at,
+            )
+
+    def get_companion_relationship_state(
+        self, *, client_id: str
+    ) -> CompanionRelationshipStateRecord:
+        with self._connection(commit=False) as connection:
+            return self._get_companion_relationship_state_in_connection(
+                connection, client_id=client_id
+            )
+
+    def update_companion_relationship_state(
+        self,
+        *,
+        client_id: str,
+        intimacy_level: float | None = None,
+        relationship_stage: str | None = None,
+        tendency_friend: float | None = None,
+        tendency_romantic: float | None = None,
+        tendency_confidant: float | None = None,
+        tendency_mentor: float | None = None,
+        streak_days: int | None = None,
+        total_turns: int | None = None,
+        avg_session_turns: float | None = None,
+        mood_history: list[str] | None = None,
+        nicknames: list[dict] | None = None,
+        last_interaction_date: str | None = None,
+        last_stage_transition_at: str | None = None,
+        emotional_trend: str | None = None,
+    ) -> CompanionRelationshipStateRecord:
+        with self._connection(commit=True) as connection:
+            return self._upsert_companion_relationship_state_in_connection(
+                connection,
+                client_id=client_id,
+                intimacy_level=intimacy_level,
+                relationship_stage=relationship_stage,
+                tendency_friend=tendency_friend,
+                tendency_romantic=tendency_romantic,
+                tendency_confidant=tendency_confidant,
+                tendency_mentor=tendency_mentor,
+                streak_days=streak_days,
+                total_turns=total_turns,
+                avg_session_turns=avg_session_turns,
+                mood_history=mood_history,
+                nicknames=nicknames,
+                last_interaction_date=last_interaction_date,
+                last_stage_transition_at=last_stage_transition_at,
+                emotional_trend=emotional_trend,
             )
 
     def create_companion_reminder(
@@ -1153,6 +1201,161 @@ class SQLiteMemoryMixin:
             ),
         )
         return next_record
+
+    # -- Companion relationship state ------------------------------------------
+
+    def _row_to_companion_relationship_state(
+        self, row: sqlite3.Row | None, *, client_id: str
+    ) -> CompanionRelationshipStateRecord:
+        now_iso = utc_now().isoformat()
+        if row is None:
+            return CompanionRelationshipStateRecord(
+                client_id=client_id,
+                intimacy_level=0.0,
+                relationship_stage="stranger",
+                tendency_friend=0.25,
+                tendency_romantic=0.25,
+                tendency_confidant=0.25,
+                tendency_mentor=0.25,
+                streak_days=0,
+                total_turns=0,
+                avg_session_turns=0.0,
+                mood_history=[],
+                nicknames=[],
+                last_interaction_date="",
+                last_stage_transition_at="",
+                created_at="",
+                updated_at="",
+            )
+        return CompanionRelationshipStateRecord(
+            client_id=row["client_id"],
+            intimacy_level=float(row["intimacy_level"]),
+            relationship_stage=row["relationship_stage"],
+            tendency_friend=float(row["tendency_friend"]),
+            tendency_romantic=float(row["tendency_romantic"]),
+            tendency_confidant=float(row["tendency_confidant"]),
+            tendency_mentor=float(row["tendency_mentor"]),
+            streak_days=int(row["streak_days"]),
+            total_turns=int(row["total_turns"]),
+            avg_session_turns=float(row["avg_session_turns"]),
+            mood_history=json.loads(row["mood_history_json"]),
+            nicknames=json.loads(row["nicknames_json"]),
+            last_interaction_date=row["last_interaction_date"],
+            last_stage_transition_at=row["last_stage_transition_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _get_companion_relationship_state_in_connection(
+        self, connection: sqlite3.Connection, *, client_id: str
+    ) -> CompanionRelationshipStateRecord:
+        row = connection.execute(
+            "SELECT * FROM companion_relationship_state WHERE client_id = ?",
+            (client_id,),
+        ).fetchone()
+        return self._row_to_companion_relationship_state(row, client_id=client_id)
+
+    def _upsert_companion_relationship_state_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        client_id: str,
+        intimacy_level: float | None = None,
+        relationship_stage: str | None = None,
+        tendency_friend: float | None = None,
+        tendency_romantic: float | None = None,
+        tendency_confidant: float | None = None,
+        tendency_mentor: float | None = None,
+        streak_days: int | None = None,
+        total_turns: int | None = None,
+        avg_session_turns: float | None = None,
+        mood_history: list[str] | None = None,
+        nicknames: list[dict] | None = None,
+        last_interaction_date: str | None = None,
+        last_stage_transition_at: str | None = None,
+        emotional_trend: str | None = None,
+    ) -> CompanionRelationshipStateRecord:
+        current = self._get_companion_relationship_state_in_connection(connection, client_id=client_id)
+        now_iso = utc_now().isoformat()
+        created_at = current.created_at or now_iso
+
+        next_intimacy = intimacy_level if intimacy_level is not None else current.intimacy_level
+        next_stage = relationship_stage if relationship_stage is not None else current.relationship_stage
+        next_tf = tendency_friend if tendency_friend is not None else current.tendency_friend
+        next_tr = tendency_romantic if tendency_romantic is not None else current.tendency_romantic
+        next_tc = tendency_confidant if tendency_confidant is not None else current.tendency_confidant
+        next_tm = tendency_mentor if tendency_mentor is not None else current.tendency_mentor
+        next_streak = streak_days if streak_days is not None else current.streak_days
+        next_turns = total_turns if total_turns is not None else current.total_turns
+        next_avg = avg_session_turns if avg_session_turns is not None else current.avg_session_turns
+        next_mood_history = mood_history if mood_history is not None else current.mood_history
+        next_nicknames = nicknames if nicknames is not None else current.nicknames
+        next_lid = last_interaction_date if last_interaction_date is not None else current.last_interaction_date
+        next_lst = last_stage_transition_at if last_stage_transition_at is not None else current.last_stage_transition_at
+
+        connection.execute(
+            """
+            INSERT INTO companion_relationship_state (
+                client_id, intimacy_level, relationship_stage,
+                tendency_friend, tendency_romantic, tendency_confidant, tendency_mentor,
+                streak_days, total_turns, avg_session_turns,
+                mood_history_json, nicknames_json,
+                last_interaction_date, last_stage_transition_at,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(client_id) DO UPDATE SET
+                intimacy_level = excluded.intimacy_level,
+                relationship_stage = excluded.relationship_stage,
+                tendency_friend = excluded.tendency_friend,
+                tendency_romantic = excluded.tendency_romantic,
+                tendency_confidant = excluded.tendency_confidant,
+                tendency_mentor = excluded.tendency_mentor,
+                streak_days = excluded.streak_days,
+                total_turns = excluded.total_turns,
+                avg_session_turns = excluded.avg_session_turns,
+                mood_history_json = excluded.mood_history_json,
+                nicknames_json = excluded.nicknames_json,
+                last_interaction_date = excluded.last_interaction_date,
+                last_stage_transition_at = excluded.last_stage_transition_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                client_id,
+                next_intimacy,
+                next_stage,
+                next_tf,
+                next_tr,
+                next_tc,
+                next_tm,
+                next_streak,
+                next_turns,
+                next_avg,
+                json.dumps(next_mood_history, ensure_ascii=False),
+                json.dumps(next_nicknames, ensure_ascii=False),
+                next_lid,
+                next_lst,
+                created_at,
+                now_iso,
+            ),
+        )
+        return CompanionRelationshipStateRecord(
+            client_id=client_id,
+            intimacy_level=next_intimacy,
+            relationship_stage=next_stage,
+            tendency_friend=next_tf,
+            tendency_romantic=next_tr,
+            tendency_confidant=next_tc,
+            tendency_mentor=next_tm,
+            streak_days=next_streak,
+            total_turns=next_turns,
+            avg_session_turns=next_avg,
+            mood_history=next_mood_history,
+            nicknames=next_nicknames,
+            last_interaction_date=next_lid,
+            last_stage_transition_at=next_lst,
+            created_at=created_at,
+            updated_at=now_iso,
+        )
 
     def _row_to_companion_lifestyle_state(
         self,
