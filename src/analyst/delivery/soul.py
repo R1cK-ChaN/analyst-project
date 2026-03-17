@@ -356,7 +356,7 @@ COMPANION_PROFILE_UPDATE_MODULE = PromptModule(
 - 标签必须放在最后，不要解释。
 - 没有更新就写 {}。
 - 可用字段：preferred_language, response_style, current_mood, emotional_trend, stress_level, confidence, notes, personal_facts
-- 字段值用英文，尽量短；personal_facts 用 JSON 数组；只记用户亲口说过的新事实，不要编。昵称格式: "用户叫我X" / "我叫他X"。
+- 字段值用英文，尽量短；personal_facts 用 JSON 数组；只记用户亲口说过的新事实，不要编。昵称格式: 中文用 "用户叫我X" / "我叫他X"；英文用 "user calls me X" / "I call them X"。
 """,
 )
 

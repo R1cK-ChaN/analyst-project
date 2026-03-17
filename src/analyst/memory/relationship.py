@@ -86,10 +86,40 @@ _LATE_NIGHT_TENDENCY_NUDGES: dict[str, float] = {
 }
 
 _NICKNAME_FOR_AI_PATTERN = re.compile(
-    r"(?:用户|他|她|对方)叫我[「「\"']?(.+?)[」」\"']?$"
+    r"(?:用户|他|她|对方)叫我[「「\"']?(.+?)[」」\"']?(?:$|[，。,.])"
 )
 _NICKNAME_FOR_USER_PATTERN = re.compile(
-    r"(?:我叫(?:他|她|用户))[「「\"']?(.+?)[」」\"']?$"
+    r"(?:我叫(?:他|她|用户))[「「\"']?(.+?)[」」\"']?(?:$|[，。,.])"
+)
+# English patterns for personal_facts extraction
+_EN_NICKNAME_FOR_AI_PATTERN = re.compile(
+    r"(?:user |they |he |she )?calls? me [\"']?(.+?)[\"']?(?:$|[,.])",
+    re.IGNORECASE,
+)
+_EN_NICKNAME_FOR_USER_PATTERN = re.compile(
+    r"I call (?:them|him|her|the user) [\"']?(.+?)[\"']?(?:$|[,.])",
+    re.IGNORECASE,
+)
+
+# Direct user text patterns — detect nickname assignments from raw messages
+_USER_TEXT_NICKNAME_FOR_AI_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Chinese
+    re.compile(r"(?:以后|从现在开始|从今天开始)?(?:就)?叫你[「「\"']?(.+?)[」」\"']?(?:吧|了|$|[，。！,.])", re.IGNORECASE),
+    re.compile(r"(?:我要|我想)?(?:给你|帮你)?(?:取个|起个|取一个)?(?:名字|昵称|外号|绰号)[，,]?\s*(?:就)?叫[「「\"']?(.+?)[」」\"']?(?:吧|了|$|[，。！,.])", re.IGNORECASE),
+    re.compile(r"你(?:就)?是(?:我们?的)?[「「\"']?(.+?)[」」\"']?(?:了|吧|$|[，。！,.])", re.IGNORECASE),
+    # English — use $ or punctuation as terminators (not \s, which eats spaces in multi-word names)
+    re.compile(r"(?:from now on,?\s*)?(?:I(?:'ll| will)?\s*)?call you [\"']?(.+?)[\"']?\s*$", re.IGNORECASE),
+    re.compile(r"(?:from now on,?\s*)?you (?:are|'re)\s+(?:our |my )?[\"']?(.+?)[\"']?\s*(?:$|[,.])", re.IGNORECASE),
+    re.compile(r"(?:I(?:'ll| will)?\s*)?(?:nick)?name you [\"']?(.+?)[\"']?\s*$", re.IGNORECASE),
+    re.compile(r"(?:your (?:new )?(?:nick)?name is|let me call you) [\"']?(.+?)[\"']?\s*$", re.IGNORECASE),
+)
+_USER_TEXT_NICKNAME_FOR_USER_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Chinese
+    re.compile(r"(?:以后|从现在开始)?(?:你)?叫我[「「\"']?(.+?)[」」\"']?(?:吧|了|$|[，。！,.])", re.IGNORECASE),
+    re.compile(r"(?:以后|从现在开始)?(?:你)?(?:喊|称呼)我[「「\"']?(.+?)[」」\"']?(?:吧|了|$|[，。！,.])", re.IGNORECASE),
+    # English
+    re.compile(r"call me [\"']?(.+?)[\"']?\s*$", re.IGNORECASE),
+    re.compile(r"(?:my (?:nick)?name is|I(?:'m| am)) [\"']?(.+?)[\"']?\s*$", re.IGNORECASE),
 )
 
 _MOOD_HISTORY_WINDOW = timedelta(hours=24)
@@ -211,10 +241,12 @@ def compute_relationship_update(
 def extract_nicknames_from_facts(facts: list[str]) -> list[NicknameEntry]:
     """Extract structured NicknameEntry objects from personal_facts strings.
 
-    Recognizes patterns like "用户叫我小襄" and "我叫他哥哥".
+    Recognizes patterns like "用户叫我小襄", "我叫他哥哥",
+    "user calls me Shawn", "I call them Boss".
     """
     entries: list[NicknameEntry] = []
     for fact in facts:
+        # Chinese patterns
         m = _NICKNAME_FOR_AI_PATTERN.search(fact)
         if m:
             entries.append(NicknameEntry(
@@ -232,7 +264,54 @@ def extract_nicknames_from_facts(facts: list[str]) -> list[NicknameEntry]:
                 created_by="ai",
                 frequency=1,
             ))
+            continue
+        # English patterns
+        m = _EN_NICKNAME_FOR_AI_PATTERN.search(fact)
+        if m:
+            entries.append(NicknameEntry(
+                name=m.group(1).strip(),
+                target="ai",
+                created_by="user",
+                frequency=1,
+            ))
+            continue
+        m = _EN_NICKNAME_FOR_USER_PATTERN.search(fact)
+        if m:
+            entries.append(NicknameEntry(
+                name=m.group(1).strip(),
+                target="user",
+                created_by="ai",
+                frequency=1,
+            ))
     return entries
+
+
+def detect_nickname_from_text(user_text: str) -> tuple[str | None, str | None]:
+    """Detect nickname assignments from raw user message text.
+
+    Returns (nickname_for_ai, nickname_for_user) — either or both may be None.
+    """
+    nickname_for_ai: str | None = None
+    nickname_for_user: str | None = None
+
+    for pattern in _USER_TEXT_NICKNAME_FOR_AI_PATTERNS:
+        m = pattern.search(user_text)
+        if m:
+            candidate = m.group(1).strip()
+            # Filter out overly long or empty matches
+            if candidate and len(candidate) <= 20:
+                nickname_for_ai = candidate
+            break
+
+    for pattern in _USER_TEXT_NICKNAME_FOR_USER_PATTERNS:
+        m = pattern.search(user_text)
+        if m:
+            candidate = m.group(1).strip()
+            if candidate and len(candidate) <= 20:
+                nickname_for_user = candidate
+            break
+
+    return nickname_for_ai, nickname_for_user
 
 
 # ---------------------------------------------------------------------------

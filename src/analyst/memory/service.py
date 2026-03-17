@@ -364,12 +364,16 @@ def record_chat_interaction(
     current_rel = store.get_companion_relationship_state(client_id=client_id)
     active_topic = _detect_active_topic_category(user_text)
     interaction_mode = _detect_interaction_mode(user_text)
+    from .relationship import detect_nickname_from_text
+    nick_for_ai, nick_for_user = detect_nickname_from_text(user_text)
     signal = RelationshipSignalUpdate(
         current_mood=update.current_mood,
         is_personal_sharing=_detect_personal_sharing(user_text),
         is_late_night=_is_late_night_utc8(now),
         active_topic_category=active_topic,
         interaction_mode=interaction_mode,
+        nickname_for_ai=nick_for_ai,
+        nickname_for_user=nick_for_user,
         user_text=user_text,
     )
     rel_updates = compute_relationship_update(current_rel, signal=signal, now=now)
@@ -1096,7 +1100,8 @@ def _render_nickname_context(
 
 
 _NICKNAME_FACT_PATTERN = re.compile(
-    r"(?:用户|他|她|对方)叫我|我叫(?:他|她|用户)"
+    r"(?:用户|他|她|对方)叫我|我叫(?:他|她|用户)|calls? me |I call (?:them|him|her|the user)",
+    re.IGNORECASE,
 )
 
 
