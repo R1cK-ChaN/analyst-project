@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from analyst.contracts import utc_now
 from analyst.storage import SQLiteEngineStore
@@ -16,6 +18,94 @@ from .bot_constants import (
     INSTANT_REPLY_MAX_CHARS,
 )
 from .companion_schedule import build_companion_schedule_context
+
+
+# ---------------------------------------------------------------------------
+# Stage-aware send windows
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class SendWindow:
+    start_hour: int
+    start_minute: int
+    end_hour: int
+    end_minute: int
+    blocked: bool = False
+
+
+_STAGE_SEND_WINDOWS: dict[str, SendWindow] = {
+    "stranger": SendWindow(0, 0, 0, 0, blocked=True),
+    "acquaintance": SendWindow(9, 0, 21, 0),
+    "familiar": SendWindow(8, 0, 23, 0),
+    "close": SendWindow(8, 0, 23, 30),
+}
+_CLOSE_ROMANTIC_LATE_WINDOW = SendWindow(8, 0, 1, 0)
+
+
+def get_send_window(
+    stage: str,
+    *,
+    tendency_romantic: float = 0.0,
+    late_night_activity_pct: float = 0.0,
+) -> SendWindow:
+    if stage == "stranger":
+        return _STAGE_SEND_WINDOWS["stranger"]
+    if stage == "close" and tendency_romantic > 0.4 and late_night_activity_pct > 0.5:
+        return _CLOSE_ROMANTIC_LATE_WINDOW
+    return _STAGE_SEND_WINDOWS.get(stage, _STAGE_SEND_WINDOWS["acquaintance"])
+
+
+def is_within_send_window(
+    now: datetime,
+    *,
+    window: SendWindow,
+    timezone_name: str = "Asia/Shanghai",
+) -> bool:
+    if window.blocked:
+        return False
+    try:
+        tz = ZoneInfo(timezone_name)
+    except Exception:
+        tz = ZoneInfo("Asia/Shanghai")
+    local_now = now.astimezone(tz)
+    current_minutes = local_now.hour * 60 + local_now.minute
+    start_minutes = window.start_hour * 60 + window.start_minute
+    end_minutes = window.end_hour * 60 + window.end_minute
+    if end_minutes > start_minutes:
+        # Normal window (e.g., 08:00 - 23:30)
+        return start_minutes <= current_minutes < end_minutes
+    else:
+        # Crosses midnight (e.g., 08:00 - 01:00)
+        return current_minutes >= start_minutes or current_minutes < end_minutes
+
+
+def compute_late_night_activity_pct(
+    message_timestamps: list[str],
+    timezone_name: str = "Asia/Shanghai",
+) -> float:
+    if not message_timestamps:
+        return 0.0
+    try:
+        tz = ZoneInfo(timezone_name)
+    except Exception:
+        tz = ZoneInfo("Asia/Shanghai")
+    late_count = 0
+    total = 0
+    for ts in message_timestamps:
+        try:
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is None:
+                from datetime import timezone as _tz
+                dt = dt.replace(tzinfo=_tz.utc)
+            local_dt = dt.astimezone(tz)
+            total += 1
+            if local_dt.hour >= 23 or local_dt.hour < 5:
+                late_count += 1
+        except (ValueError, TypeError):
+            continue
+    if total == 0:
+        return 0.0
+    return late_count / total
 
 def _contains_emotional_cue(text: str) -> bool:
     lowered = text.lower()

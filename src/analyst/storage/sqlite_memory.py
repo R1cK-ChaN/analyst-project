@@ -51,6 +51,7 @@ from .sqlite_records import (
     CompanionCheckInStateRecord,
     CompanionLifestyleStateRecord,
     CompanionDailyScheduleRecord,
+    CompanionOutreachLogRecord,
     CompanionRelationshipStateRecord,
     CompanionReminderRecord,
     ConversationMessageRecord,
@@ -118,6 +119,7 @@ class SQLiteMemoryMixin:
         personal_facts: list[str] | None = None,
         last_active_at: str | None = None,
         interaction_increment: int = 0,
+        timezone_name: str | None = None,
     ) -> ClientProfileRecord:
         with self._connection(commit=True) as connection:
             return self._upsert_client_profile_in_connection(
@@ -142,6 +144,7 @@ class SQLiteMemoryMixin:
                 personal_facts=personal_facts,
                 last_active_at=last_active_at,
                 interaction_increment=interaction_increment,
+                timezone_name=timezone_name,
             )
 
     def get_companion_checkin_state(
@@ -309,6 +312,153 @@ class SQLiteMemoryMixin:
                 pending_due_at=next_due_at,
                 retry_count=retry_count,
             )
+
+    # -- Outreach log -----------------------------------------------------------
+
+    def log_companion_outreach(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        kind: str,
+        content_raw: str,
+        sent_at: str,
+    ) -> CompanionOutreachLogRecord:
+        from analyst.delivery.outreach_dedup import normalize_outreach_text
+
+        content_normalized = normalize_outreach_text(content_raw)
+        now_iso = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO companion_outreach_log
+                    (client_id, channel, thread_id, kind, content_raw, content_normalized,
+                     sent_at, user_replied, user_replied_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', ?)
+                """,
+                (client_id, channel, thread_id, kind, content_raw, content_normalized, sent_at, now_iso),
+            )
+            row_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        return CompanionOutreachLogRecord(
+            outreach_id=row_id,
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+            kind=kind,
+            content_raw=content_raw,
+            content_normalized=content_normalized,
+            sent_at=sent_at,
+            user_replied=False,
+            user_replied_at="",
+            created_at=now_iso,
+        )
+
+    def list_recent_companion_outreach(
+        self,
+        *,
+        client_id: str,
+        days: int = 7,
+        limit: int = 50,
+    ) -> list[CompanionOutreachLogRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM companion_outreach_log
+                WHERE client_id = ?
+                  AND sent_at >= datetime('now', ?)
+                ORDER BY sent_at DESC
+                LIMIT ?
+                """,
+                (client_id, f"-{days} days", limit),
+            ).fetchall()
+        return [self._row_to_outreach_log(row) for row in rows]
+
+    def mark_outreach_replied(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        replied_at: str,
+    ) -> None:
+        """Mark the most recent unreplied outreach as replied (within 4h window).
+
+        Uses strftime to strip timezone suffixes for reliable SQLite datetime math.
+        """
+        # Normalize to bare ISO format (no TZ suffix, space separator) for SQLite datetime math.
+        clean_replied = replied_at.replace("+00:00", "").replace("Z", "").replace("T", " ")
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                UPDATE companion_outreach_log
+                SET user_replied = 1, user_replied_at = ?
+                WHERE id = (
+                    SELECT id FROM companion_outreach_log
+                    WHERE client_id = ? AND channel = ? AND thread_id = ?
+                      AND user_replied = 0
+                      AND REPLACE(REPLACE(REPLACE(sent_at, '+00:00', ''), 'Z', ''), 'T', ' ')
+                          >= datetime(?, '-4 hours')
+                    ORDER BY sent_at DESC
+                    LIMIT 1
+                )
+                """,
+                (replied_at, client_id, channel, thread_id, clean_replied),
+            )
+
+    def count_outreach_sent_today(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+    ) -> int:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) FROM companion_outreach_log
+                WHERE client_id = ? AND channel = ? AND thread_id = ?
+                  AND date(sent_at) = date('now')
+                """,
+                (client_id, channel, thread_id),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def get_last_outreach_sent_at(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+    ) -> str | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                """
+                SELECT sent_at FROM companion_outreach_log
+                WHERE client_id = ? AND channel = ? AND thread_id = ?
+                ORDER BY sent_at DESC
+                LIMIT 1
+                """,
+                (client_id, channel, thread_id),
+            ).fetchone()
+        return str(row[0]) if row else None
+
+    def _row_to_outreach_log(self, row: sqlite3.Row) -> CompanionOutreachLogRecord:
+        return CompanionOutreachLogRecord(
+            outreach_id=int(row["id"]),
+            client_id=row["client_id"],
+            channel=row["channel"],
+            thread_id=row["thread_id"],
+            kind=row["kind"],
+            content_raw=row["content_raw"],
+            content_normalized=row["content_normalized"],
+            sent_at=row["sent_at"],
+            user_replied=bool(row["user_replied"]),
+            user_replied_at=row["user_replied_at"],
+            created_at=row["created_at"],
+        )
+
+    # -- Lifestyle state -------------------------------------------------------
 
     def get_companion_lifestyle_state(
         self,
@@ -648,6 +798,25 @@ class SQLiteMemoryMixin:
             return ""
         return str(row["created_at"] or "")
 
+    def list_recent_message_timestamps(
+        self,
+        *,
+        client_id: str,
+        limit: int = 50,
+    ) -> list[str]:
+        """Return created_at timestamps for recent user messages across all channels."""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT created_at FROM conversation_messages
+                WHERE client_id = ? AND role = 'user'
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (client_id, limit),
+            ).fetchall()
+        return [str(row["created_at"] or "") for row in rows if row["created_at"]]
+
     def ensure_conversation_thread(self, *, client_id: str, channel: str, thread_id: str) -> None:
         with self._connection(commit=True) as connection:
             self._ensure_conversation_thread_in_connection(
@@ -940,6 +1109,7 @@ class SQLiteMemoryMixin:
                 personal_facts=profile_updates.get("personal_facts"),
                 last_active_at=assistant_timestamp,
                 interaction_increment=1,
+                timezone_name=profile_updates.get("timezone_name"),
             )
             self._ensure_conversation_thread_in_connection(
                 connection,
@@ -1044,6 +1214,7 @@ class SQLiteMemoryMixin:
                 last_active_at="",
                 total_interactions=0,
                 updated_at="",
+                timezone_name="Asia/Shanghai",
             )
         return ClientProfileRecord(
             client_id=row["client_id"],
@@ -1067,6 +1238,7 @@ class SQLiteMemoryMixin:
             last_active_at=row["last_active_at"],
             total_interactions=int(row["total_interactions"]),
             updated_at=row["updated_at"],
+            timezone_name=row["timezone_name"],
         )
 
     def _row_to_companion_checkin_state(
@@ -1719,6 +1891,7 @@ class SQLiteMemoryMixin:
         personal_facts: list[str] | None = None,
         last_active_at: str | None = None,
         interaction_increment: int = 0,
+        timezone_name: str | None = None,
     ) -> ClientProfileRecord:
         current = self._get_client_profile_in_connection(connection, client_id=client_id)
         merged_topics = current.watchlist_topics
@@ -1758,6 +1931,7 @@ class SQLiteMemoryMixin:
         next_confidence = confidence if confidence is not None else current.confidence
         next_notes = notes if notes is not None else current.notes
         next_last_active = last_active_at if last_active_at is not None else current.last_active_at
+        next_timezone_name = timezone_name if timezone_name is not None else current.timezone_name
         updated_at = utc_now().isoformat()
         total_interactions = current.total_interactions + interaction_increment
         connection.execute(
@@ -1783,8 +1957,9 @@ class SQLiteMemoryMixin:
                 personal_facts_json,
                 last_active_at,
                 total_interactions,
-                updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                updated_at,
+                timezone_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(client_id) DO UPDATE SET
                 preferred_language = excluded.preferred_language,
                 watchlist_topics_json = excluded.watchlist_topics_json,
@@ -1805,7 +1980,8 @@ class SQLiteMemoryMixin:
                 personal_facts_json = excluded.personal_facts_json,
                 last_active_at = excluded.last_active_at,
                 total_interactions = excluded.total_interactions,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                timezone_name = excluded.timezone_name
             """,
             (
                 client_id,
@@ -1829,6 +2005,7 @@ class SQLiteMemoryMixin:
                 next_last_active,
                 total_interactions,
                 updated_at,
+                next_timezone_name,
             ),
         )
         return ClientProfileRecord(
@@ -1853,6 +2030,7 @@ class SQLiteMemoryMixin:
             last_active_at=next_last_active,
             total_interactions=total_interactions,
             updated_at=updated_at,
+            timezone_name=next_timezone_name,
         )
 
     def _ensure_conversation_thread_in_connection(

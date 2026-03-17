@@ -275,6 +275,7 @@ class ClientProfileRecord:
     last_active_at: str
     total_interactions: int
     updated_at: str
+    timezone_name: str = "Asia/Shanghai"
 
 
 @dataclass(frozen=True)
@@ -354,6 +355,21 @@ class CompanionDailyScheduleRecord:
     last_explicit_update_at: str
     created_at: str
     updated_at: str
+
+@dataclass(frozen=True)
+class CompanionOutreachLogRecord:
+    outreach_id: int
+    client_id: str
+    channel: str
+    thread_id: str
+    kind: str
+    content_raw: str
+    content_normalized: str
+    sent_at: str
+    user_replied: bool
+    user_replied_at: str
+    created_at: str
+
 
 @dataclass(frozen=True)
 class CompanionReminderRecord:

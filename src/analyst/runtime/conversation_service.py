@@ -124,6 +124,8 @@ def run_companion_turn_for_input(
         memory_context_builder=memory_context_builder,
         group_memory_context_builder=group_memory_context_builder,
     )
+    from analyst.delivery.injection_scanner import scan_for_injection
+    injection_detected = scan_for_injection(conversation.message)
     profile = store.get_client_profile(conversation.user_id)
     with bind_request_image(conversation.attached_image):
         return reply_generator(
@@ -137,6 +139,7 @@ def run_companion_turn_for_input(
             user_content=conversation.user_content,
             companion_local_context=conversation.companion_local_context,
             persona_mode=conversation.persona_mode,
+            injection_detected=injection_detected,
         )
 
 

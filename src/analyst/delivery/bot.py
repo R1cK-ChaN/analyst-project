@@ -61,8 +61,11 @@ from analyst.tools._request_context import RequestImageInput, bind_request_image
 from .bot_companion_timing import (  # noqa: E402
     _companion_local_context,
     _derive_companion_routine_state,
+    compute_late_night_activity_pct,
     evaluate_relationship_checkin_kind,
     _first_reply_delay_seconds,
+    get_send_window,
+    is_within_send_window,
     _is_same_local_day,
     _is_within_checkin_send_window,
     _lifestyle_ping_sent_at,
@@ -78,6 +81,7 @@ from .bot_companion_timing import (  # noqa: E402
 )
 from .bot_constants import (  # noqa: E402
     COMPANION_CHECKIN_INTERVAL_SECONDS,
+    DEFAULT_USER_TIMEZONE,
     MAX_HISTORY_TURNS,
     MAX_TELEGRAM_LENGTH,
 )
@@ -179,6 +183,13 @@ async def _send_companion_proactive_message(
         now=now,
         routine_state=str(getattr(lifestyle_state, "routine_state", "") or ""),
     )
+    # Outreach dedup: reject if substantially similar to recent outreach
+    from analyst.delivery.outreach_dedup import is_duplicate_outreach
+
+    recent_outreach = store.list_recent_companion_outreach(client_id=state.client_id, days=7)
+    if is_duplicate_outreach(reply.text, [r.content_raw for r in recent_outreach]):
+        logger.info("Outreach dedup: blocked duplicate for client=%s kind=%s", state.client_id, kind)
+        return
     bubbles = split_into_bubbles(reply.text)
     await _send_bot_bubbles(bot, chat_id=chat_id, bubbles=bubbles)
     sent_at = utc_now().isoformat()
@@ -199,6 +210,14 @@ async def _send_companion_proactive_message(
         status="delivered",
         delivered_at=sent_at,
         metadata={"kind": kind},
+    )
+    store.log_companion_outreach(
+        client_id=state.client_id,
+        channel=state.channel,
+        thread_id=state.thread_id,
+        kind=kind,
+        content_raw=reply.text,
+        sent_at=sent_at,
     )
     if kind in {"morning", "evening", "weekend"}:
         store.mark_companion_lifestyle_ping_sent(
@@ -320,7 +339,19 @@ async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> Non
             channel=state.channel,
             thread_id=state.thread_id,
         )
-        if _is_within_checkin_send_window(now) and should_send_inactivity_ping(
+        try:
+            _rel2 = store.get_companion_relationship_state(client_id=state.client_id)
+            _prof2 = store.get_client_profile(state.client_id)
+            _tz2 = _prof2.timezone_name or DEFAULT_USER_TIMEZONE
+            _stage2 = str(getattr(_rel2, "relationship_stage", "acquaintance") or "acquaintance")
+            _rom2 = float(getattr(_rel2, "tendency_romantic", 0.0) or 0.0)
+            _msgs2 = store.list_recent_message_timestamps(client_id=state.client_id, limit=50)
+            _late2 = compute_late_night_activity_pct(_msgs2, _tz2)
+            _win2 = get_send_window(_stage2, tendency_romantic=_rom2, late_night_activity_pct=_late2)
+            _in_window = is_within_send_window(now, window=_win2, timezone_name=_tz2)
+        except Exception:
+            _in_window = _is_within_checkin_send_window(now)
+        if _in_window and should_send_inactivity_ping(
             now=now,
             checkin_state=state,
             last_user_message_at=last_user_message_at,
@@ -340,7 +371,7 @@ async def _run_companion_checkins_job(context: ContextTypes.DEFAULT_TYPE) -> Non
                 logger.exception("Failed to send companion inactivity check-in")
             continue
         # Relationship-aware proactive check-in
-        if _is_within_checkin_send_window(now) and not state.pending_kind:
+        if _in_window and not state.pending_kind:
             try:
                 rel_state = store.get_companion_relationship_state(client_id=state.client_id)
                 rel_kind = evaluate_relationship_checkin_kind(
@@ -774,6 +805,16 @@ def _make_message_handler(
             record_chat_interaction=record_chat_interaction,
             needs_emotional_follow_up=_needs_emotional_follow_up,
         )
+        # Attribute user reply to most recent outreach (within 4h window)
+        try:
+            store.mark_outreach_replied(
+                client_id=conversation.user_id,
+                channel=conversation.channel_id,
+                thread_id=thread_id,
+                replied_at=now_utc.isoformat(),
+            )
+        except Exception:
+            logger.debug("Outreach reply attribution skipped", exc_info=True)
         bubbles = rendered_bubbles or [(bubble, []) for bubble in split_into_bubbles(rendered_reply_text)]
         elapsed = asyncio.get_running_loop().time() - reply_started
         remaining_delay = first_reply_delay_seconds - elapsed

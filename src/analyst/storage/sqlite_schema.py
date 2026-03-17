@@ -476,6 +476,13 @@ class SQLiteSchemaMixin:
                     "personal_facts_json": "TEXT NOT NULL DEFAULT '[]'",
                 },
             )
+            self._ensure_table_columns(
+                connection,
+                table_name="client_profiles",
+                columns={
+                    "timezone_name": "TEXT NOT NULL DEFAULT 'Asia/Shanghai'",
+                },
+            )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS conversation_threads (
@@ -629,6 +636,26 @@ class SQLiteSchemaMixin:
                 columns={
                     "previous_stage": "TEXT NOT NULL DEFAULT ''",
                 },
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS companion_outreach_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    kind TEXT NOT NULL DEFAULT '',
+                    content_raw TEXT NOT NULL,
+                    content_normalized TEXT NOT NULL,
+                    sent_at TEXT NOT NULL,
+                    user_replied INTEGER NOT NULL DEFAULT 0,
+                    user_replied_at TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_outreach_log_client_sent ON companion_outreach_log(client_id, sent_at)"
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_analytical_observations_created ON analytical_observations(id DESC)"

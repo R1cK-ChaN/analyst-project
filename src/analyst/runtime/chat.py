@@ -848,6 +848,7 @@ def generate_chat_reply(
     persona_mode: str | ChatPersonaMode | None = None,
     native_tool_names: tuple[str, ...] = (),
     engine: OpenRouterAnalystEngine | Any | None = None,
+    injection_detected: bool = False,
 ) -> ChatReply:
     del persona_mode
     executor = coerce_agent_executor(agent_loop)
@@ -878,6 +879,12 @@ def generate_chat_reply(
         mcp_tool_names=plan.mcp_tool_names,
         engine_context=engine_context,
     )
+    if injection_detected:
+        from analyst.delivery.injection_scanner import build_injection_defense_block
+        import re as _re
+        _stage_match = _re.search(r"relationship_stage:\s*(\w+)", memory_context)
+        _stage = _stage_match.group(1) if _stage_match else "stranger"
+        system_prompt = system_prompt + "\n\n" + build_injection_defense_block(_stage)
     result = executor.run_turn(
         AgentRunRequest(
             system_prompt=system_prompt,

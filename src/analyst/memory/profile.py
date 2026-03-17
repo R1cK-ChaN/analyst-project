@@ -25,6 +25,7 @@ class ClientProfileUpdate:
     confidence: str | None = None
     notes: str | None = None
     personal_facts: list[str] = field(default_factory=list)
+    timezone_name: str | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ClientProfileUpdate":
@@ -48,6 +49,7 @@ class ClientProfileUpdate:
             confidence=_clean_scalar(payload.get("confidence")),
             notes=_clean_scalar(payload.get("notes")),
             personal_facts=_clean_list(payload.get("personal_facts")),
+            timezone_name=_clean_scalar(payload.get("timezone_name")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +71,7 @@ class ClientProfileUpdate:
             "confidence": self.confidence,
             "notes": self.notes,
             "personal_facts": self.personal_facts,
+            "timezone_name": self.timezone_name,
         }
 
 
@@ -368,6 +371,7 @@ def merge_client_profile_updates(*updates: ClientProfileUpdate) -> ClientProfile
             confidence=update.confidence or merged.confidence,
             notes=update.notes or merged.notes,
             personal_facts=_merge_lists_capped(merged.personal_facts, update.personal_facts, cap=20),
+            timezone_name=update.timezone_name or merged.timezone_name,
         )
     return merged
 

@@ -220,6 +220,7 @@ class CompanionCheckInJobTest(unittest.IsolatedAsyncioTestCase):
                 return func(*args, **kwargs)
 
             with patch("analyst.delivery.bot._is_within_checkin_send_window", return_value=True), \
+                 patch("analyst.delivery.bot.is_within_send_window", return_value=True), \
                  patch("analyst.delivery.bot._routine_checkin_kind", return_value=""), \
                  patch("analyst.delivery.bot.asyncio.to_thread", side_effect=fake_to_thread), \
                  patch("analyst.delivery.bot.build_chat_context", return_value=""), \
@@ -269,6 +270,7 @@ class CompanionCheckInJobTest(unittest.IsolatedAsyncioTestCase):
                 return func(*args, **kwargs)
 
             with patch("analyst.delivery.bot._is_within_checkin_send_window", return_value=True), \
+                 patch("analyst.delivery.bot.is_within_send_window", return_value=True), \
                  patch("analyst.delivery.bot._routine_checkin_kind", return_value=""), \
                  patch("analyst.delivery.bot.asyncio.to_thread", side_effect=fake_to_thread), \
                  patch(
