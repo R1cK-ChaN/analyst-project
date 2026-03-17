@@ -434,19 +434,19 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
 
     async def test_calls_agent_loop_with_companion_prompt_by_default(self) -> None:
         from analyst.delivery.bot import _chat_reply
-        from analyst.delivery.soul import COMPANION_SYSTEM_PROMPT
 
         self._set_loop_response("你好！")
         await _chat_reply("hi", self.mock_context, self.mock_loop, self.mock_tools)
 
         call_kwargs = self.mock_loop.run.call_args.kwargs
-        self.assertIn(COMPANION_SYSTEM_PROMPT, call_kwargs["system_prompt"])
-        self.assertIn("陈襄", call_kwargs["system_prompt"])
+        system_prompt = call_kwargs["system_prompt"]
+        self.assertIn("陈襄", system_prompt)
+        self.assertIn("companion", system_prompt.lower())
+        self.assertIn("[REMINDER]", system_prompt)
 
     async def test_companion_prompt_includes_latent_snt_backstory(self) -> None:
         from analyst.delivery.bot import _chat_reply
         from analyst.delivery.user_chat import ChatPersonaMode
-        from analyst.delivery.soul import COMPANION_SYSTEM_PROMPT
 
         self._set_loop_response("晚上好")
         await _chat_reply(
@@ -458,10 +458,11 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
         )
 
         call_kwargs = self.mock_loop.run.call_args.kwargs
-        self.assertIn(COMPANION_SYSTEM_PROMPT, call_kwargs["system_prompt"])
-        self.assertIn("SnT team", call_kwargs["system_prompt"])
-        self.assertIn("不要主动聊金融", call_kwargs["system_prompt"])
-        self.assertNotIn("投研老兵", call_kwargs["system_prompt"])
+        system_prompt = call_kwargs["system_prompt"]
+        self.assertIn("SnT team", system_prompt)
+        self.assertIn("不要主动聊金融", system_prompt)
+        self.assertNotIn("投研老兵", system_prompt)
+        self.assertIn("[REMINDER]", system_prompt)
 
     async def test_passes_tools_to_agent_loop(self) -> None:
         from analyst.delivery.bot import _chat_reply

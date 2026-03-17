@@ -343,12 +343,17 @@ COMPANION_PROACTIVE_MODULE = PromptModule(
     body="""\
 你现在是在主动发起一条 companion check-in，而不是被动回复。
 
-规则：
+通用规则：
 - 只能发 1-2 条短消息，轻一点、软一点、别太满。
 - 语气要像自然想起对方时顺手问一句，不要像运营触达，也不要像客服回访。
-- 如果是 follow_up，就轻轻承接上次的情绪或话题；如果是 inactivity，就简单问候，不要追问“为什么不回我”。
-- 绝对不要 guilt-trip，不要说“你怎么不找我了”“我一直在等你”这类话。
+- 绝对不要 guilt-trip，不要说”你怎么不找我了””我一直在等你”这类话。
 - 不要主动聊市场，不要把消息写成工作服务，也不要带任何营销感。
+
+按类型调整：
+- follow_up / emotional_concern：轻轻承接上次的情绪或话题。
+- inactivity / streak_save：简单问候，不要追问”为什么不回我”。
+- stage_milestone：可以带一点开心，但不要刻意，不要说”我们认识X天了”这种机械话。
+- warm_up_share：不要关心对方、不要问”你怎么了”、不要表达想念。像随手分享一个有趣的东西——一首歌、一个发现、一件小事。如果记得对方的某个兴趣就自然关联上。语气轻松，结尾不要用问号。
 """,
 )
 
@@ -631,6 +636,25 @@ def _user_text_needs_reminder_rules(user_text: str) -> bool:
     )
 
 
+def _companion_context_has_image_hint(local_context: str) -> bool:
+    if not local_context:
+        return False
+    return any(
+        token in local_context
+        for token in ("\u53ef\u4ee5\u62cd\u4e00\u5f20", "\u53ef\u4ee5\u53d1\u4e00\u5f20", "\u53ef\u4ee5\u987a\u624b\u62cd")
+    )
+
+
+def _companion_context_has_schedule(local_context: str) -> bool:
+    if not local_context:
+        return False
+    return any(
+        token in local_context
+        for token in ("morning_plan", "lunch_plan", "afternoon_plan",
+                      "dinner_plan", "evening_plan", "current_plan", "schedule")
+    )
+
+
 def _optional_module_ids(context: PromptAssemblyContext) -> tuple[str, ...]:
     mode = resolve_prompt_mode(context.mode)
     module_ids: list[str] = []
@@ -654,12 +678,12 @@ def _optional_module_ids(context: PromptAssemblyContext) -> tuple[str, ...]:
         module_ids.append("companion_reminder_rules")
     if mode == "companion" and (
         _user_text_needs_reminder_rules(context.user_text)
-        or context.companion_local_context
+        or _companion_context_has_schedule(context.companion_local_context)
     ):
         module_ids.append("companion_structured_tags")
     if mode == "companion" and (
         _user_text_needs_media_rules(context.user_text)
-        or "\u53ef\u4ee5\u62cd\u4e00\u5f20" in (context.companion_local_context or "")
+        or _companion_context_has_image_hint(context.companion_local_context)
     ):
         module_ids.append("companion_media_rules")
     return _dedupe_module_ids(module_ids)
@@ -701,6 +725,8 @@ def assemble_persona_system_prompt(context: PromptAssemblyContext) -> PromptAsse
         from .injection_scanner import build_injection_defense_block
         stage = _extract_relationship_stage(context.memory_context)
         parts.append(build_injection_defense_block(stage))
+    if mode == "companion":
+        parts.append("[REMINDER] " + COMPANION_HARD_NEGATIVES_MODULE.body.strip())
     return PromptAssemblyResult(prompt="\n\n".join(parts), module_ids=module_ids)
 
 
