@@ -29,16 +29,12 @@ from analyst.memory import (
     split_reply_and_profile_update,
 )
 from analyst.storage import SQLiteEngineStore
-from analyst.information import AnalystInformationService, FileBackedInformationRepository
 
 from .capabilities import (
     CLAUDE_CODE_NATIVE_TOOL_NAMES,
     COMPANION_SHARED_MCP_TOOL_NAMES,
-    USER_CHAT_SHARED_MCP_TOOL_NAMES,
     build_capability_tools,
-    build_content_runtime_tools,
 )
-from .openrouter import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
 
 COMPANION_MODEL_KEYS = (
     "ANALYST_COMPANION_OPENROUTER_MODEL",
@@ -47,14 +43,6 @@ COMPANION_MODEL_KEYS = (
     "LLM_MODEL",
 )
 COMPANION_DEFAULT_MODEL = "google/gemini-3-flash-preview"
-USER_MODEL_KEYS = (
-    "ANALYST_TELEGRAM_OPENROUTER_MODEL",
-    "ANALYST_OPENROUTER_MODEL",
-    "LLM_MODEL",
-)
-USER_DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
-# Backward-compatible alias retained for existing imports; companion is the actual surface name.
-USER_SHARED_MCP_TOOL_NAMES = COMPANION_SHARED_MCP_TOOL_NAMES
 class ChatPersonaMode(str, Enum):
     COMPANION = "companion"
 
@@ -114,29 +102,12 @@ def build_chat_tools(
     *,
     persona_mode: str | ChatPersonaMode | None = None,
 ) -> list[AgentTool]:
-    normalized_mode = (
-        persona_mode.value
-        if isinstance(persona_mode, ChatPersonaMode)
-        else str(persona_mode or "").strip().lower()
-    )
-    if normalized_mode == ChatPersonaMode.COMPANION.value or engine is None:
-        return build_capability_tools("companion", store=store, provider=provider)
-    return build_capability_tools("user_chat", engine=engine, store=store, provider=provider)
+    del engine, persona_mode
+    return build_capability_tools("companion", store=store, provider=provider)
 
 
-def build_user_chat_tools(
-    engine: OpenRouterAnalystEngine | Any | None = None,
-    store: SQLiteEngineStore | None = None,
-    provider: LLMProvider | None = None,
-    *,
-    persona_mode: str | ChatPersonaMode | None = None,
-) -> list[AgentTool]:
-    return build_chat_tools(
-        engine,
-        store,
-        provider,
-        persona_mode=persona_mode,
-    )
+# Backward-compatible alias.
+build_user_chat_tools = build_chat_tools
 
 
 def build_chat_services(
@@ -146,32 +117,7 @@ def build_chat_services(
     provider_factory: Callable[..., LLMProvider] = build_llm_provider_from_env,
 ) -> tuple[AgentExecutor, list[AgentTool], SQLiteEngineStore]:
     del persona_mode
-    store = SQLiteEngineStore(db_path=db_path)
-    provider = provider_factory(
-        model_keys=USER_MODEL_KEYS,
-        default_model=USER_DEFAULT_MODEL,
-    )
-    executor = build_agent_executor(
-        provider,
-        config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
-        mcp_tool_names=USER_CHAT_SHARED_MCP_TOOL_NAMES,
-        mcp_db_path=store.db_path,
-    )
-
-    repository = FileBackedInformationRepository()
-    info_service = AnalystInformationService(repository)
-    content_tools = build_content_runtime_tools(provider=provider, store=store)
-    runtime = OpenRouterAgentRuntime(
-        provider=provider,
-        config=OpenRouterRuntimeConfig(
-            model_keys=USER_MODEL_KEYS,
-            default_model=USER_DEFAULT_MODEL,
-        ),
-        tools=content_tools,
-    )
-    engine = OpenRouterAnalystEngine(info_service=info_service, runtime=runtime)
-    tools = build_chat_tools(engine, store, provider=provider)
-    return executor, tools, store
+    return build_companion_services(db_path=db_path, provider_factory=provider_factory)
 
 
 def build_companion_services(
@@ -187,7 +133,7 @@ def build_companion_services(
     executor = build_agent_executor(
         provider,
         config=AgentLoopConfig(max_turns=6, max_tokens=1500, temperature=0.6),
-        mcp_tool_names=USER_SHARED_MCP_TOOL_NAMES,
+        mcp_tool_names=COMPANION_SHARED_MCP_TOOL_NAMES,
         mcp_db_path=store.db_path,
     )
     tools = _build_configured_companion_tools(store=store, provider=provider)
@@ -198,7 +144,7 @@ def build_user_chat_services(
     *,
     db_path: Path | None = None,
 ) -> tuple[AgentExecutor, list[AgentTool], SQLiteEngineStore]:
-    return build_chat_services(db_path=db_path)
+    return build_companion_services(db_path=db_path)
 
 
 def _has_cjk(text: str) -> bool:
@@ -1056,24 +1002,5 @@ def generate_proactive_companion_reply(
     )
 
 
-def generate_user_reply(
-    user_text: str,
-    *,
-    history: list[dict[str, str]] | None,
-    agent_loop: AgentExecutor | Any,
-    tools: list[AgentTool],
-    memory_context: str = "",
-    preferred_language: str = "",
-    group_context: str = "",
-    user_content: MessageContent | None = None,
-) -> UserChatReply:
-    return generate_chat_reply(
-        user_text,
-        history=history,
-        agent_loop=agent_loop,
-        tools=tools,
-        memory_context=memory_context,
-        preferred_language=preferred_language,
-        group_context=group_context,
-        user_content=user_content,
-    )
+# Backward-compatible alias.
+generate_user_reply = generate_chat_reply

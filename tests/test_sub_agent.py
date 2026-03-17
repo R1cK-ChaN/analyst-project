@@ -16,7 +16,6 @@ from analyst.agents.research.research_agent import build_research_agent_tool, bu
 from analyst.engine.sub_agent import SubAgentSpec, SubAgentHandler, build_sub_agent_tool, _extract_scope_tags
 from analyst.engine.sub_agent_specs import (
     build_research_sub_agents,
-    build_user_sub_agents,
     build_content_sub_agents,
 )
 from analyst.memory.render import RenderBudget, sub_agent_budget
@@ -275,30 +274,6 @@ def test_build_research_sub_agents():
     for tool in tools:
         assert isinstance(tool, AgentTool)
         assert "task" in tool.parameters["required"]
-
-
-def test_build_user_sub_agents():
-    """build_user_sub_agents should return 2 tools with expected names."""
-    parent_tools = [
-        _dummy_tool("fetch_live_markets"),
-        _dummy_tool("fetch_live_news"),
-        _dummy_tool("fetch_article"),
-        _dummy_tool("fetch_country_indicators"),
-        _dummy_tool("fetch_reference_rates"),
-        _dummy_tool("get_regime_summary"),
-        _dummy_tool("get_calendar"),
-        _dummy_tool("web_search"),
-        _dummy_tool("get_portfolio_risk"),
-        _dummy_tool("get_portfolio_holdings"),
-        _dummy_tool("get_vix_regime"),
-        _dummy_tool("sync_portfolio_from_broker"),
-    ]
-    provider = FakeProvider([])
-    tools = build_user_sub_agents(parent_tools, provider)
-
-    assert len(tools) == 2
-    names = {t.name for t in tools}
-    assert names == {"research_lookup", "portfolio_analyst"}
 
 
 def test_build_content_sub_agents():
@@ -673,24 +648,6 @@ def _research_parent_tools() -> list[AgentTool]:
     ]
 
 
-def _user_parent_tools() -> list[AgentTool]:
-    """Build a tool list with the real tool names from the user chat agent."""
-    return [
-        _dummy_tool("fetch_live_markets"),
-        _dummy_tool("fetch_live_news"),
-        _dummy_tool("fetch_article"),
-        _dummy_tool("fetch_country_indicators"),
-        _dummy_tool("fetch_reference_rates"),
-        _dummy_tool("get_regime_summary"),
-        _dummy_tool("get_calendar"),
-        _dummy_tool("web_search"),
-        _dummy_tool("get_portfolio_risk"),
-        _dummy_tool("get_portfolio_holdings"),
-        _dummy_tool("get_vix_regime"),
-        _dummy_tool("sync_portfolio_from_broker"),
-    ]
-
-
 def test_research_sub_agents_pick_correct_tools():
     """Each research sub-agent should get the expected number of tools."""
     provider = FakeProvider([])
@@ -711,24 +668,6 @@ def test_research_sub_agents_pick_correct_tools():
     #                 get_surprise_summary, get_recent_releases, get_today_calendar
     data_handler = by_name["data_deep_dive"].handler
     assert len(data_handler.spec.tools) == 5
-
-
-def test_user_sub_agents_pick_correct_tools():
-    """Sales research_lookup should get 8 tools including fetch_live_markets."""
-    provider = FakeProvider([])
-    tools = build_user_sub_agents(_user_parent_tools(), provider)
-    by_name = {t.name: t for t in tools}
-
-    lookup_handler = by_name["research_lookup"].handler
-    assert len(lookup_handler.spec.tools) == 8
-    inner_names = {t.name for t in lookup_handler.spec.tools}
-    assert "fetch_live_markets" in inner_names
-    assert "fetch_live_news" in inner_names
-    assert "fetch_country_indicators" in inner_names
-    assert "fetch_reference_rates" in inner_names
-
-    portfolio_handler = by_name["portfolio_analyst"].handler
-    assert len(portfolio_handler.spec.tools) == 4
 
 
 def test_sub_agent_handler_catches_all_exceptions():

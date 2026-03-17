@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from analyst.contracts import InteractionMode, MarketSnapshot, RegimeState, SourceReference
-from analyst.delivery.soul import get_prompt_profile
+from .prompts import get_prompt_profile
 
 
 @dataclass(frozen=True)

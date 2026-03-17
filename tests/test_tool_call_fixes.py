@@ -15,7 +15,6 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from analyst.delivery.user_chat import system_prompt_with_memory, build_chat_tools, resolve_chat_persona_mode
 from analyst.delivery.soul import (
     COMPANION_SYSTEM_PROMPT,
-    USER_SYSTEM_PROMPT,
     PromptAssemblyContext,
     assemble_persona_system_prompt,
 )
@@ -53,35 +52,8 @@ class Fix1StalenessWarningTest(unittest.TestCase):
 # Fix 2: Broadened system prompt tool instruction                     #
 # ------------------------------------------------------------------ #
 
-class Fix2BroadenedToolInstructionTest(unittest.TestCase):
-    """USER_SYSTEM_PROMPT tool section must cover news/events/time-sensitive queries."""
-
-    def test_prompt_covers_news_and_events(self) -> None:
-        self.assertIn("新闻", USER_SYSTEM_PROMPT)
-        self.assertIn("事件", USER_SYSTEM_PROMPT)
-        self.assertIn("战争", USER_SYSTEM_PROMPT)
-        self.assertIn("政治", USER_SYSTEM_PROMPT)
-
-    def test_prompt_covers_time_keywords(self) -> None:
-        self.assertIn("最新", USER_SYSTEM_PROMPT)
-        self.assertIn("最近", USER_SYSTEM_PROMPT)
-        self.assertIn("今天", USER_SYSTEM_PROMPT)
-        self.assertIn("目前", USER_SYSTEM_PROMPT)
-
-    def test_prompt_warns_about_sent_content_staleness(self) -> None:
-        self.assertIn("sent_content", USER_SYSTEM_PROMPT)
-        self.assertIn("过时", USER_SYSTEM_PROMPT)
-
-    def test_prompt_covers_specific_website_requests(self) -> None:
-        # The instruction mentions fetching data from specific sites
-        self.assertIn("investing.com", USER_SYSTEM_PROMPT)
-
-
 class PromptAssemblySelectionTest(unittest.TestCase):
     """The modular prompt assembler should stage heavy rules only when needed."""
-
-    def test_user_default_prompt_is_materially_smaller_than_old_monolith(self) -> None:
-        self.assertLess(len(USER_SYSTEM_PROMPT), 4000)
 
     def test_companion_default_prompt_remains_small(self) -> None:
         self.assertLess(len(COMPANION_SYSTEM_PROMPT), 3200)
@@ -95,38 +67,37 @@ class PromptAssemblySelectionTest(unittest.TestCase):
     def test_chat_mode_resolution_defaults_to_companion(self) -> None:
         self.assertEqual(resolve_chat_persona_mode(None).value, "companion")
 
-    def test_user_neutral_turn_does_not_load_emotional_support_module(self) -> None:
+    def test_companion_neutral_turn_does_not_load_emotional_support_module(self) -> None:
         result = assemble_persona_system_prompt(
-            PromptAssemblyContext(mode="user", user_text="PMI 怎么看")
+            PromptAssemblyContext(mode="companion", user_text="今天天气怎么样")
         )
-        self.assertNotIn("user_emotional_support", result.module_ids)
+        self.assertNotIn("companion_emotional_support", result.module_ids)
 
-    def test_user_stressed_turn_loads_emotional_support_module(self) -> None:
+    def test_companion_stressed_turn_loads_emotional_support_module(self) -> None:
         result = assemble_persona_system_prompt(
-            PromptAssemblyContext(mode="user", user_text="不行了 我快爆仓了 现在很焦虑")
+            PromptAssemblyContext(mode="companion", user_text="不行了 我快爆仓了 现在很焦虑")
         )
-        self.assertIn("user_emotional_support", result.module_ids)
-        self.assertIn("情绪支持优先于分析", result.prompt)
+        self.assertIn("companion_emotional_support", result.module_ids)
 
     def test_profile_memory_module_only_loads_when_profile_fields_present(self) -> None:
-        neutral = assemble_persona_system_prompt(PromptAssemblyContext(mode="user", memory_context=""))
+        neutral = assemble_persona_system_prompt(PromptAssemblyContext(mode="companion", memory_context=""))
         profiled = assemble_persona_system_prompt(
-            PromptAssemblyContext(mode="user", memory_context="- personal_facts: runs every morning")
+            PromptAssemblyContext(mode="companion", memory_context="- personal_facts: runs every morning")
         )
-        self.assertNotIn("user_profile_memory", neutral.module_ids)
-        self.assertIn("user_profile_memory", profiled.module_ids)
+        self.assertNotIn("companion_profile_memory", neutral.module_ids)
+        self.assertIn("companion_profile_memory", profiled.module_ids)
 
     def test_reengagement_module_loads_for_inactive_user(self) -> None:
         result = assemble_persona_system_prompt(
-            PromptAssemblyContext(mode="user", memory_context="- days_since_last_active: 9")
+            PromptAssemblyContext(mode="companion", memory_context="- days_since_last_active: 9")
         )
         self.assertIn("re_engagement", result.module_ids)
         self.assertIn("好久没聊了", result.prompt)
 
     def test_group_module_only_loads_for_group_context(self) -> None:
-        direct = assemble_persona_system_prompt(PromptAssemblyContext(mode="user"))
+        direct = assemble_persona_system_prompt(PromptAssemblyContext(mode="companion"))
         grouped = assemble_persona_system_prompt(
-            PromptAssemblyContext(mode="user", group_context="### group_conversation\n- A: hi")
+            PromptAssemblyContext(mode="companion", group_context="### group_conversation\n- A: hi")
         )
         self.assertNotIn("group_chat", direct.module_ids)
         self.assertIn("group_chat", grouped.module_ids)
@@ -153,27 +124,6 @@ class PromptAssemblySelectionTest(unittest.TestCase):
 
 class Fix3LiveCalendarToolTest(unittest.TestCase):
     """build_chat_tools must include fetch_live_calendar when store is provided."""
-
-    def test_fetch_live_calendar_in_tool_list_with_store(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            store = SQLiteEngineStore(db_path=Path(td) / "test.db")
-            engine = _make_dummy_engine()
-            tools = build_chat_tools(engine, store, persona_mode="user")
-            tool_names = [t.name for t in tools]
-            self.assertIn("fetch_live_calendar", tool_names)
-
-    def test_fetch_live_calendar_absent_without_store(self) -> None:
-        engine = _make_dummy_engine()
-        tools = build_chat_tools(engine, None, persona_mode="user")
-        tool_names = [t.name for t in tools]
-        self.assertNotIn("fetch_live_calendar", tool_names)
-
-    def test_get_calendar_description_mentions_cache(self) -> None:
-        engine = _make_dummy_engine()
-        tools = build_chat_tools(engine, None, persona_mode="user")
-        cal_tool = next((t for t in tools if t.name == "get_calendar"), None)
-        self.assertIsNotNone(cal_tool)
-        self.assertIn("cache", cal_tool.description.lower())
 
     def test_soul_prompt_documents_fetch_live_calendar(self) -> None:
         prompt = system_prompt_with_memory(
@@ -346,24 +296,6 @@ class Fix5RecencyDecayTest(unittest.TestCase):
 # ------------------------------------------------------------------ #
 # Helpers                                                              #
 # ------------------------------------------------------------------ #
-
-def _make_dummy_engine():
-    """Create a minimal engine for build_chat_tools (no network calls)."""
-    from analyst.engine import OpenRouterAnalystEngine
-    from analyst.information import AnalystInformationService, FileBackedInformationRepository
-    from analyst.engine.live_provider import OpenRouterConfig
-    from analyst.runtime import OpenRouterAgentRuntime, OpenRouterRuntimeConfig
-
-    repo = FileBackedInformationRepository()
-    info = AnalystInformationService(repo)
-    or_config = OpenRouterConfig(api_key="fake", model="fake")
-    runtime = OpenRouterAgentRuntime(
-        provider_config=or_config,
-        config=OpenRouterRuntimeConfig(default_model="fake"),
-        tools=[],
-    )
-    return OpenRouterAnalystEngine(info_service=info, runtime=runtime)
-
 
 def _make_delivery(
     *,

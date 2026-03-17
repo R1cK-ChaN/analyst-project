@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -12,39 +11,13 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from analyst.engine.live_provider import ClaudeCodeConfig, ClaudeCodeProvider
 from analyst.runtime.capabilities import build_capability_tools, get_capability_surface
-from analyst.storage import SQLiteEngineStore
 
 
 class CapabilityRegistryTest(unittest.TestCase):
-    def test_surface_matrix_distinguishes_companion_and_user_chat_mcp_scope(self) -> None:
+    def test_companion_surface_has_expected_native_and_mcp_tools(self) -> None:
         companion = get_capability_surface("companion")
-        user_chat = get_capability_surface("user_chat")
-
         self.assertEqual(companion.native_tool_names, ("WebSearch", "WebFetch"))
-        self.assertEqual(user_chat.native_tool_names, ("WebSearch", "WebFetch"))
-        self.assertNotIn("get_portfolio_risk", companion.shared_mcp_tool_names)
-        self.assertIn("get_portfolio_risk", user_chat.shared_mcp_tool_names)
-        self.assertIn("research_lookup", user_chat.sub_agent_names)
-
-    def test_user_chat_surface_builds_declared_tools_and_sub_agents(self) -> None:
-        engine = MagicMock()
-        engine.get_regime_summary.return_value = MagicMock(body_markdown="regime")
-        engine.build_premarket_briefing.return_value = MagicMock(body_markdown="premarket")
-        engine.get_calendar.return_value = []
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = SQLiteEngineStore(db_path=Path(tmpdir) / "test.db")
-            tools = build_capability_tools(
-                "user_chat",
-                engine=engine,
-                store=store,
-                provider=MagicMock(),
-            )
-
-        tool_names = {tool.name for tool in tools}
-        self.assertIn("search_research_notes", tool_names)
-        self.assertIn("research_lookup", tool_names)
-        self.assertIn("portfolio_analyst", tool_names)
+        self.assertIn("generate_image", companion.shared_mcp_tool_names)
 
     def test_companion_surface_builds_declared_sub_agent_when_provider_present(self) -> None:
         tools = build_capability_tools(
@@ -65,14 +38,9 @@ class NativeModeCapabilityTest(unittest.TestCase):
             runner=MagicMock(),
         )
 
-    def test_mcp_tool_names_include_media_and_mutation_tools(self) -> None:
+    def test_mcp_tool_names_include_media_tools(self) -> None:
         companion = get_capability_surface("companion")
-        user_chat = get_capability_surface("user_chat")
-
         self.assertIn("generate_image", companion.shared_mcp_tool_names)
-        self.assertIn("generate_image", user_chat.shared_mcp_tool_names)
-        self.assertIn("generate_live_photo", user_chat.shared_mcp_tool_names)
-        self.assertIn("sync_portfolio_from_broker", user_chat.shared_mcp_tool_names)
 
     def test_new_mcp_tools_appear_in_shared_tool_specs(self) -> None:
         from analyst.mcp.shared_tools import SHARED_MCP_TOOL_SPECS
@@ -90,69 +58,6 @@ class NativeModeCapabilityTest(unittest.TestCase):
         )
         tool_names = {tool.name for tool in tools}
         self.assertNotIn("research_agent", tool_names)
-
-    def test_user_chat_surface_skips_sub_agents_for_claude_code(self) -> None:
-        cc_provider = self._make_cc_provider()
-        engine = MagicMock()
-        engine.get_regime_summary.return_value = MagicMock(body_markdown="regime")
-        engine.build_premarket_briefing.return_value = MagicMock(body_markdown="premarket")
-        engine.get_calendar.return_value = []
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = SQLiteEngineStore(db_path=Path(tmpdir) / "test.db")
-            tools = build_capability_tools(
-                "user_chat",
-                engine=engine,
-                store=store,
-                provider=cc_provider,
-            )
-
-        tool_names = {tool.name for tool in tools}
-        self.assertNotIn("research_lookup", tool_names)
-        self.assertNotIn("portfolio_analyst", tool_names)
-
-    def test_user_chat_surface_skips_engine_tools_for_claude_code(self) -> None:
-        cc_provider = self._make_cc_provider()
-        engine = MagicMock()
-        engine.get_regime_summary.return_value = MagicMock(body_markdown="regime")
-        engine.build_premarket_briefing.return_value = MagicMock(body_markdown="premarket")
-        engine.get_calendar.return_value = []
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = SQLiteEngineStore(db_path=Path(tmpdir) / "test.db")
-            tools = build_capability_tools(
-                "user_chat",
-                engine=engine,
-                store=store,
-                provider=cc_provider,
-            )
-
-        tool_names = {tool.name for tool in tools}
-        self.assertNotIn("get_regime_summary", tool_names)
-        self.assertNotIn("get_calendar", tool_names)
-        self.assertNotIn("get_premarket_briefing", tool_names)
-
-    def test_host_loop_still_gets_engine_tools_and_sub_agents(self) -> None:
-        engine = MagicMock()
-        engine.get_regime_summary.return_value = MagicMock(body_markdown="regime")
-        engine.build_premarket_briefing.return_value = MagicMock(body_markdown="premarket")
-        engine.get_calendar.return_value = []
-        non_cc_provider = MagicMock()
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = SQLiteEngineStore(db_path=Path(tmpdir) / "test.db")
-            tools = build_capability_tools(
-                "user_chat",
-                engine=engine,
-                store=store,
-                provider=non_cc_provider,
-            )
-
-        tool_names = {tool.name for tool in tools}
-        self.assertIn("get_regime_summary", tool_names)
-        self.assertIn("research_lookup", tool_names)
-        self.assertIn("portfolio_analyst", tool_names)
-
 
 class MediaExtractionFromEventsTest(unittest.TestCase):
     """Tests for _extract_media_from_events (stream-json MCP tool results)."""

@@ -13,25 +13,14 @@ from analyst.tools import (
     ToolKit,
     build_article_tool,
     build_country_indicators_tool,
-    build_fed_comms_tool,
-    build_image_gen_tool,
-    build_indicator_history_tool,
     build_live_markets_tool,
     build_live_news_tool,
-    build_optional_live_photo_tool,
-    build_portfolio_holdings_tool,
-    build_portfolio_risk_tool,
-    build_portfolio_sync_tool,
-    build_python_analysis_tool,
     build_rate_expectations_tool,
     build_reference_rates_tool,
-    build_research_search_tool,
-    build_stored_news_tool,
     build_vix_regime_tool,
     build_web_fetch_tool,
     build_web_search_tool,
 )
-from analyst.tools._live_calendar import build_live_calendar_tool
 
 CLAUDE_CODE_NATIVE_TOOL_NAMES = ("WebSearch", "WebFetch")
 COMPANION_SHARED_MCP_TOOL_NAMES = (
@@ -43,14 +32,6 @@ COMPANION_SHARED_MCP_TOOL_NAMES = (
     "search_research_notes",
     "generate_image",
 )
-USER_CHAT_SHARED_MCP_TOOL_NAMES = (
-    *COMPANION_SHARED_MCP_TOOL_NAMES,
-    "get_portfolio_risk",
-    "get_portfolio_holdings",
-    "generate_live_photo",
-    "sync_portfolio_from_broker",
-)
-
 RESEARCH_SUB_AGENT_PARENT_TOOL_NAMES: dict[str, tuple[str, ...]] = {
     "data_deep_dive": (
         "get_indicator_history",
@@ -75,26 +56,6 @@ RESEARCH_SUB_AGENT_PARENT_TOOL_NAMES: dict[str, tuple[str, ...]] = {
         "fetch_article",
         "search_news",
         "get_recent_news",
-    ),
-}
-
-USER_SUB_AGENT_PARENT_TOOL_NAMES: dict[str, tuple[str, ...]] = {
-    "research_lookup": (
-        "fetch_live_markets",
-        "fetch_live_news",
-        "fetch_article",
-        "fetch_country_indicators",
-        "fetch_reference_rates",
-        "get_regime_summary",
-        "get_calendar",
-        "web_search",
-        "run_python_analysis",
-    ),
-    "portfolio_analyst": (
-        "get_portfolio_risk",
-        "get_portfolio_holdings",
-        "get_vix_regime",
-        "sync_portfolio_from_broker",
     ),
 }
 
@@ -128,54 +89,6 @@ class EngineToolSpec:
     )
 
 
-USER_CHAT_STATIC_TOOL_BUILDERS: tuple[Callable[[], AgentTool | None], ...] = (
-    build_web_search_tool,
-    build_web_fetch_tool,
-    build_image_gen_tool,
-    build_live_news_tool,
-    build_article_tool,
-    build_live_markets_tool,
-    build_country_indicators_tool,
-    build_reference_rates_tool,
-    build_rate_expectations_tool,
-    build_vix_regime_tool,
-    build_python_analysis_tool,
-)
-
-USER_CHAT_OPTIONAL_TOOL_BUILDERS: tuple[Callable[[], AgentTool | None], ...] = (
-    build_optional_live_photo_tool,
-)
-
-USER_CHAT_STORE_TOOL_BUILDERS: tuple[Callable[[SQLiteEngineStore], AgentTool | None], ...] = (
-    build_live_calendar_tool,
-    build_portfolio_risk_tool,
-    build_portfolio_holdings_tool,
-    build_portfolio_sync_tool,
-    build_stored_news_tool,
-    build_fed_comms_tool,
-    build_indicator_history_tool,
-    build_research_search_tool,
-)
-
-USER_CHAT_ENGINE_TOOL_SPECS: tuple[EngineToolSpec, ...] = (
-    EngineToolSpec(
-        name="get_regime_summary",
-        description="Fetch the current macro regime state including scores, key drivers, and market snapshot.",
-        handler_factory=lambda engine: lambda arguments: engine.get_regime_summary().body_markdown,
-    ),
-    EngineToolSpec(
-        name="get_calendar",
-        description="Fetch upcoming economic data releases from local cache. For live/real-time calendar data, prefer fetch_live_calendar instead.",
-        handler_factory=lambda engine: lambda arguments: _render_engine_calendar(engine),
-    ),
-    EngineToolSpec(
-        name="get_premarket_briefing",
-        description="Fetch the pre-market briefing including overnight highlights and today's key data.",
-        handler_factory=lambda engine: lambda arguments: engine.build_premarket_briefing().body_markdown,
-    ),
-)
-
-
 @dataclass(frozen=True)
 class CapabilityBuildContext:
     engine: OpenRouterAnalystEngine | Any | None = None
@@ -200,25 +113,6 @@ class CapabilitySurfaceSpec:
 def _build_companion_capabilities(context: CapabilityBuildContext) -> list[AgentTool]:
     return get_role_spec("companion").build_tools(
         RoleDependencies(store=context.store, provider=context.provider),
-    )
-
-
-def _append_user_chat_sub_agents(parent_tools: list[AgentTool], context: CapabilityBuildContext) -> list[AgentTool]:
-    if context.provider is None or _is_claude_code_provider(context):
-        return []
-    from analyst.engine.sub_agent_specs import build_user_sub_agents
-
-    return build_user_sub_agents(parent_tools, context.provider, context.store)
-
-
-def _render_engine_calendar(engine: OpenRouterAnalystEngine | Any) -> str:
-    items = engine.get_calendar(limit=5)
-    if not items:
-        return "No upcoming calendar events."
-    return "\n".join(
-        f"- {item.indicator} ({item.country}) | "
-        f"预期 {item.expected or '待定'} | 前值 {item.previous or '未知'} | {item.notes}"
-        for item in items
     )
 
 
@@ -272,17 +166,6 @@ CAPABILITY_MATRIX: dict[str, CapabilitySurfaceSpec] = {
         shared_mcp_tool_names=COMPANION_SHARED_MCP_TOOL_NAMES,
         sub_agent_names=COMPANION_SUB_AGENT_NAMES,
         build_tools=_build_companion_capabilities,
-    ),
-    "user_chat": CapabilitySurfaceSpec(
-        surface_id="user_chat",
-        native_tool_names=CLAUDE_CODE_NATIVE_TOOL_NAMES,
-        shared_mcp_tool_names=USER_CHAT_SHARED_MCP_TOOL_NAMES,
-        sub_agent_names=tuple(USER_SUB_AGENT_PARENT_TOOL_NAMES),
-        static_tool_builders=USER_CHAT_STATIC_TOOL_BUILDERS,
-        optional_tool_builders=USER_CHAT_OPTIONAL_TOOL_BUILDERS,
-        store_tool_builders=USER_CHAT_STORE_TOOL_BUILDERS,
-        engine_tool_specs=USER_CHAT_ENGINE_TOOL_SPECS,
-        append_sub_agents=_append_user_chat_sub_agents,
     ),
     "content_runtime": CapabilitySurfaceSpec(
         surface_id="content_runtime",

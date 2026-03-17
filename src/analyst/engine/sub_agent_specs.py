@@ -6,7 +6,6 @@ from typing import Any
 from analyst.runtime.capabilities import (
     CONTENT_SUB_AGENT_TOOL_BUILDERS,
     RESEARCH_SUB_AGENT_PARENT_TOOL_NAMES,
-    USER_SUB_AGENT_PARENT_TOOL_NAMES,
 )
 
 from .agent_loop import AgentLoopConfig
@@ -80,54 +79,6 @@ def build_research_sub_agents(
     ]
 
     return [build_sub_agent_tool(spec, provider, store, parent_agent="research") for spec in specs]
-
-
-def build_user_sub_agents(
-    parent_tools: list[AgentTool],
-    provider: LLMProvider,
-    store: Any | None = None,
-) -> list[AgentTool]:
-    """Build sub-agent tools for the user chat agent (Telegram bot)."""
-    by_name = {t.name: t for t in parent_tools}
-
-    specs = [
-        SubAgentSpec(
-            name="research_lookup",
-            description=(
-                "Look up macro/market information to answer a client question. "
-                "Returns a factual summary with relevant data points."
-            ),
-            system_prompt=(
-                "You are a research lookup sub-agent for the user chat agent. Given a question:\n"
-                "1. Gather relevant market data, macro indicators, and news\n"
-                "2. Focus on what the client needs to know\n"
-                "3. Produce a clear, factual summary (max 250 words)\n"
-                "Be specific with numbers. Avoid jargon.\n"
-                "Reply in the same language as the task."
-            ),
-            tools=_pick(by_name, list(USER_SUB_AGENT_PARENT_TOOL_NAMES["research_lookup"])),
-            config=AgentLoopConfig(max_turns=3, max_tokens=1200, temperature=0.3),
-        ),
-        SubAgentSpec(
-            name="portfolio_analyst",
-            description=(
-                "Analyze client portfolio risk, holdings, and volatility exposure. "
-                "Returns a risk assessment with key metrics."
-            ),
-            system_prompt=(
-                "You are a portfolio analysis sub-agent. Given a portfolio task:\n"
-                "1. Check portfolio holdings and risk metrics\n"
-                "2. Assess volatility regime implications\n"
-                "3. Produce a concise risk summary (max 200 words)\n"
-                "Focus on actionable risk insights.\n"
-                "Reply in the same language as the task."
-            ),
-            tools=_pick(by_name, list(USER_SUB_AGENT_PARENT_TOOL_NAMES["portfolio_analyst"])),
-            config=AgentLoopConfig(max_turns=3, max_tokens=1000, temperature=0.2),
-        ),
-    ]
-
-    return [build_sub_agent_tool(spec, provider, store, parent_agent="user") for spec in specs]
 
 
 def build_content_sub_agents(

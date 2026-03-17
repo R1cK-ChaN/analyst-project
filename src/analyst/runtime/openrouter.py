@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from analyst.delivery.soul import USER_IDENTITY_MODULE, get_prompt_profile
+from analyst.delivery.soul import CONTENT_IDENTITY_MODULE
+
+from .prompts import get_prompt_profile
 from analyst.engine import AgentRunRequest, build_agent_executor
 from analyst.engine.agent_loop import AgentLoopConfig
 from analyst.engine.backends.factory import build_llm_provider_from_env
@@ -78,7 +80,7 @@ class OpenRouterAgentRuntime(AgentRuntime):
             for index, example in enumerate(profile.few_shots)
         )
         return (
-            f"{USER_IDENTITY_MODULE.body.strip()}\n\n"
+            f"{CONTENT_IDENTITY_MODULE.body.strip()}\n\n"
             f"\u5f53\u524d\u6a21\u5f0f: {context.mode.value}\n"
             f"\u89d2\u8272: {profile.role}\n"
             f"\u76ee\u6807: {profile.objective}\n"

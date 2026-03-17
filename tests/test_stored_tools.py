@@ -225,21 +225,18 @@ class TestResearchSearchHandler(_StoreTestMixin, unittest.TestCase):
 
 
 class TestToolsWiredInBuildChatTools(unittest.TestCase):
-    """Verify stored research tools appear in the generic user chat tool surface."""
+    """Verify companion chat tools are returned by build_chat_tools."""
 
-    def test_stored_tools_present(self) -> None:
+    def test_companion_tools_present(self) -> None:
         from unittest.mock import MagicMock
         from analyst.delivery.user_chat import build_chat_tools
 
-        engine = MagicMock()
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SQLiteEngineStore(db_path=Path(tmpdir) / "test.db")
-            tools = build_chat_tools(engine, store, provider=MagicMock())
+            tools = build_chat_tools(store=store, provider=MagicMock())
             tool_names = {t.name for t in tools}
-            self.assertIn("search_news", tool_names)
-            self.assertIn("get_fed_communications", tool_names)
-            self.assertIn("get_indicator_history", tool_names)
-            self.assertIn("search_research_notes", tool_names)
+            self.assertIn("research_agent", tool_names)
+            self.assertIn("generate_image", tool_names)
 
 
 if __name__ == "__main__":

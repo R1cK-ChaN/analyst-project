@@ -12,10 +12,7 @@ from analyst.runtime.chat import (
     ChatPersonaMode,
     ChatReply,
     MediaItem,
-    USER_CHAT_SHARED_MCP_TOOL_NAMES,
-    USER_DEFAULT_MODEL,
-    USER_MODEL_KEYS,
-    USER_SHARED_MCP_TOOL_NAMES,
+    COMPANION_SHARED_MCP_TOOL_NAMES,
     UserChatReply,
     _extract_media,
     _extract_tool_audit,
@@ -36,9 +33,9 @@ def build_chat_services(
     db_path: Path | None = None,
     persona_mode: str | ChatPersonaMode | None = None,
 ):
-    return _chat_runtime.build_chat_services(
+    del persona_mode
+    return _chat_runtime.build_companion_services(
         db_path=db_path,
-        persona_mode=persona_mode,
         provider_factory=build_llm_provider_from_env,
     )
 
@@ -57,4 +54,4 @@ def build_user_chat_services(
     *,
     db_path: Path | None = None,
 ):
-    return build_chat_services(db_path=db_path)
+    return build_companion_services(db_path=db_path)
