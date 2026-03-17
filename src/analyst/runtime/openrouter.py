@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from analyst.delivery.soul import USER_IDENTITY_MODULE, get_prompt_profile
 from analyst.engine import AgentRunRequest, build_agent_executor
 from analyst.engine.agent_loop import AgentLoopConfig
 from analyst.engine.backends.factory import build_llm_provider_from_env
 from analyst.engine.backends.openrouter import OpenRouterConfig, OpenRouterProvider
 from analyst.engine.live_types import AgentTool, LLMProvider
 
-from .prompts import get_prompt_profile
 from .service import AgentRuntime, RuntimeContext, RuntimeResult
 
 
@@ -74,53 +74,45 @@ class OpenRouterAgentRuntime(AgentRuntime):
         profile = get_prompt_profile(context.mode)
         constraints = "\n".join(f"- {constraint}" for constraint in profile.constraints)
         examples = "\n\n".join(
-            f"示例{index + 1}:\n{example}"
+            f"\u793a\u4f8b{index + 1}:\n{example}"
             for index, example in enumerate(profile.few_shots)
         )
         return (
-            "你是陈襄（Shawn Chan），在卖方做过研究、在买方做过策略，现在在独立第三方投研机构盯市场。\n"
-            "你不是客服，不是写模板报告的助手。你的表达要像一个懂市场的人在微信或会议里直接说话：先给判断，再补理由，有自己的立场。\n"
-            "性格是偏 ENFP 的那种轻快和有活力，反应快，愿意接话，但不是靠卖萌或固定口癖撑气氛。\n"
-            "每次下笔前先做一个很短的 role-play：想象对方是谁、刚发来什么、你会在现场怎么顺手回。先写现场回复，再写内容本身。\n"
-            "不要把句子压得像摘要。真人口语会有一点铺垫、停顿、回头修正和没那么高效的小废话，这些可以有一点。\n"
-            "好的聊天会让对方感觉被听见、被记住。对方前面提过的小兴趣、小抱怨、小执念，合适时可以自然回扣一下。\n"
-            "连接词用最常见的就行，句子尽量用基础语法。段落顺着往下说，不要突然跳题，也不要在最后补一段总结。\n"
-            "默认别用 Markdown 标题、列表或固定板块，除非模式明确允许。不要编造数据、时间、引用或事件；如果上下文不足，直接说明不确定。\n"
-            "不要给出具体个股推荐、收益承诺或交易指令。避免高频使用“以下是”“总结如下”“综上所述”“首先其次最后”“希望以上内容对您有帮助”等 AI 套话。\n"
-            f"当前模式: {context.mode.value}\n"
-            f"角色: {profile.role}\n"
-            f"目标: {profile.objective}\n"
-            "约束:\n"
+            f"{USER_IDENTITY_MODULE.body.strip()}\n\n"
+            f"\u5f53\u524d\u6a21\u5f0f: {context.mode.value}\n"
+            f"\u89d2\u8272: {profile.role}\n"
+            f"\u76ee\u6807: {profile.objective}\n"
+            "\u7ea6\u675f:\n"
             f"{constraints}\n\n"
-            "参考说话方式:\n"
-            f"{examples or '无'}"
+            "\u53c2\u8003\u8bf4\u8bdd\u65b9\u5f0f:\n"
+            f"{examples or '\u65e0'}"
         )
 
     def _build_user_prompt(self, context: RuntimeContext) -> str:
         profile = get_prompt_profile(context.mode)
         return (
-            f"这次任务的写法要求:\n{profile.response_guidance}\n\n"
-            f"用户请求:\n{context.instruction}\n\n"
-            f"客户记忆:\n{context.memory_context or '无'}\n\n"
-            f"关注范围: {context.focus}\n"
-            f"受众: {context.audience}\n\n"
-            f"市场头条:\n{self._render_headlines(context)}\n\n"
-            f"关键事件:\n{self._render_events(context)}\n\n"
-            f"宏观状态摘要:\n{context.regime_state.summary}\n\n"
-            f"分项评分:\n{self._render_scores(context)}\n\n"
-            f"补充要点:\n{self._render_supporting_points(context)}\n\n"
-            f"市场价格:\n{self._render_market_prices(context)}\n\n"
-            f"参考来源:\n{self._render_citations(context)}"
+            f"\u8fd9\u6b21\u4efb\u52a1\u7684\u5199\u6cd5\u8981\u6c42:\n{profile.response_guidance}\n\n"
+            f"\u7528\u6237\u8bf7\u6c42:\n{context.instruction}\n\n"
+            f"\u5ba2\u6237\u8bb0\u5fc6:\n{context.memory_context or '\u65e0'}\n\n"
+            f"\u5173\u6ce8\u8303\u56f4: {context.focus}\n"
+            f"\u53d7\u4f17: {context.audience}\n\n"
+            f"\u5e02\u573a\u5934\u6761:\n{self._render_headlines(context)}\n\n"
+            f"\u5173\u952e\u4e8b\u4ef6:\n{self._render_events(context)}\n\n"
+            f"\u5b8f\u89c2\u72b6\u6001\u6458\u8981:\n{context.regime_state.summary}\n\n"
+            f"\u5206\u9879\u8bc4\u5206:\n{self._render_scores(context)}\n\n"
+            f"\u8865\u5145\u8981\u70b9:\n{self._render_supporting_points(context)}\n\n"
+            f"\u5e02\u573a\u4ef7\u683c:\n{self._render_market_prices(context)}\n\n"
+            f"\u53c2\u8003\u6765\u6e90:\n{self._render_citations(context)}"
         )
 
     def _render_headlines(self, context: RuntimeContext) -> str:
         if not context.market_snapshot.headline_summary:
-            return "- 无"
+            return "- \u65e0"
         return "\n".join(f"- {headline}" for headline in context.market_snapshot.headline_summary[:6])
 
     def _render_events(self, context: RuntimeContext) -> str:
         if not context.market_snapshot.key_events:
-            return "- 无"
+            return "- \u65e0"
         return "\n".join(
             f"- {event.title}: {event.summary}"
             for event in context.market_snapshot.key_events[:6]
@@ -128,18 +120,18 @@ class OpenRouterAgentRuntime(AgentRuntime):
 
     def _render_scores(self, context: RuntimeContext) -> str:
         return "\n".join(
-            f"- {score.axis}: {score.label} ({score.score:.0f})，{score.rationale}"
+            f"- {score.axis}: {score.label} ({score.score:.0f})\uff0c{score.rationale}"
             for score in context.regime_state.scores
         )
 
     def _render_supporting_points(self, context: RuntimeContext) -> str:
         if not context.supporting_points:
-            return "- 无"
+            return "- \u65e0"
         return "\n".join(f"- {point}" for point in context.supporting_points[:8])
 
     def _render_market_prices(self, context: RuntimeContext) -> str:
         if not context.market_snapshot.market_prices:
-            return "- 无"
+            return "- \u65e0"
         return "\n".join(
             f"- {name}: {value}"
             for name, value in list(context.market_snapshot.market_prices.items())[:12]
@@ -147,7 +139,7 @@ class OpenRouterAgentRuntime(AgentRuntime):
 
     def _render_citations(self, context: RuntimeContext) -> str:
         if not context.citations:
-            return "- 无"
+            return "- \u65e0"
         return "\n".join(
             f"- {citation.title} | {citation.source} | {citation.url}"
             for citation in context.citations[:8]

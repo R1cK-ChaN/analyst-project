@@ -42,10 +42,26 @@ def prepare_telegram_turn(
         llm_text = f'回复消息：\n"{reply_context}"\n\n用户说：\n{base_llm_text}'
     else:
         llm_text = base_llm_text
-    first_reply_delay_seconds = first_reply_delay(
-        text,
-        has_image=attached_image is not None,
-    )
+    # Check for "seen_no_rush" (acknowledgement) long delay before computing
+    # the normal first-reply delay — this may override it.
+    from analyst.delivery.bot_companion_timing import _seen_no_rush_delay
+
+    snr = _seen_no_rush_delay(text)
+    if snr is not None:
+        first_reply_delay_seconds, seen_no_rush_long = snr
+    else:
+        first_reply_delay_seconds = first_reply_delay(
+            text,
+            has_image=attached_image is not None,
+        )
+        seen_no_rush_long = False
+
+    # Inject a context hint so the LLM knows some time has passed
+    effective_local_context = companion_local_context
+    if seen_no_rush_long:
+        hint = "[刚才在忙，过了一会儿才看到这条消息，自然接话就好]"
+        effective_local_context = f"{hint}\n{companion_local_context}" if companion_local_context else hint
+
     user_content = (
         [
             {"type": "text", "text": render_image_instruction(llm_text, image=attached_image)},
@@ -64,7 +80,7 @@ def prepare_telegram_turn(
         group_context=group_context,
         group_id=group_id,
         user_content=user_content,
-        companion_local_context=companion_local_context,
+        companion_local_context=effective_local_context,
         attached_image=attached_image,
     )
     return TelegramTurnPreparation(

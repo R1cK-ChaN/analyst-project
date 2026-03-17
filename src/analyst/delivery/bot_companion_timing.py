@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import random
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from analyst.contracts import utc_now
 from analyst.storage import SQLiteEngineStore
+
+from analyst.memory.topic_state import _is_acknowledgement, _collapse_whitespace
 
 from .bot_constants import (
     COMPANION_CHECKIN_SEND_WINDOW_END_HOUR,
@@ -115,6 +118,9 @@ def _reply_timing_bucket(text: str) -> str:
     stripped = text.strip()
     if not stripped:
         return "instant"
+    lowered = stripped.casefold()
+    if _is_acknowledgement(stripped, lowered=lowered):
+        return "seen_no_rush"
     if stripped.count("\n") + 1 >= DEEP_STORY_MIN_LINES or len(stripped) >= DEEP_STORY_MIN_CHARS:
         return "deep_story"
     if _contains_emotional_cue(stripped):
@@ -123,6 +129,23 @@ def _reply_timing_bucket(text: str) -> str:
         return "instant"
     return "normal"
 
+def _seen_no_rush_delay(text: str) -> tuple[float, bool] | None:
+    """If *text* is an acknowledgement, return ``(delay_seconds, is_long)``.
+
+    Returns ``None`` when the message is not an acknowledgement.
+    ``is_long`` is ``True`` ~20% of the time (60-180 s delay); otherwise
+    ``False`` with a short 3-8 s pause.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return None
+    if _reply_timing_bucket(stripped) != "seen_no_rush":
+        return None
+    if random.random() < 0.2:
+        return (random.uniform(60.0, 180.0), True)
+    return (random.uniform(3.0, 8.0), False)
+
+
 def _first_reply_delay_seconds(text: str, *, has_image: bool = False) -> float:
     if has_image:
         return 0.0
@@ -130,6 +153,10 @@ def _first_reply_delay_seconds(text: str, *, has_image: bool = False) -> float:
     if not stripped:
         return 0.0
     bucket = _reply_timing_bucket(stripped)
+    if bucket == "seen_no_rush":
+        # Deterministic short pause for plain callers; the probabilistic long
+        # delay is handled via _seen_no_rush_delay at the call site.
+        return random.uniform(3.0, 8.0)
     if bucket == "instant":
         return min(0.4, 0.05 + len(stripped) * 0.02)
     if bucket == "emotional":

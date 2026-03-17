@@ -28,7 +28,7 @@ from analyst.storage import SQLiteEngineStore
 
 class CompanionTimingHelperTest(unittest.TestCase):
     def test_reply_timing_bucket_classifies_instant_normal_emotional_and_deep_story(self) -> None:
-        self.assertEqual(_reply_timing_bucket("ok"), "instant")
+        self.assertEqual(_reply_timing_bucket("hi"), "instant")
         self.assertEqual(_reply_timing_bucket("how was your afternoon"), "normal")
         self.assertEqual(_reply_timing_bucket("i had a rough day and i feel overwhelmed"), "emotional")
         self.assertEqual(
@@ -37,7 +37,7 @@ class CompanionTimingHelperTest(unittest.TestCase):
         )
 
     def test_first_reply_delay_increases_with_heavier_emotional_weight(self) -> None:
-        instant_delay = _first_reply_delay_seconds("ok")
+        instant_delay = _first_reply_delay_seconds("hi")
         normal_delay = _first_reply_delay_seconds("how was your afternoon")
         emotional_delay = _first_reply_delay_seconds("i had a rough day and i feel overwhelmed")
         deep_delay = _first_reply_delay_seconds("x" * 260)
@@ -45,6 +45,15 @@ class CompanionTimingHelperTest(unittest.TestCase):
         self.assertLess(instant_delay, normal_delay)
         self.assertLess(normal_delay, emotional_delay)
         self.assertLess(emotional_delay, deep_delay)
+
+    def test_seen_no_rush_bucket_for_acknowledgements(self) -> None:
+        self.assertEqual(_reply_timing_bucket("ok"), "seen_no_rush")
+        self.assertEqual(_reply_timing_bucket("嗯"), "seen_no_rush")
+        self.assertEqual(_reply_timing_bucket("好的"), "seen_no_rush")
+        self.assertNotEqual(_reply_timing_bucket("hi"), "seen_no_rush")
+        delay = _first_reply_delay_seconds("ok")
+        self.assertGreaterEqual(delay, 3.0)
+        self.assertLessEqual(delay, 8.0)
 
     def test_proactive_companion_prompt_adds_non_manipulative_guardrails(self) -> None:
         prompt = system_prompt_with_memory(

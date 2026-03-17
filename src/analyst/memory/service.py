@@ -984,6 +984,10 @@ def _render_companion_profile(
     facts = [f for f in profile.personal_facts if not _is_nickname_fact(f)]
     if facts:
         lines.append(f"- 你记得: {'; '.join(facts[-6:])}")
+        # Proactive recall hint: ~20% of turns (0,1,2 out of every 15)
+        if turns and turns % 15 < 3:
+            hint_fact = facts[turns % len(facts)]
+            lines.append(f"- 💡 可以自然提起一条旧记忆，比如聊聊: {hint_fact}")
 
     # -- Language / style (compact) --
     meta: list[str] = []
