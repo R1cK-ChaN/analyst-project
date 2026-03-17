@@ -7,7 +7,7 @@ from typing import Any
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
-from .bot_constants import MAX_HISTORY_TURNS
+from .bot_constants import MAX_HISTORY_TURNS, MAX_TELEGRAM_LENGTH
 
 def _get_history(
     context: ContextTypes.DEFAULT_TYPE,
@@ -42,6 +42,8 @@ def _append_history(
 
 async def _send_bot_bubbles(bot: Any, *, chat_id: int, bubbles: list[str]) -> None:
     for i, bubble in enumerate(bubbles):
+        if len(bubble) > MAX_TELEGRAM_LENGTH:
+            bubble = bubble[: MAX_TELEGRAM_LENGTH - 1] + "\u2026"
         await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         if i > 0:
             delay = min(0.5 + len(bubble) * 0.01, 2.5) + random.uniform(-0.3, 0.3)

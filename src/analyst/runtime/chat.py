@@ -474,10 +474,47 @@ def normalize_user_reply(text: str) -> str:
     return cleaned
 
 
+_MAX_BUBBLE_LENGTH = 4096
+
+
+def _split_oversized(text: str, limit: int = _MAX_BUBBLE_LENGTH) -> list[str]:
+    """Split text exceeding *limit* at paragraph, line, or word boundaries."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= limit:
+            chunks.append(remaining)
+            break
+        cut = -1
+        for sep in ("\n\n", "\n", " "):
+            pos = remaining[:limit].rfind(sep)
+            if pos > limit // 4:
+                cut = pos
+                break
+        if cut <= 0:
+            cut = limit
+        chunk = remaining[:cut].rstrip()
+        if chunk:
+            chunks.append(chunk)
+        remaining = remaining[cut:].lstrip()
+    return chunks or [text]
+
+
 def split_into_bubbles(text: str) -> list[str]:
-    """Split a reply on [SPLIT] markers into separate chat bubbles."""
+    """Split a reply on [SPLIT] markers into separate chat bubbles.
+
+    Each resulting bubble is guaranteed to fit within the Telegram
+    message-length limit (4 096 chars).  Oversized segments are further
+    split at paragraph / line / word boundaries.
+    """
     parts = text.split(SPLIT_MARKER)
-    bubbles = [p.strip() for p in parts if p.strip()]
+    bubbles: list[str] = []
+    for p in parts:
+        stripped = p.strip()
+        if stripped:
+            bubbles.extend(_split_oversized(stripped))
     return bubbles or [text]
 
 

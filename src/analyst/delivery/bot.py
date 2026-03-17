@@ -641,9 +641,6 @@ async def _chat_reply(
     else:
         tool_audit = result.tool_audit
 
-    if len(response_text) > MAX_TELEGRAM_LENGTH:
-        response_text = response_text[: MAX_TELEGRAM_LENGTH - 3] + "..."
-
     _append_history(
         context,
         "user",
@@ -1153,6 +1150,8 @@ def _make_message_handler(
             await update.effective_chat.send_action(ChatAction.TYPING)
             await asyncio.sleep(remaining_delay)
         for i, (bubble_text, bubble_entities) in enumerate(bubbles):
+            if len(bubble_text) > MAX_TELEGRAM_LENGTH and not bubble_entities:
+                bubble_text = bubble_text[: MAX_TELEGRAM_LENGTH - 1] + "\u2026"
             if i > 0:
                 await update.effective_chat.send_action(ChatAction.TYPING)
                 delay = min(0.5 + len(bubble_text) * 0.01, 2.5) + random.uniform(-0.3, 0.3)

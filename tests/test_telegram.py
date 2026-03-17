@@ -63,6 +63,93 @@ class TestTruncateBody(unittest.TestCase):
         self.assertIn("\n...", result)
 
 
+class TestSplitOversized(unittest.TestCase):
+    """Tests for _split_oversized and split_into_bubbles with Telegram limits."""
+
+    def test_short_text_unchanged(self) -> None:
+        from analyst.runtime.chat import _split_oversized
+        result = _split_oversized("short text")
+        self.assertEqual(result, ["short text"])
+
+    def test_exactly_at_limit(self) -> None:
+        from analyst.runtime.chat import _split_oversized
+        text = "a" * 4096
+        result = _split_oversized(text)
+        self.assertEqual(result, [text])
+
+    def test_splits_at_paragraph_boundary(self) -> None:
+        from analyst.runtime.chat import _split_oversized
+        para1 = "a" * 3000
+        para2 = "b" * 3000
+        text = para1 + "\n\n" + para2
+        result = _split_oversized(text)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], para1)
+        self.assertEqual(result[1], para2)
+        for chunk in result:
+            self.assertLessEqual(len(chunk), 4096)
+
+    def test_splits_at_line_boundary(self) -> None:
+        from analyst.runtime.chat import _split_oversized
+        line1 = "a" * 3000
+        line2 = "b" * 3000
+        text = line1 + "\n" + line2
+        result = _split_oversized(text)
+        self.assertEqual(len(result), 2)
+        for chunk in result:
+            self.assertLessEqual(len(chunk), 4096)
+
+    def test_splits_at_word_boundary(self) -> None:
+        from analyst.runtime.chat import _split_oversized
+        # Create text of 5000 words-ish that has no newlines
+        text = " ".join(["word"] * 1200)  # ~6000 chars
+        result = _split_oversized(text)
+        self.assertGreater(len(result), 1)
+        for chunk in result:
+            self.assertLessEqual(len(chunk), 4096)
+        # Reassembled content should match (modulo whitespace)
+        self.assertEqual(" ".join(result).replace("  ", " ").strip(), text.strip())
+
+    def test_hard_cut_no_separator(self) -> None:
+        from analyst.runtime.chat import _split_oversized
+        text = "a" * 5000  # No separators at all
+        result = _split_oversized(text)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], "a" * 4096)
+        self.assertEqual(result[1], "a" * 904)
+
+    def test_very_long_text_all_chunks_within_limit(self) -> None:
+        from analyst.runtime.chat import _split_oversized
+        text = "a" * 20000
+        result = _split_oversized(text)
+        for chunk in result:
+            self.assertLessEqual(len(chunk), 4096)
+        self.assertEqual("".join(result), text)
+
+    def test_split_into_bubbles_enforces_limit(self) -> None:
+        from analyst.runtime.chat import SPLIT_MARKER, split_into_bubbles
+        # Two bubbles, one of which exceeds 4096
+        text = ("a" * 3000) + SPLIT_MARKER + ("b" * 5000)
+        result = split_into_bubbles(text)
+        for bubble in result:
+            self.assertLessEqual(len(bubble), 4096)
+        self.assertGreaterEqual(len(result), 3)  # second part was sub-split
+
+    def test_split_into_bubbles_no_marker_long_text(self) -> None:
+        from analyst.runtime.chat import split_into_bubbles
+        text = "x" * 5000
+        result = split_into_bubbles(text)
+        for bubble in result:
+            self.assertLessEqual(len(bubble), 4096)
+        self.assertEqual("".join(result), text)
+
+    def test_split_into_bubbles_normal_case_unchanged(self) -> None:
+        from analyst.runtime.chat import SPLIT_MARKER, split_into_bubbles
+        text = "Hello" + SPLIT_MARKER + "World"
+        result = split_into_bubbles(text)
+        self.assertEqual(result, ["Hello", "World"])
+
+
 class TestTelegramFormatter(unittest.TestCase):
     def setUp(self) -> None:
         self.formatter = TelegramFormatter()
@@ -502,14 +589,20 @@ class TestChatReply(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(history[0], {"role": "user", "content": "hello"})
         self.assertEqual(history[1], {"role": "assistant", "content": "hello back"})
 
-    async def test_truncates_long_response(self) -> None:
-        from analyst.delivery.bot import MAX_TELEGRAM_LENGTH, _chat_reply
+    async def test_long_response_preserved_for_bubble_split(self) -> None:
+        """Long responses are no longer truncated by _chat_reply; instead
+        split_into_bubbles enforces the per-bubble Telegram limit."""
+        from analyst.delivery.bot import _chat_reply
+        from analyst.runtime.chat import split_into_bubbles
 
         self._set_loop_response("x" * 5000)
         result = await _chat_reply("hi", self.mock_context, self.mock_loop, self.mock_tools)
 
-        self.assertLessEqual(len(result.text), MAX_TELEGRAM_LENGTH)
-        self.assertTrue(result.text.endswith("..."))
+        # Full text is preserved in the reply object
+        self.assertEqual(len(result.text), 5000)
+        # But every bubble produced by split_into_bubbles fits within 4096
+        for bubble in split_into_bubbles(result.text):
+            self.assertLessEqual(len(bubble), 4096)
 
     async def test_history_trimming(self) -> None:
         from analyst.delivery.bot import MAX_HISTORY_TURNS, _chat_reply
