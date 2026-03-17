@@ -929,6 +929,20 @@ def generate_chat_reply(
     )
 
 
+def _proactive_image_hint(kind: str) -> str:
+    """Return image guidance to append to proactive instruction when image tool is available."""
+    normalized = str(kind).strip().lower()
+    hints: dict[str, str] = {
+        "warm_up_share": "可以拍一张你看到的有趣东西配合分享，用back_camera模式。",
+        "streak_save": "可以顺手拍一张你在做什么的照片。",
+        "stage_milestone": "可以发一张selfie，带点开心的感觉。",
+        "morning": "可以拍一张你现在的场景。",
+        "evening": "可以拍一张你现在的场景。",
+        "weekend": "可以拍一张你现在的场景。",
+    }
+    return hints.get(normalized, "")
+
+
 def _proactive_companion_instruction(kind: str) -> str:
     normalized = str(kind).strip().lower()
     if normalized == "follow_up":
@@ -987,12 +1001,20 @@ def generate_proactive_companion_reply(
     *,
     kind: str,
     agent_loop: AgentExecutor | Any,
+    tools: list[AgentTool] | None = None,
     memory_context: str = "",
     preferred_language: str = "",
     companion_local_context: str = "",
 ) -> ChatReply:
     executor = coerce_agent_executor(agent_loop)
     user_lang = preferred_language if preferred_language in {"zh", "en"} else ""
+    active_tools = list(tools or [])
+    image_hint = ""
+    if active_tools:
+        image_hint = _proactive_image_hint(kind)
+    instruction = _proactive_companion_instruction(kind)
+    if image_hint:
+        instruction = f"{instruction}\n\n{image_hint}"
     result = executor.run_turn(
         AgentRunRequest(
             system_prompt=system_prompt_with_memory(
@@ -1002,10 +1024,10 @@ def generate_proactive_companion_reply(
                 proactive_kind=kind,
                 companion_local_context=companion_local_context,
                 executor=executor,
-                tools=[],
+                tools=active_tools,
             ),
-            user_prompt=_proactive_companion_instruction(kind),
-            tools=[],
+            user_prompt=instruction,
+            tools=active_tools,
             history=[],
         )
     )
@@ -1015,13 +1037,18 @@ def generate_proactive_companion_reply(
     response_text = normalize_user_reply(response_text)
     if not response_text:
         response_text = "在想你今天过得怎么样。"
+    media = _extract_media(result.messages) if active_tools else []
+    if not media and active_tools:
+        raw_events = result.raw_response.get("events", []) if isinstance(result.raw_response, dict) else []
+        media = _extract_media_from_events(raw_events)
+    tool_audit = _extract_tool_audit(result.messages) if active_tools else []
     return ChatReply(
         text=response_text,
         profile_update=profile_update,
         reminder_update=reminder_update,
         schedule_update=schedule_update,
-        media=[],
-        tool_audit=[],
+        media=media,
+        tool_audit=tool_audit,
     )
 
 

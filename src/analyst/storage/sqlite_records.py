@@ -361,6 +361,23 @@ class CompanionDailyScheduleRecord:
     updated_at: str
 
 @dataclass(frozen=True)
+class CompanionImageLogRecord:
+    image_log_id: int
+    client_id: str
+    channel: str
+    thread_id: str
+    mode: str
+    scene_key: str
+    trigger_type: str  # "reactive" / "proactive" / "explicit"
+    outreach_kind: str
+    relationship_stage: str
+    generated_at: str
+    scene_override: bool
+    blocked: bool
+    block_reason: str
+
+
+@dataclass(frozen=True)
 class CompanionOutreachLogRecord:
     outreach_id: int
     client_id: str

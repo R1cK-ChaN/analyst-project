@@ -662,6 +662,28 @@ class SQLiteSchemaMixin:
                 "CREATE INDEX IF NOT EXISTS idx_outreach_log_client_sent ON companion_outreach_log(client_id, sent_at)"
             )
             connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS companion_image_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    scene_key TEXT NOT NULL DEFAULT '',
+                    trigger_type TEXT NOT NULL,
+                    outreach_kind TEXT NOT NULL DEFAULT '',
+                    relationship_stage TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    scene_override INTEGER NOT NULL DEFAULT 0,
+                    blocked INTEGER NOT NULL DEFAULT 0,
+                    block_reason TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_image_log_client_date ON companion_image_log(client_id, generated_at)"
+            )
+            connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_analytical_observations_created ON analytical_observations(id DESC)"
             )
             connection.execute(

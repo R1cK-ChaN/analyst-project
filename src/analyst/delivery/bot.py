@@ -169,11 +169,54 @@ async def _send_companion_proactive_message(
         kind=kind,
         companion_local_context=_companion_local_context(store, lifestyle_state, now),
     )
+
+    # --- Image decision for proactive outreach ---
+    proactive_tools: list[AgentTool] | None = None
+    try:
+        from analyst.delivery.image_decision import should_generate_image
+
+        _rel = store.get_companion_relationship_state(client_id=state.client_id)
+        _prof = store.get_client_profile(state.client_id)
+        _stage = str(getattr(_rel, "relationship_stage", "acquaintance") or "acquaintance")
+        _images_today = store.count_images_sent_today(
+            client_id=state.client_id,
+            timezone_name=_prof.timezone_name,
+        )
+        _proactive_today = store.count_proactive_images_today(
+            client_id=state.client_id,
+            timezone_name=_prof.timezone_name,
+        )
+        _warmup_5d = store.count_warmup_images_last_5_days(client_id=state.client_id)
+        _turns_gap = store.get_turns_since_last_image(
+            client_id=state.client_id,
+            channel=state.channel,
+            thread_id=state.thread_id,
+        )
+        _image_decision = should_generate_image(
+            reply_text="",
+            relationship_stage=_stage,
+            stress_level=_prof.stress_level or "",
+            images_sent_today=_images_today,
+            turns_since_last_image=_turns_gap,
+            current_hour=now.hour,
+            is_proactive=True,
+            outreach_kind=kind,
+            user_text="",
+            proactive_images_today=_proactive_today,
+            warmup_images_last_5_days=_warmup_5d,
+        )
+        if _image_decision.allowed and _image_decision.recommended:
+            from analyst.tools._image_gen import build_image_gen_tool
+            proactive_tools = [build_image_gen_tool()]
+    except Exception:
+        logger.debug("Proactive image decision failed, skipping image", exc_info=True)
+
     reply = await asyncio.to_thread(
         run_proactive_companion_turn_for_input,
         conversation=conversation,
         store=store,
         agent_loop=agent_loop,
+        tools=proactive_tools,
         memory_context_builder=build_chat_context,
         proactive_reply_generator=generate_proactive_companion_reply,
     )
@@ -192,6 +235,49 @@ async def _send_companion_proactive_message(
         return
     bubbles = split_into_bubbles(reply.text)
     await _send_bot_bubbles(bot, chat_id=chat_id, bubbles=bubbles)
+
+    # Send proactive media (images/videos) if generated
+    for media_item in reply.media:
+        try:
+            if media_item.kind == "photo":
+                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+                if media_item.url.startswith(("http://", "https://")):
+                    await bot.send_photo(chat_id=chat_id, photo=media_item.url)
+                elif os.path.isfile(media_item.url):
+                    with open(media_item.url, "rb") as f:
+                        await bot.send_photo(chat_id=chat_id, photo=f)
+            elif media_item.kind == "video":
+                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+                if media_item.url.startswith(("http://", "https://")):
+                    await bot.send_video(chat_id=chat_id, video=media_item.url)
+                elif os.path.isfile(media_item.url):
+                    with open(media_item.url, "rb") as f:
+                        await bot.send_video(chat_id=chat_id, video=f)
+        except Exception:
+            logger.exception("Failed to send proactive media")
+        finally:
+            for cleanup_path in (media_item.url, *media_item.cleanup_paths):
+                _cleanup_generated_media(cleanup_path)
+
+    # Log proactive image generation
+    if reply.media:
+        try:
+            _rel_log = store.get_companion_relationship_state(client_id=state.client_id)
+            _stage_log = str(getattr(_rel_log, "relationship_stage", "acquaintance") or "acquaintance")
+            for media_item in reply.media:
+                store.log_companion_image(
+                    client_id=state.client_id,
+                    channel=state.channel,
+                    thread_id=state.thread_id,
+                    mode=media_item.kind,
+                    trigger_type="proactive",
+                    outreach_kind=kind,
+                    relationship_stage=_stage_log,
+                    generated_at=utc_now().isoformat(),
+                )
+        except Exception:
+            logger.debug("Failed to log proactive image", exc_info=True)
+
     sent_at = utc_now().isoformat()
     store.append_conversation_message(
         client_id=state.client_id,

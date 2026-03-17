@@ -189,6 +189,43 @@ _SCENE_CATALOG: dict[str, SelfieScene] = {
             "gentle handheld phone motion"
         ),
     ),
+    "sleepy_morning": SelfieScene(
+        scene_prompt=(
+            "quick front camera selfie just woken up\n"
+            "messy hair and slightly puffy eyes\n"
+            "warm morning light from a window\n"
+            "pillow and rumpled sheets partially visible"
+        ),
+        motion_prompt=(
+            "quick front camera selfie just woken up\n"
+            "slow blink and a lazy half smile\n"
+            "slight handheld phone wobble"
+        ),
+    ),
+    "bundled_up": SelfieScene(
+        scene_prompt=(
+            "front camera selfie bundled up in a jacket outdoors\n"
+            "slightly red nose and ears from cold weather\n"
+            "overcast sky and bare trees in the background"
+        ),
+        motion_prompt=(
+            "front camera selfie bundled up in a jacket\n"
+            "small shiver and a warm smile\n"
+            "gentle handheld phone motion"
+        ),
+    ),
+    "study_tired": SelfieScene(
+        scene_prompt=(
+            "front camera selfie at a desk late at night\n"
+            "slightly tired expression with glasses pushed up\n"
+            "desk lamp light and scattered papers or laptop in frame"
+        ),
+        motion_prompt=(
+            "front camera selfie at a desk late at night\n"
+            "subtle blink and a tired half smile\n"
+            "small head tilt and handheld phone motion"
+        ),
+    ),
 }
 
 _BACK_CAMERA_SCENE_CATALOG: dict[str, BackCameraScene] = {
@@ -230,6 +267,54 @@ _BACK_CAMERA_SCENE_CATALOG: dict[str, BackCameraScene] = {
             "city lights, passing people, and storefronts ahead in the point of view\n"
             "slight motion blur and uneven street lighting\n"
             "imperfect handheld framing"
+        ),
+    ),
+    "library_desk": BackCameraScene(
+        scene_prompt=(
+            "back camera phone photo of a library study desk\n"
+            "open textbook, laptop, highlighter, and water bottle visible from seated point of view\n"
+            "quiet library lighting with other desks in the background\n"
+            "not carefully composed"
+        ),
+    ),
+    "rainy_window": BackCameraScene(
+        scene_prompt=(
+            "back camera phone photo looking out a rain-streaked window\n"
+            "blurred city lights and wet street below\n"
+            "condensation on glass and dim interior reflection\n"
+            "moody quiet atmosphere"
+        ),
+    ),
+    "night_desk": BackCameraScene(
+        scene_prompt=(
+            "back camera phone photo of a desk late at night\n"
+            "laptop screen glow, empty mug, scattered notes\n"
+            "only desk lamp lighting the scene\n"
+            "tired late-night study atmosphere"
+        ),
+    ),
+    "grocery_fruit": BackCameraScene(
+        scene_prompt=(
+            "back camera phone photo at a grocery store fruit section\n"
+            "colorful fruit displays from standing point of view\n"
+            "bright supermarket fluorescent lighting\n"
+            "shopping basket edge visible"
+        ),
+    ),
+    "park_bench": BackCameraScene(
+        scene_prompt=(
+            "back camera phone photo from a park bench\n"
+            "green trees, walking path, and distant joggers in the point of view\n"
+            "warm afternoon sunlight with dappled shadows\n"
+            "relaxed weekend atmosphere"
+        ),
+    ),
+    "subway_commute": BackCameraScene(
+        scene_prompt=(
+            "back camera phone photo inside a subway train\n"
+            "seats, handrails, and other commuters in the point of view\n"
+            "flat transit lighting and slight motion blur\n"
+            "morning or evening commute atmosphere"
         ),
     ),
 }

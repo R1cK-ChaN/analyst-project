@@ -49,6 +49,7 @@ from .sqlite_records import (
     TradingArtifactRecord,
     ClientProfileRecord,
     CompanionCheckInStateRecord,
+    CompanionImageLogRecord,
     CompanionLifestyleStateRecord,
     CompanionDailyScheduleRecord,
     CompanionOutreachLogRecord,
@@ -456,6 +457,165 @@ class SQLiteMemoryMixin:
             user_replied=bool(row["user_replied"]),
             user_replied_at=row["user_replied_at"],
             created_at=row["created_at"],
+        )
+
+    # -- Image log -------------------------------------------------------------
+
+    def log_companion_image(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        mode: str,
+        scene_key: str = "",
+        trigger_type: str,
+        outreach_kind: str = "",
+        relationship_stage: str,
+        generated_at: str,
+        scene_override: bool = False,
+        blocked: bool = False,
+        block_reason: str = "",
+    ) -> CompanionImageLogRecord:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO companion_image_log
+                    (client_id, channel, thread_id, mode, scene_key, trigger_type,
+                     outreach_kind, relationship_stage, generated_at, scene_override,
+                     blocked, block_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    client_id, channel, thread_id, mode, scene_key, trigger_type,
+                    outreach_kind, relationship_stage, generated_at,
+                    int(scene_override), int(blocked), block_reason,
+                ),
+            )
+            row_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        return CompanionImageLogRecord(
+            image_log_id=row_id,
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+            mode=mode,
+            scene_key=scene_key,
+            trigger_type=trigger_type,
+            outreach_kind=outreach_kind,
+            relationship_stage=relationship_stage,
+            generated_at=generated_at,
+            scene_override=scene_override,
+            blocked=blocked,
+            block_reason=block_reason,
+        )
+
+    def count_images_sent_today(
+        self,
+        *,
+        client_id: str,
+        timezone_name: str = "UTC",
+    ) -> int:
+        """Count non-blocked images sent today in user's local time."""
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) FROM companion_image_log
+                WHERE client_id = ?
+                  AND blocked = 0
+                  AND date(generated_at) = date('now')
+                """,
+                (client_id,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def count_proactive_images_today(
+        self,
+        *,
+        client_id: str,
+        timezone_name: str = "UTC",
+    ) -> int:
+        """Count non-blocked proactive images sent today."""
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) FROM companion_image_log
+                WHERE client_id = ?
+                  AND blocked = 0
+                  AND trigger_type = 'proactive'
+                  AND date(generated_at) = date('now')
+                """,
+                (client_id,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def count_warmup_images_last_5_days(
+        self,
+        *,
+        client_id: str,
+    ) -> int:
+        """Count non-blocked warm_up_share images in the last 5 days."""
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) FROM companion_image_log
+                WHERE client_id = ?
+                  AND blocked = 0
+                  AND outreach_kind = 'warm_up_share'
+                  AND generated_at >= datetime('now', '-5 days')
+                """,
+                (client_id,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def get_turns_since_last_image(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+    ) -> int:
+        """Count conversation messages since last non-blocked image log entry."""
+        with self._connection(commit=False) as connection:
+            # Find the most recent non-blocked image generation time
+            last_image_row = connection.execute(
+                """
+                SELECT generated_at FROM companion_image_log
+                WHERE client_id = ? AND channel = ? AND thread_id = ?
+                  AND blocked = 0
+                ORDER BY generated_at DESC
+                LIMIT 1
+                """,
+                (client_id, channel, thread_id),
+            ).fetchone()
+            if last_image_row is None:
+                return 999  # No prior images — effectively unlimited
+            last_image_at = last_image_row[0]
+            # Count messages since that time
+            count_row = connection.execute(
+                """
+                SELECT COUNT(*) FROM conversation_messages
+                WHERE client_id = ? AND channel = ? AND thread_id = ?
+                  AND created_at > ?
+                """,
+                (client_id, channel, thread_id, last_image_at),
+            ).fetchone()
+        return int(count_row[0]) if count_row else 999
+
+    def _row_to_image_log(self, row: sqlite3.Row) -> CompanionImageLogRecord:
+        return CompanionImageLogRecord(
+            image_log_id=int(row["id"]),
+            client_id=row["client_id"],
+            channel=row["channel"],
+            thread_id=row["thread_id"],
+            mode=row["mode"],
+            scene_key=row["scene_key"],
+            trigger_type=row["trigger_type"],
+            outreach_kind=row["outreach_kind"],
+            relationship_stage=row["relationship_stage"],
+            generated_at=row["generated_at"],
+            scene_override=bool(row["scene_override"]),
+            blocked=bool(row["blocked"]),
+            block_reason=row["block_reason"],
         )
 
     # -- Lifestyle state -------------------------------------------------------

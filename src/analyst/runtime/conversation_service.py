@@ -14,6 +14,13 @@ from analyst.tools._request_context import RequestImageInput, bind_request_image
 from .chat import ChatReply, generate_chat_reply, generate_proactive_companion_reply
 from .environment_adapter import ConversationInput, ProactiveConversationInput
 
+
+def _append_image_hint(context: str, hint: str) -> str:
+    if context:
+        return f"{context}\n{hint}"
+    return hint
+
+
 MemoryContextBuilder = Callable[..., str]
 GroupMemoryContextBuilder = Callable[..., str]
 ReplyGenerator = Callable[..., ChatReply]
@@ -127,17 +134,67 @@ def run_companion_turn_for_input(
     from analyst.delivery.injection_scanner import scan_for_injection
     injection_detected = scan_for_injection(conversation.message)
     profile = store.get_client_profile(conversation.user_id)
+
+    # --- Image decision layer ---
+    from analyst.delivery.image_decision import should_generate_image
+    import re as _re
+
+    filtered_tools = list(tools)
+    companion_local_context = conversation.companion_local_context
+    try:
+        _stage_match = _re.search(r"relationship_stage:\s*(\w+)", memory_context)
+        _stage = _stage_match.group(1) if _stage_match else "acquaintance"
+        _topic_match = _re.search(r"active_topic:\s*(.+)", memory_context)
+        _active_topic = _topic_match.group(1).strip() if _topic_match else ""
+        _stress = profile.stress_level or ""
+        _images_today = store.count_images_sent_today(
+            client_id=conversation.user_id,
+            timezone_name=profile.timezone_name,
+        )
+        _turns_gap = store.get_turns_since_last_image(
+            client_id=conversation.user_id,
+            channel=conversation.channel_id,
+            thread_id=conversation.thread_id,
+        )
+        from datetime import datetime, timezone as _tz
+        _now_hour = datetime.now(_tz.utc).hour  # approximate; ideally user tz
+        _image_decision = should_generate_image(
+            reply_text="",
+            relationship_stage=_stage,
+            active_topic=_active_topic,
+            stress_level=_stress,
+            images_sent_today=_images_today,
+            turns_since_last_image=_turns_gap,
+            current_hour=_now_hour,
+            is_proactive=False,
+            user_text=conversation.message,
+        )
+        if not _image_decision.allowed:
+            filtered_tools = [t for t in tools if t.name not in ("generate_image", "generate_live_photo")]
+            companion_local_context = _append_image_hint(
+                companion_local_context,
+                "[这轮不要发照片。]",
+            )
+        elif _image_decision.recommended and _image_decision.mode:
+            _hint = f"[这轮可以拍一张{_image_decision.mode}照片"
+            if _image_decision.scene_hint:
+                _hint += f"，场景：{_image_decision.scene_hint}"
+            _hint += "。自然就好。]"
+            companion_local_context = _append_image_hint(companion_local_context, _hint)
+    except Exception:
+        pass  # If decision layer fails, fall through with original tools
+
     with bind_request_image(conversation.attached_image):
         return reply_generator(
             conversation.message,
             history=conversation.history,
             agent_loop=agent_loop,
-            tools=tools,
+            tools=filtered_tools,
             memory_context=memory_context,
             preferred_language=profile.preferred_language,
             group_context=conversation.group_context,
             user_content=conversation.user_content,
-            companion_local_context=conversation.companion_local_context,
+            companion_local_context=companion_local_context,
             persona_mode=conversation.persona_mode,
             injection_detected=injection_detected,
         )
@@ -239,6 +296,7 @@ def run_proactive_companion_turn(
     channel_id: str,
     thread_id: str,
     agent_loop: AgentExecutor | Any,
+    tools: list[AgentTool] | None = None,
     companion_local_context: str = "",
     persona_mode: str = "companion",
     memory_context_builder: MemoryContextBuilder = build_chat_context,
@@ -256,6 +314,7 @@ def run_proactive_companion_turn(
         ),
         store=store,
         agent_loop=agent_loop,
+        tools=tools,
         memory_context_builder=memory_context_builder,
         proactive_reply_generator=proactive_reply_generator,
     )
@@ -266,6 +325,7 @@ def run_proactive_companion_turn_for_input(
     conversation: ProactiveConversationInput,
     store: SQLiteEngineStore,
     agent_loop: AgentExecutor | Any,
+    tools: list[AgentTool] | None = None,
     memory_context_builder: MemoryContextBuilder = build_chat_context,
     proactive_reply_generator: ProactiveReplyGenerator = generate_proactive_companion_reply,
 ) -> ChatReply:
@@ -282,6 +342,7 @@ def run_proactive_companion_turn_for_input(
     return proactive_reply_generator(
         kind=conversation.kind,
         agent_loop=agent_loop,
+        tools=tools,
         memory_context=memory_context,
         preferred_language=profile.preferred_language,
         companion_local_context=conversation.companion_local_context,
