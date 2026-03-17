@@ -362,10 +362,13 @@ def record_chat_interaction(
     # Update companion relationship state
     now = datetime.now(timezone.utc)
     current_rel = store.get_companion_relationship_state(client_id=client_id)
+    active_topic = _detect_active_topic_category(user_text)
     signal = RelationshipSignalUpdate(
         current_mood=update.current_mood,
         is_personal_sharing=_detect_personal_sharing(user_text),
         is_late_night=_is_late_night_utc8(now),
+        active_topic_category=active_topic,
+        user_text=user_text,
     )
     rel_updates = compute_relationship_update(current_rel, signal=signal, now=now)
     store.update_companion_relationship_state(client_id=client_id, **rel_updates)
@@ -1001,7 +1004,9 @@ def _get_emotional_trend(
     """Get emotional trend from relationship state (computed) or profile (LLM-set)."""
     if relationship and relationship.mood_history and len(relationship.mood_history) >= 3:
         from .relationship import _compute_emotional_trend
-        return _compute_emotional_trend(list(relationship.mood_history))
+        return _compute_emotional_trend(
+            list(relationship.mood_history), now=datetime.now(timezone.utc)
+        )
     return profile.emotional_trend or ""
 
 
@@ -1090,6 +1095,30 @@ _PERSONAL_SHARING_PATTERN = re.compile(
 def _detect_personal_sharing(text: str) -> bool:
     """Detect if user text contains personal/emotional disclosure signals."""
     return bool(_PERSONAL_SHARING_PATTERN.search(text))
+
+
+def _detect_active_topic_category(text: str) -> str | None:
+    """Quick topic category detection for tendency nudging.
+
+    Reuses the same category keywords from topic_state but as a lightweight
+    single-pass check (no scoring/decay needed here).
+    """
+    lowered = text.lower()
+    # Check categories in priority order for tendency relevance
+    _TOPIC_SIGNALS: list[tuple[str, tuple[str, ...]]] = [
+        ("mood / emotional", ("tired", "exhausted", "burned out", "stress", "anxious", "panic", "sad", "upset", "累", "困", "焦虑", "压力", "崩溃", "难过", "伤心", "失恋")),
+        ("relationships / people", ("friend", "family", "boyfriend", "girlfriend", "husband", "wife", "朋友", "家人", "男朋友", "女朋友", "老公", "老婆")),
+        ("joke / banter", ("lol", "haha", "哈哈", "233", "😂", "🤣")),
+        ("planning / scheduling", ("meet", "meeting", "plan", "schedule", "tomorrow", "见面", "安排", "计划", "明天")),
+        ("work / office", ("work", "office", "boss", "colleague", "工作", "公司", "老板", "同事")),
+        ("meal / food", ("eat", "lunch", "dinner", "coffee", "吃", "午饭", "晚饭", "咖啡")),
+        ("photos / media", ("photo", "selfie", "照片", "自拍")),
+        ("travel / outing", ("travel", "walk", "旅行", "散步")),
+    ]
+    for category, keywords in _TOPIC_SIGNALS:
+        if any(kw in lowered for kw in keywords):
+            return category
+    return None
 
 
 def _is_late_night_utc8(utc_now_dt: datetime) -> bool:

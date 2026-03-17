@@ -29,6 +29,9 @@ _STAGE_THRESHOLDS: list[tuple[str, str, float]] = [
 
 _STAGE_COOLDOWN = timedelta(hours=48)
 
+_INTIMACY_DECAY_PER_DAY = 0.01
+_INTIMACY_DECAY_GRACE_DAYS = 1  # no decay for 1-day gaps (same/next day)
+
 _MOOD_VALENCE: dict[str, int] = {
     # positive
     "optimistic": 1,
@@ -54,12 +57,33 @@ _MOOD_VALENCE: dict[str, int] = {
     "neutral": 0,
 }
 
+# Topic category → tendency it nudges
+_CATEGORY_TENDENCY_MAP: dict[str, str] = {
+    "mood / emotional": "confidant",
+    "relationships / people": "confidant",
+    "joke / banter": "friend",
+    "meal / food": "friend",
+    "photos / media": "friend",
+    "planning / scheduling": "mentor",
+    "work / office": "mentor",
+    "travel / outing": "friend",
+    "market / finance": "mentor",
+}
+
+_TENDENCY_NUDGE_AMOUNT = 0.02
+_LATE_NIGHT_TENDENCY_NUDGES: dict[str, float] = {
+    "confidant": 0.015,
+    "romantic": 0.01,
+}
+
 _NICKNAME_FOR_AI_PATTERN = re.compile(
     r"(?:用户|他|她|对方)叫我[「「\"']?(.+?)[」」\"']?$"
 )
 _NICKNAME_FOR_USER_PATTERN = re.compile(
     r"(?:我叫(?:他|她|用户))[「「\"']?(.+?)[」」\"']?$"
 )
+
+_MOOD_HISTORY_WINDOW = timedelta(hours=24)
 
 
 # ---------------------------------------------------------------------------
@@ -92,12 +116,15 @@ def compute_relationship_update(
     updates["total_turns"] = new_turns
     updates["avg_session_turns"] = round(new_avg, 2)
 
-    # 3. Intimacy
+    # 3. Intimacy (decay + growth)
+    decayed = _apply_intimacy_decay(
+        current.intimacy_level, current.last_interaction_date, today_str
+    )
     delta = _compute_intimacy_delta(signal, current)
-    new_intimacy = min(1.0, current.intimacy_level + delta)
+    new_intimacy = min(1.0, max(0.0, decayed + delta))
     updates["intimacy_level"] = round(new_intimacy, 4)
 
-    # 4. Stage transition
+    # 4. Stage transition (can also regress on heavy decay)
     transition = _maybe_transition_stage(
         current.relationship_stage,
         new_intimacy,
@@ -108,18 +135,30 @@ def compute_relationship_update(
         updates["relationship_stage"] = transition[0]
         updates["last_stage_transition_at"] = transition[1]
 
-    # 5. Mood history & emotional trend
+    # 5. Tendency distribution
+    tf, tr, tc, tm = _update_tendencies(
+        current.tendency_friend,
+        current.tendency_romantic,
+        current.tendency_confidant,
+        current.tendency_mentor,
+        signal=signal,
+    )
+    updates["tendency_friend"] = tf
+    updates["tendency_romantic"] = tr
+    updates["tendency_confidant"] = tc
+    updates["tendency_mentor"] = tm
+
+    # 6. Mood history & emotional trend (timestamped entries)
     mood_history = list(current.mood_history)
     if signal.current_mood:
-        mood_history = _update_mood_history(mood_history, signal.current_mood)
+        mood_history = _update_mood_history(mood_history, signal.current_mood, now)
     updates["mood_history"] = mood_history
-    updates["emotional_trend"] = _compute_emotional_trend(mood_history)
+    updates["emotional_trend"] = _compute_emotional_trend(mood_history, now=now)
 
-    # 6. Nicknames
-    nicknames = _update_nicknames(
-        list(current.nicknames),
-        signal,
-    )
+    # 7. Nicknames (from signal + frequency bump from user_text)
+    nicknames = _update_nicknames(list(current.nicknames), signal)
+    if signal.user_text:
+        nicknames = _bump_nickname_frequency(nicknames, signal.user_text)
     if nicknames != current.nicknames:
         updates["nicknames"] = nicknames
 
@@ -175,6 +214,28 @@ def _update_streak(current_streak: int, last_date: str, today: str) -> int:
     return 1
 
 
+def _apply_intimacy_decay(
+    current_intimacy: float, last_date: str, today: str
+) -> float:
+    """Decay intimacy based on days of inactivity.
+
+    No decay for same-day or next-day. After that, -0.01 per day of absence.
+    """
+    if not last_date or last_date == today:
+        return current_intimacy
+    try:
+        last = datetime.strptime(last_date, "%Y-%m-%d").date()
+        now = datetime.strptime(today, "%Y-%m-%d").date()
+        gap = (now - last).days
+    except ValueError:
+        return current_intimacy
+    if gap <= _INTIMACY_DECAY_GRACE_DAYS:
+        return current_intimacy
+    decay_days = gap - _INTIMACY_DECAY_GRACE_DAYS
+    decayed = current_intimacy - (decay_days * _INTIMACY_DECAY_PER_DAY)
+    return max(0.0, decayed)
+
+
 def _compute_intimacy_delta(
     signal: RelationshipSignalUpdate,
     current: CompanionRelationshipStateRecord,
@@ -198,7 +259,7 @@ def _maybe_transition_stage(
     last_transition_at: str,
     now: datetime,
 ) -> tuple[str, str] | None:
-    """Check if stage should transition. Returns (new_stage, transition_time) or None."""
+    """Check if stage should transition (up or down). Returns (new_stage, ts) or None."""
     # Enforce cooldown
     if last_transition_at:
         try:
@@ -210,37 +271,152 @@ def _maybe_transition_stage(
         except (ValueError, TypeError):
             pass
 
+    # Check upward transitions
     for from_stage, to_stage, threshold in _STAGE_THRESHOLDS:
         if current_stage == from_stage and intimacy >= threshold:
             return (to_stage, now.isoformat())
+
+    # Check downward transitions (regression on decay)
+    for from_stage, to_stage, threshold in reversed(_STAGE_THRESHOLDS):
+        if current_stage == to_stage and intimacy < threshold * 0.7:
+            return (from_stage, now.isoformat())
+
     return None
 
 
-def _update_mood_history(history: list[str], new_mood: str) -> list[str]:
-    """Append mood, cap at 10 (FIFO)."""
+# ---------------------------------------------------------------------------
+# Tendency distribution
+# ---------------------------------------------------------------------------
+
+
+def _update_tendencies(
+    friend: float,
+    romantic: float,
+    confidant: float,
+    mentor: float,
+    *,
+    signal: RelationshipSignalUpdate,
+) -> tuple[float, float, float, float]:
+    """Nudge tendency distribution based on interaction signals, then normalize."""
+    tf, tr, tc, tm = friend, romantic, confidant, mentor
+
+    # Topic category nudge
+    if signal.active_topic_category:
+        target = _CATEGORY_TENDENCY_MAP.get(signal.active_topic_category)
+        if target:
+            tf, tr, tc, tm = _nudge(tf, tr, tc, tm, target, _TENDENCY_NUDGE_AMOUNT)
+
+    # Personal sharing → confidant
+    if signal.is_personal_sharing:
+        tf, tr, tc, tm = _nudge(tf, tr, tc, tm, "confidant", 0.015)
+
+    # Late night → confidant + romantic
+    if signal.is_late_night:
+        for tendency, amount in _LATE_NIGHT_TENDENCY_NUDGES.items():
+            tf, tr, tc, tm = _nudge(tf, tr, tc, tm, tendency, amount)
+
+    return _normalize_tendencies(tf, tr, tc, tm)
+
+
+def _nudge(
+    friend: float, romantic: float, confidant: float, mentor: float,
+    target: str, amount: float,
+) -> tuple[float, float, float, float]:
+    """Add amount to the target tendency (before normalization)."""
+    if target == "friend":
+        friend += amount
+    elif target == "romantic":
+        romantic += amount
+    elif target == "confidant":
+        confidant += amount
+    elif target == "mentor":
+        mentor += amount
+    return friend, romantic, confidant, mentor
+
+
+def _normalize_tendencies(
+    friend: float, romantic: float, confidant: float, mentor: float,
+) -> tuple[float, float, float, float]:
+    """Normalize so tendencies sum to 1.0. Returns rounded values."""
+    total = friend + romantic + confidant + mentor
+    if total <= 0:
+        return (0.25, 0.25, 0.25, 0.25)
+    return (
+        round(friend / total, 4),
+        round(romantic / total, 4),
+        round(confidant / total, 4),
+        round(mentor / total, 4),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Mood history (timestamped entries)
+# ---------------------------------------------------------------------------
+
+
+def _mood_entry(mood: str, at: datetime) -> dict:
+    """Create a timestamped mood entry."""
+    return {"mood": mood, "at": at.isoformat()}
+
+
+def _parse_mood_entry(entry: Any) -> tuple[str, datetime | None]:
+    """Parse a mood entry. Handles both old format (str) and new format (dict)."""
+    if isinstance(entry, str):
+        return (entry, None)
+    if isinstance(entry, dict):
+        mood = entry.get("mood", "")
+        at_str = entry.get("at", "")
+        at_dt = None
+        if at_str:
+            try:
+                at_dt = datetime.fromisoformat(at_str)
+                if at_dt.tzinfo is None:
+                    at_dt = at_dt.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                pass
+        return (mood, at_dt)
+    return ("", None)
+
+
+def _update_mood_history(
+    history: list, new_mood: str, now: datetime
+) -> list[dict]:
+    """Append timestamped mood, cap at 10 (FIFO)."""
     result = list(history)
-    result.append(new_mood)
+    result.append(_mood_entry(new_mood, now))
     return result[-10:]
 
 
-def _compute_emotional_trend(history: list[str]) -> str:
+def _compute_emotional_trend(
+    history: list, *, now: datetime | None = None
+) -> str:
     """Compute trend from mood valence sequence.
 
+    Only considers moods within the last 24h (if timestamps available).
     Compares average valence of last 3 moods vs earlier moods.
     Returns "improving", "declining", "stable", or "" if insufficient data.
     """
-    if len(history) < 3:
+    # Filter to 24h window if timestamps are available
+    if now is not None:
+        cutoff = now - _MOOD_HISTORY_WINDOW
+        filtered: list[str] = []
+        for entry in history:
+            mood, at_dt = _parse_mood_entry(entry)
+            if not mood:
+                continue
+            if at_dt is not None and at_dt < cutoff:
+                continue  # outside window
+            filtered.append(mood)
+    else:
+        filtered = [_parse_mood_entry(e)[0] for e in history if _parse_mood_entry(e)[0]]
+
+    if len(filtered) < 3:
         return ""
-    valences = [_MOOD_VALENCE.get(m, 0) for m in history]
+    valences = [_MOOD_VALENCE.get(m, 0) for m in filtered]
     recent = valences[-3:]
-    earlier = valences[:-3] if len(valences) > 3 else valences[:len(valences) - 3]
+    earlier = valences[:-3]
     recent_avg = sum(recent) / len(recent)
     if not earlier:
-        # Only 3 moods — compare first vs last
-        if recent_avg > 0.3:
-            return "stable"
-        if recent_avg < -0.3:
-            return "stable"
         return "stable"
     earlier_avg = sum(earlier) / len(earlier)
     delta = recent_avg - earlier_avg
@@ -249,6 +425,11 @@ def _compute_emotional_trend(history: list[str]) -> str:
     if delta < -0.3:
         return "declining"
     return "stable"
+
+
+# ---------------------------------------------------------------------------
+# Nicknames
+# ---------------------------------------------------------------------------
 
 
 def _update_nicknames(
@@ -282,3 +463,17 @@ def _update_nicknames(
             )))
 
     return result[-10:]
+
+
+def _bump_nickname_frequency(
+    nicknames: list[dict], user_text: str
+) -> list[dict]:
+    """Increment frequency for any known nickname that appears in user_text."""
+    if not nicknames or not user_text:
+        return nicknames
+    result = list(nicknames)
+    for i, entry in enumerate(result):
+        name = entry.get("name", "")
+        if name and name in user_text:
+            result[i] = {**entry, "frequency": entry.get("frequency", 0) + 1}
+    return result
