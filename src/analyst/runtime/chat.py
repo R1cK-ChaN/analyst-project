@@ -446,6 +446,27 @@ IMAGE_PLACEHOLDER = "[IMAGE]"
 VIDEO_PLACEHOLDER = "[VIDEO]"
 
 
+def _casualize_commas(text: str) -> str:
+    """Replace some Chinese commas with spaces for a casual typing feel.
+
+    In short clauses (≤8 chars between commas), replace ， with a space.
+    Longer clauses keep their commas since spaces would be confusing.
+    """
+    import re as _re
+    parts = text.split("，")
+    if len(parts) <= 1:
+        return text
+    result: list[str] = [parts[0]]
+    for part in parts[1:]:
+        prev = result[-1]
+        # If both the previous and current segment are short, use space
+        if len(prev.split()[-1] if prev else "") <= 8 and len(part.split()[0] if part else "") <= 8:
+            result.append(" " + part.lstrip())
+        else:
+            result.append("，" + part)
+    return "".join(result)
+
+
 def _strip_trailing_punctuation(text: str) -> str:
     """Strip trailing Chinese/English sentence-ending punctuation for casual chat feel.
 
@@ -553,7 +574,8 @@ def split_into_bubbles(text: str) -> list[str]:
         total_len = sum(len(b) for b in bubbles)
         if total_len <= _BUBBLE_MERGE_THRESHOLD:
             bubbles = ["\n".join(bubbles)]
-    # Strip trailing punctuation for casual chat feel
+    # Post-process for casual chat feel
+    bubbles = [_casualize_commas(b) for b in bubbles]
     bubbles = [_strip_trailing_punctuation(b) for b in bubbles]
     bubbles = [b for b in bubbles if b]
     return bubbles or [text]
@@ -909,29 +931,29 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
 
     hints: list[str] = []
 
-    # Question-ending suppression
+    # Question-ending suppression — trigger if ANY recent reply ended with ?
     question_count = sum(1 for text in recent_assistant if _ends_with_question(text))
-    if question_count >= 2:
-        hints.append("这轮不要用问句结尾，说完就停。")
+    if question_count >= 1:
+        hints.append("这轮不要用问句结尾 说完就停 不要寻求对方回应。")
 
     # 哈哈 opener dedup
     haha_count = sum(1 for text in recent_assistant if _starts_with_haha(text))
     if haha_count >= 1:
-        hints.append("这轮开头不要用哈哈。")
+        hints.append("这轮不要用哈哈开头。")
 
-    # 确实 opener dedup — if ANY of the last 2 started with 确实, ban it
-    queshi_count = sum(1 for text in recent_assistant[:2] if _starts_with_queshi(text))
-    if queshi_count >= 1:
-        hints.append("这轮不要用确实开头，说点你自己的想法。")
+    # 确实 suppression — check if ANY recent reply contains 确实 anywhere
+    has_queshi = any("确实" in text for text in recent_assistant[:2])
+    if has_queshi:
+        hints.append("这轮禁止使用确实。换个表达或者说自己的想法。")
 
-    # Anti-sycophancy: if recent messages are all agreement, push for personality
-    agreement_starters = ("确实", "对", "是的", "没错", "也是", "嗯确实", "对对")
+    # Anti-sycophancy: if recent messages are agreement-heavy, push for personality
+    agreement_starters = ("确实", "对", "是的", "没错", "也是", "嗯确实", "对对", "是啊")
     agree_count = sum(
         1 for text in recent_assistant[:3]
         if any(text.lstrip().startswith(s) for s in agreement_starters)
     )
     if agree_count >= 2:
-        hints.append("你最近一直在附和，这轮说点自己的看法或经历，不要再同意了。")
+        hints.append("你最近一直在附和 这轮说自己的经历或不同看法。")
 
     if not hints:
         return ""

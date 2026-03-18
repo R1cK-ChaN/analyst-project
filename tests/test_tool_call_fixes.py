@@ -440,8 +440,11 @@ class CompanionStyleContentTest(unittest.TestCase):
     def test_double_bubble_tightened(self) -> None:
         self.assertIn("默认只发 1 条消息", COMPANION_SYSTEM_PROMPT)
 
-    def test_projection_rule_present(self) -> None:
-        self.assertIn("不要给对方的话加戏", COMPANION_SYSTEM_PROMPT)
+    def test_anti_sycophancy_rule_present(self) -> None:
+        self.assertIn("不是讨好型人格", COMPANION_SYSTEM_PROMPT)
+
+    def test_anti_metaphor_rule_present(self) -> None:
+        self.assertIn("不要用比喻", COMPANION_SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":
