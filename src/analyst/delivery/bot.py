@@ -979,11 +979,46 @@ async def _delayed_autonomous_reply(
         logger.exception("Autonomous intervention reply failed for group=%s", group_id)
 
 
+_DM_DEBOUNCE_SECONDS = 2.0
+"""Wait this long after the last DM message before processing.
+
+When a user sends multiple messages in quick succession (typing style),
+this debounce window combines them into a single LLM turn instead of
+generating a separate reply for each fragment.
+"""
+
+
 def _make_message_handler(
     agent_loop: AgentExecutor,
     tools: list[AgentTool],
     store: SQLiteEngineStore,
 ):
+    # Per-chat debounce state: chat_id → asyncio.Task
+    _debounce_timers: dict[int, asyncio.Task] = {}
+
+    async def _process_batched_dm(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        chat_id: int,
+    ) -> None:
+        """Pop all buffered messages for *chat_id* and process as a single turn."""
+        buf: list[dict[str, Any]] = context.chat_data.pop("_dm_buffer", [])
+        _debounce_timers.pop(chat_id, None)
+        if not buf:
+            return
+        # Combine text fragments; keep the last image/document attachment
+        combined_texts: list[str] = [m["text"] for m in buf if m.get("text")]
+        combined_text = "\n".join(combined_texts)
+        last_image = next((m["image"] for m in reversed(buf) if m.get("image")), None)
+        last_document = next((m["doc"] for m in reversed(buf) if m.get("doc")), None)
+        # Use the last update for reply context
+        await _handle_single_turn(
+            update, context, agent_loop, tools, store,
+            text=combined_text,
+            attached_image=last_image,
+            attached_document=last_document,
+        )
+
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_message is None:
             return
@@ -992,6 +1027,62 @@ def _make_message_handler(
         attached_document = await _extract_attached_document(update, context)
         text = _extract_message_text(message)
         if not text and attached_image is None and attached_document is None:
+            return
+
+        in_group = _is_group_chat(update)
+
+        # --- DM debounce: buffer rapid-fire messages ---
+        if not in_group and _DM_DEBOUNCE_SECONDS > 0:
+            chat_id = update.effective_chat.id
+            if "_dm_buffer" not in context.chat_data:
+                context.chat_data["_dm_buffer"] = []
+            context.chat_data["_dm_buffer"].append({
+                "text": text,
+                "image": attached_image,
+                "doc": attached_document,
+            })
+            # Cancel any existing timer and reset
+            existing = _debounce_timers.pop(chat_id, None)
+            if existing and not existing.done():
+                existing.cancel()
+
+            async def _fire_after_debounce(
+                _update: Update,
+                _context: ContextTypes.DEFAULT_TYPE,
+                _chat_id: int,
+            ) -> None:
+                await asyncio.sleep(_DM_DEBOUNCE_SECONDS)
+                try:
+                    await _process_batched_dm(_update, _context, _chat_id)
+                except Exception:
+                    logger.exception("Debounced DM processing failed for chat=%s", _chat_id)
+
+            _debounce_timers[chat_id] = asyncio.create_task(
+                _fire_after_debounce(update, context, chat_id)
+            )
+            return
+
+        # --- Group messages or debounce disabled: process immediately ---
+        await _handle_single_turn(
+            update, context, agent_loop, tools, store,
+            text=text,
+            attached_image=attached_image,
+            attached_document=attached_document,
+        )
+
+    async def _handle_single_turn(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        agent_loop: AgentExecutor,
+        tools: list[AgentTool],
+        store: SQLiteEngineStore,
+        *,
+        text: str,
+        attached_image: Any | None,
+        attached_document: Any | None,
+    ) -> None:
+        message = update.effective_message
+        if message is None:
             return
         user_id = str(update.effective_user.id) if update.effective_user else str(update.effective_chat.id)
         channel_id = f"telegram:{update.effective_chat.id}"

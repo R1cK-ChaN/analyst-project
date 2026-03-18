@@ -431,8 +431,8 @@ class CompanionStyleContentTest(unittest.TestCase):
         self.assertIn("❌", COMPANION_SYSTEM_PROMPT)
 
     def test_length_proportionality_rule_present(self) -> None:
-        self.assertIn("回复长度参考", COMPANION_SYSTEM_PROMPT)
-        self.assertIn("< 15 字", COMPANION_SYSTEM_PROMPT)
+        self.assertIn("回复长度", COMPANION_SYSTEM_PROMPT)
+        self.assertIn("≤ 10 字", COMPANION_SYSTEM_PROMPT)
 
     def test_no_fabrication_rule_present(self) -> None:
         self.assertIn("编造具体的店名", COMPANION_SYSTEM_PROMPT)

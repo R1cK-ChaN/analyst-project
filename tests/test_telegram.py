@@ -711,6 +711,11 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
         self.to_thread_patcher.start()
         self.addCleanup(self.to_thread_patcher.stop)
 
+        # Disable DM debounce for tests so messages process immediately.
+        self.debounce_patcher = patch("analyst.delivery.bot._DM_DEBOUNCE_SECONDS", 0)
+        self.debounce_patcher.start()
+        self.addCleanup(self.debounce_patcher.stop)
+
         self.mock_store.get_client_profile.return_value = SimpleNamespace(
             preferred_language="zh",
             response_style="",

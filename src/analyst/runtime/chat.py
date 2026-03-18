@@ -446,6 +446,31 @@ IMAGE_PLACEHOLDER = "[IMAGE]"
 VIDEO_PLACEHOLDER = "[VIDEO]"
 
 
+def _strip_trailing_punctuation(text: str) -> str:
+    """Strip trailing Chinese/English sentence-ending punctuation for casual chat feel.
+
+    Real people rarely end every chat message with punctuation.  We strip
+    trailing 。！…  but preserve ？ (questions feel odd without it) and keep
+    the mark if the message is very short (≤4 chars — a bare emoji or word
+    plus punctuation looks intentional).
+    """
+    import random as _rng
+    stripped = text.rstrip()
+    if not stripped or len(stripped) <= 4:
+        return stripped
+    # Only strip ~80% of the time so it doesn't feel robotic the other way
+    if _rng.random() < 0.2:
+        return stripped
+    if stripped.endswith(("。", "！", "…", "!", ".")):
+        return stripped[:-1].rstrip()
+    # Trailing ellipsis patterns
+    if stripped.endswith("..."):
+        return stripped[:-3].rstrip() or stripped
+    if stripped.endswith("……"):
+        return stripped[:-2].rstrip() or stripped
+    return stripped
+
+
 def normalize_user_reply(text: str) -> str:
     cleaned = (
         text.replace("**", "")
@@ -507,7 +532,8 @@ def split_into_bubbles(text: str) -> list[str]:
 
     Each resulting bubble is guaranteed to fit within the Telegram
     message-length limit (4 096 chars).  Oversized segments are further
-    split at paragraph / line / word boundaries.
+    split at paragraph / line / word boundaries.  Trailing sentence-ending
+    punctuation is randomly stripped for a casual chat feel.
     """
     parts = text.split(SPLIT_MARKER)
     bubbles: list[str] = []
@@ -515,6 +541,9 @@ def split_into_bubbles(text: str) -> list[str]:
         stripped = p.strip()
         if stripped:
             bubbles.extend(_split_oversized(stripped))
+    # Strip trailing punctuation for casual chat feel
+    bubbles = [_strip_trailing_punctuation(b) for b in bubbles]
+    bubbles = [b for b in bubbles if b]
     return bubbles or [text]
 
 
