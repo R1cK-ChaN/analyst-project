@@ -819,6 +819,49 @@ def _repair_missing_image_media(
     return media, [audit_entry]
 
 
+def _ends_with_question(text: str) -> bool:
+    """Check if text ends with a question mark (Chinese or English)."""
+    stripped = text.rstrip()
+    return stripped.endswith("？") or stripped.endswith("?")
+
+
+def _starts_with_haha(text: str) -> bool:
+    """Check if text starts with a '哈哈' variant."""
+    stripped = text.lstrip()
+    return stripped.startswith("哈哈") or stripped.startswith("haha") or stripped.startswith("哈 ")
+
+
+def _build_style_hints(history: list[dict[str, str]] | None) -> str:
+    """Analyze recent assistant messages and build dynamic style correction hints."""
+    if not history:
+        return ""
+    # Collect last 3 assistant messages
+    recent_assistant: list[str] = []
+    for msg in reversed(history or []):
+        if msg["role"] == "assistant":
+            recent_assistant.append(msg["content"])
+            if len(recent_assistant) >= 3:
+                break
+    if not recent_assistant:
+        return ""
+
+    hints: list[str] = []
+
+    # Question-ending suppression
+    question_count = sum(1 for text in recent_assistant if _ends_with_question(text))
+    if question_count >= 2:
+        hints.append("这轮不要用问句结尾，说完就停。")
+
+    # 哈哈 opener dedup
+    haha_count = sum(1 for text in recent_assistant if _starts_with_haha(text))
+    if haha_count >= 1:
+        hints.append("这轮开头不要用哈哈，换个方式。")
+
+    if not hints:
+        return ""
+    return "[STYLE CORRECTION] " + " ".join(hints)
+
+
 def generate_chat_reply(
     user_text: str,
     *,
@@ -842,6 +885,14 @@ def generate_chat_reply(
         ConversationMessage(role=message["role"], content=message["content"])
         for message in (history or [])
     ]
+    # Build dynamic style hints from recent history
+    style_hints = _build_style_hints(history)
+    effective_local_context = companion_local_context
+    if style_hints:
+        effective_local_context = (
+            f"{companion_local_context}\n{style_hints}" if companion_local_context
+            else style_hints
+        )
     plan = resolve_turn_execution_plan(
         executor=executor,
         tools=tools,
@@ -858,7 +909,7 @@ def generate_chat_reply(
         user_text=user_text,
         user_lang=plan.user_lang,
         group_context=group_context,
-        companion_local_context=companion_local_context,
+        companion_local_context=effective_local_context,
         executor=executor,
         tools=plan.active_tools,
         native_tool_names=plan.native_tool_names,

@@ -56,7 +56,7 @@ class PromptAssemblySelectionTest(unittest.TestCase):
     """The modular prompt assembler should stage heavy rules only when needed."""
 
     def test_companion_default_prompt_remains_small(self) -> None:
-        self.assertLess(len(COMPANION_SYSTEM_PROMPT), 3200)
+        self.assertLess(len(COMPANION_SYSTEM_PROMPT), 4500)
 
     def test_companion_prompt_reflects_sunny_snt_companion_identity(self) -> None:
         self.assertIn("sunny、cheerful", COMPANION_SYSTEM_PROMPT)
@@ -346,6 +346,102 @@ def _enqueue_delivery_at(
     )
     conn.commit()
     conn.close()
+
+
+# ------------------------------------------------------------------ #
+# Style hints: dynamic question/哈哈 suppression                      #
+# ------------------------------------------------------------------ #
+
+class StyleHintsTest(unittest.TestCase):
+    """_build_style_hints should inject corrective hints based on recent history."""
+
+    def test_no_hints_for_empty_history(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        self.assertEqual(_build_style_hints(None), "")
+        self.assertEqual(_build_style_hints([]), "")
+
+    def test_no_hints_when_no_pattern(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "你好啊"},
+            {"role": "user", "content": "吃了吗"},
+            {"role": "assistant", "content": "吃了"},
+        ]
+        self.assertEqual(_build_style_hints(history), "")
+
+    def test_question_suppression_when_2_of_3_end_with_question(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "assistant", "content": "你今天怎么样？"},
+            {"role": "user", "content": "还行"},
+            {"role": "assistant", "content": "吃了什么？"},
+            {"role": "user", "content": "随便吃的"},
+            {"role": "assistant", "content": "确实"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("不要用问句结尾", result)
+
+    def test_haha_suppression_when_recent_haha(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "assistant", "content": "嗯嗯"},
+            {"role": "user", "content": "Bug在发呆"},
+            {"role": "assistant", "content": "哈哈 狗都这样"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("不要用哈哈", result)
+
+    def test_both_hints_combined(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "assistant", "content": "哈哈你在干嘛？"},
+            {"role": "user", "content": "没事"},
+            {"role": "assistant", "content": "哈哈好吧 你吃了吗？"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("不要用问句结尾", result)
+        self.assertIn("不要用哈哈", result)
+
+    def test_ends_with_question_chinese_mark(self) -> None:
+        from analyst.runtime.chat import _ends_with_question
+        self.assertTrue(_ends_with_question("你好吗？"))
+        self.assertTrue(_ends_with_question("really?"))
+        self.assertFalse(_ends_with_question("确实"))
+        self.assertFalse(_ends_with_question("好的。"))
+
+    def test_starts_with_haha(self) -> None:
+        from analyst.runtime.chat import _starts_with_haha
+        self.assertTrue(_starts_with_haha("哈哈 好的"))
+        self.assertTrue(_starts_with_haha("haha nice"))
+        self.assertFalse(_starts_with_haha("确实好笑"))
+        self.assertFalse(_starts_with_haha("嗯"))
+
+
+# ------------------------------------------------------------------ #
+# Prompt content: few-shot examples and length rules present          #
+# ------------------------------------------------------------------ #
+
+class CompanionStyleContentTest(unittest.TestCase):
+    """Verify the enhanced style module contains critical directives."""
+
+    def test_few_shot_examples_present(self) -> None:
+        self.assertIn("好的回复 vs 不好的回复", COMPANION_SYSTEM_PROMPT)
+        self.assertIn("✅", COMPANION_SYSTEM_PROMPT)
+        self.assertIn("❌", COMPANION_SYSTEM_PROMPT)
+
+    def test_length_proportionality_rule_present(self) -> None:
+        self.assertIn("回复长度参考", COMPANION_SYSTEM_PROMPT)
+        self.assertIn("< 15 字", COMPANION_SYSTEM_PROMPT)
+
+    def test_no_fabrication_rule_present(self) -> None:
+        self.assertIn("编造具体的店名", COMPANION_SYSTEM_PROMPT)
+
+    def test_double_bubble_tightened(self) -> None:
+        self.assertIn("默认只发 1 条消息", COMPANION_SYSTEM_PROMPT)
+
+    def test_projection_rule_present(self) -> None:
+        self.assertIn("不要给对方的话加戏", COMPANION_SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":
