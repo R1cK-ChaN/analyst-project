@@ -1211,8 +1211,8 @@ def _make_message_handler(
                 bubble_text = bubble_text[: MAX_TELEGRAM_LENGTH - 1] + "\u2026"
             if i > 0:
                 await update.effective_chat.send_action(ChatAction.TYPING)
-                delay = min(0.5 + len(bubble_text) * 0.01, 2.5) + random.uniform(-0.3, 0.3)
-                await asyncio.sleep(max(delay, 0.3))
+                delay = min(2.0 + len(bubble_text) * 0.03, 8.0) + random.uniform(-1.0, 1.0)
+                await asyncio.sleep(max(delay, 2.0))
             reply_kwargs: dict[str, Any] = {"text": bubble_text}
             if bubble_entities:
                 reply_kwargs["entities"] = bubble_entities

@@ -148,7 +148,7 @@ def _seen_no_rush_delay(text: str) -> tuple[float, bool] | None:
 
 def _first_reply_delay_seconds(text: str, *, has_image: bool = False) -> float:
     if has_image:
-        return 0.0
+        return random.uniform(2.0, 5.0)
     stripped = text.strip()
     if not stripped:
         return 0.0
@@ -158,12 +158,13 @@ def _first_reply_delay_seconds(text: str, *, has_image: bool = False) -> float:
         # delay is handled via _seen_no_rush_delay at the call site.
         return random.uniform(3.0, 8.0)
     if bucket == "instant":
-        return min(0.4, 0.05 + len(stripped) * 0.02)
+        return random.uniform(3.0, 8.0)
     if bucket == "emotional":
-        return min(3.5, 2.0 + min(len(stripped), 180) / 120.0)
+        return random.uniform(8.0, 20.0)
     if bucket == "deep_story":
-        return min(5.0, 3.0 + min(len(stripped), 320) / 160.0)
-    return min(1.8, 0.8 + min(len(stripped), 120) / 120.0)
+        return random.uniform(10.0, 25.0)
+    # normal
+    return random.uniform(5.0, 15.0)
 
 def evaluate_relationship_checkin_kind(
     relationship: Any,
