@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 from io import BytesIO
 import logging
 import os
@@ -14,9 +15,24 @@ from telegram.ext import ContextTypes
 
 from analyst.tools._request_context import RequestImageInput
 
-from .bot_constants import MANAGED_MEDIA_PREFIXES, MAX_INBOUND_IMAGE_EDGE
+from .bot_constants import (
+    MANAGED_MEDIA_PREFIXES,
+    MAX_DOCUMENT_FILE_SIZE,
+    MAX_DOCUMENT_TEXT_CHARS,
+    MAX_INBOUND_IMAGE_EDGE,
+    SUPPORTED_DOCUMENT_MIMES,
+)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RequestDocumentInput:
+    text: str
+    filename: str
+    mime_type: str
+    source: str = "message"
+    truncated: bool = False
 
 def _is_managed_generated_media(path: str) -> bool:
     """Only delete temp files created by the image generation tool."""
@@ -47,8 +63,16 @@ def _image_summary_marker(image: RequestImageInput | None) -> str:
         return "[Referenced image]"
     return "[Image attached]"
 
-def _summarize_user_message(text: str, *, image: RequestImageInput | None = None) -> str:
+def _summarize_user_message(
+    text: str,
+    *,
+    image: RequestImageInput | None = None,
+    document: RequestDocumentInput | None = None,
+) -> str:
     marker = _image_summary_marker(image)
+    if document is not None:
+        doc_marker = f"[Document: {document.filename}]"
+        marker = f"{marker}\n{doc_marker}" if marker else doc_marker
     if marker and text:
         return f"{text}\n{marker}"
     if marker:
@@ -157,4 +181,130 @@ async def _extract_attached_image(
         return direct_image
     reply_message = getattr(message, "reply_to_message", None)
     return await _extract_message_image(reply_message, context, source="reply")
+
+
+# ---------------------------------------------------------------------------
+# Document extraction
+# ---------------------------------------------------------------------------
+
+def _document_file_ref(message: Any) -> tuple[str, str, str, int] | None:
+    """Return (file_id, mime_type, filename, file_size) if the message has a supported document."""
+    document = getattr(message, "document", None)
+    if document is None:
+        return None
+    mime_type = getattr(document, "mime_type", "") or ""
+    if mime_type not in SUPPORTED_DOCUMENT_MIMES:
+        return None
+    file_size = getattr(document, "file_size", 0) or 0
+    if file_size > MAX_DOCUMENT_FILE_SIZE:
+        return None
+    file_id = getattr(document, "file_id", "")
+    if not isinstance(file_id, str) or not file_id:
+        return None
+    raw_filename = getattr(document, "file_name", "")
+    filename = raw_filename if isinstance(raw_filename, str) and raw_filename else "document"
+    return file_id, mime_type, filename, file_size
+
+
+_WORD_MIMES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+}
+_EXCEL_MIMES = {
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+}
+
+
+def _extract_text_from_bytes(raw_bytes: bytes, mime_type: str, filename: str) -> tuple[str, bool]:
+    """Extract text from raw file bytes. Returns (text, truncated)."""
+    if mime_type == "application/pdf":
+        text = _extract_pdf_text(raw_bytes)
+    elif mime_type in _WORD_MIMES:
+        text = _extract_word_text(raw_bytes)
+    elif mime_type in _EXCEL_MIMES:
+        text = _extract_excel_text(raw_bytes)
+    else:
+        try:
+            text = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw_bytes.decode("latin-1")
+    truncated = len(text) > MAX_DOCUMENT_TEXT_CHARS
+    if truncated:
+        text = text[:MAX_DOCUMENT_TEXT_CHARS]
+    return text, truncated
+
+
+def _extract_pdf_text(raw_bytes: bytes) -> str:
+    """Extract text from PDF bytes using pymupdf."""
+    import pymupdf  # noqa: E402 — lazy import to avoid startup cost
+
+    pages: list[str] = []
+    with pymupdf.open(stream=raw_bytes, filetype="pdf") as doc:
+        for page in doc:
+            page_text = page.get_text()
+            if page_text:
+                pages.append(page_text)
+    return "\n".join(pages)
+
+
+def _extract_word_text(raw_bytes: bytes) -> str:
+    """Extract text from .docx bytes using python-docx."""
+    from docx import Document as DocxDocument  # noqa: E402 — lazy import
+
+    doc = DocxDocument(BytesIO(raw_bytes))
+    return "\n".join(p.text for p in doc.paragraphs if p.text)
+
+
+def _extract_excel_text(raw_bytes: bytes) -> str:
+    """Extract text from .xlsx bytes using openpyxl."""
+    from openpyxl import load_workbook  # noqa: E402 — lazy import
+
+    wb = load_workbook(BytesIO(raw_bytes), read_only=True, data_only=True)
+    lines: list[str] = []
+    for ws in wb.worksheets:
+        lines.append(f"[Sheet: {ws.title}]")
+        for row in ws.iter_rows(values_only=True):
+            cells = [str(c) if c is not None else "" for c in row]
+            lines.append("\t".join(cells))
+    wb.close()
+    return "\n".join(lines)
+
+
+async def _extract_message_document(
+    message: Any,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    source: str,
+) -> RequestDocumentInput | None:
+    if message is None:
+        return None
+    doc_ref = _document_file_ref(message)
+    if doc_ref is None:
+        return None
+    file_id, mime_type, filename, _file_size = doc_ref
+    telegram_file = await context.bot.get_file(file_id)
+    raw_bytes = bytes(await telegram_file.download_as_bytearray())
+    text, truncated = _extract_text_from_bytes(raw_bytes, mime_type, filename)
+    return RequestDocumentInput(
+        text=text,
+        filename=filename,
+        mime_type=mime_type,
+        source=source,
+        truncated=truncated,
+    )
+
+
+async def _extract_attached_document(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> RequestDocumentInput | None:
+    message = update.effective_message
+    if message is None:
+        return None
+    direct_doc = await _extract_message_document(message, context, source="message")
+    if direct_doc is not None:
+        return direct_doc
+    reply_message = getattr(message, "reply_to_message", None)
+    return await _extract_message_document(reply_message, context, source="reply")
 

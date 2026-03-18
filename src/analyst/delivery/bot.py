@@ -108,6 +108,7 @@ from .group_intervention import (  # noqa: E402
 from .bot_history import _append_history, _get_history, _send_bot_bubbles  # noqa: E402
 from .bot_media import (  # noqa: E402
     _cleanup_generated_media,
+    _extract_attached_document,
     _extract_attached_image,
     _summarize_user_message,
     _render_image_instruction,
@@ -988,8 +989,9 @@ def _make_message_handler(
             return
         message = update.effective_message
         attached_image = await _extract_attached_image(update, context)
+        attached_document = await _extract_attached_document(update, context)
         text = _extract_message_text(message)
-        if not text and attached_image is None:
+        if not text and attached_image is None and attached_document is None:
             return
         user_id = str(update.effective_user.id) if update.effective_user else str(update.effective_chat.id)
         channel_id = f"telegram:{update.effective_chat.id}"
@@ -1016,7 +1018,7 @@ def _make_message_handler(
             )
 
         reply_context = _extract_reply_context(update)
-        history_user_text = _summarize_user_message(text, image=attached_image)
+        history_user_text = _summarize_user_message(text, image=attached_image, document=attached_document)
 
         if in_group:
             sender_name = _get_user_display_name(update)
@@ -1102,14 +1104,21 @@ def _make_message_handler(
 
             bot_username = context.bot.username or ""
             text = _strip_bot_mention(text, bot_username)
-            history_user_text = _summarize_user_message(text, image=attached_image)
-            if not text and attached_image is None:
+            history_user_text = _summarize_user_message(text, image=attached_image, document=attached_document)
+            if not text and attached_image is None and attached_document is None:
                 return
 
             group_context_str = _render_group_context(context, thread_id)
         else:
             group_id = ""
             group_context_str = ""
+
+        # Inject document text into user message for the LLM
+        if attached_document and not attached_image:
+            doc_block = f"[Attached document: {attached_document.filename}]\n{attached_document.text}"
+            if attached_document.truncated:
+                doc_block += "\n[... document truncated ...]"
+            text = f"{text}\n\n{doc_block}" if text else doc_block
 
         preparation = prepare_telegram_turn(
             user_id=user_id,
@@ -1266,7 +1275,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("checkins_off", _make_checkins_toggle_handler(store, enabled=False)))
     app.add_handler(
         MessageHandler(
-            (filters.TEXT | filters.PHOTO | filters.Document.IMAGE) & ~filters.COMMAND,
+            (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND,
             _make_message_handler(agent_loop, tools, store),
         )
     )
