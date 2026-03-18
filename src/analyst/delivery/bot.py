@@ -1046,13 +1046,19 @@ def _make_message_handler(
             from analyst.memory.relationship import detect_group_relational_roles
 
             _mentioned = _extract_mentioned_user_ids(update)
-            # Enrich mention lookup with group member display names and usernames
+            # Enrich mention lookup with group member display names and usernames.
+            # Use direct assignment to override @username placeholders from MENTION
+            # entities (which lack real user_ids) with actual user_ids from DB.
             _group_members = store.list_group_members(group_id, limit=30)
             for _gm in _group_members:
                 if _gm.display_name:
-                    _mentioned.setdefault(_gm.display_name.strip().lower(), _gm.user_id)
+                    _dn = _gm.display_name.strip().lower()
+                    if _dn not in _mentioned or str(_mentioned[_dn]).startswith("@"):
+                        _mentioned[_dn] = _gm.user_id
                 if _gm.username:
-                    _mentioned.setdefault(_gm.username.strip().lower(), _gm.user_id)
+                    _un = _gm.username.strip().lower()
+                    if _un not in _mentioned or str(_mentioned[_un]).startswith("@"):
+                        _mentioned[_un] = _gm.user_id
 
             _role_update = detect_group_relational_roles(
                 history_user_text,
