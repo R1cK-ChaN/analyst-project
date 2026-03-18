@@ -218,7 +218,17 @@ class SQLiteGroupMixin:
         group_id: str,
         bot_relational_role: str,
     ) -> None:
+        now = utc_now().isoformat()
         with self._connection(commit=True) as connection:
+            # Ensure group_profiles row exists before updating
+            connection.execute(
+                """
+                INSERT INTO group_profiles (group_id, group_name, group_topic, group_notes, member_count, created_at, updated_at)
+                VALUES (?, '', '', '', 0, ?, ?)
+                ON CONFLICT(group_id) DO NOTHING
+                """,
+                (group_id, now, now),
+            )
             connection.execute(
                 "UPDATE group_profiles SET bot_relational_role = ? WHERE group_id = ?",
                 (bot_relational_role, group_id),

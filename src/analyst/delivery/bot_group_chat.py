@@ -70,7 +70,9 @@ def _extract_reply_user_id(update: Update) -> str | None:
 def _extract_mentioned_user_ids(update: Update) -> dict[str, str]:
     """Extract @-mentioned users from message entities.
 
-    Returns {display_name_lower: str(user_id)} for TEXT_MENTION entities.
+    Returns {name_lower: str(user_id)} for both TEXT_MENTION and MENTION entities.
+    TEXT_MENTION entities carry the user object directly.
+    MENTION entities (username-based like @c332478) carry only the username text.
     """
     message = update.effective_message
     if message is None or not message.entities:
@@ -79,8 +81,14 @@ def _extract_mentioned_user_ids(update: Update) -> dict[str, str]:
     text = message.text or ""
     for entity in message.entities:
         if entity.type == MessageEntity.TEXT_MENTION and entity.user:
+            # TEXT_MENTION: user without username, entity has user object
             name = text[entity.offset : entity.offset + entity.length].lstrip("@")
             result[name.strip().lower()] = str(entity.user.id)
+        elif entity.type == MessageEntity.MENTION:
+            # MENTION: @username, entity has no user object — store username as key
+            username = text[entity.offset : entity.offset + entity.length].lstrip("@")
+            if username:
+                result[username.strip().lower()] = f"@{username.strip().lower()}"
     return result
 
 

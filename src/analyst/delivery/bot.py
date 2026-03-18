@@ -1041,11 +1041,18 @@ def _make_message_handler(
             # Detect and persist group relational role assignments
             from analyst.memory.relationship import detect_group_relational_roles
 
+            _mentioned = _extract_mentioned_user_ids(update)
+            # Enrich mention lookup with group member display names
+            _group_members = store.list_group_members(group_id, limit=30)
+            for _gm in _group_members:
+                if _gm.display_name:
+                    _mentioned.setdefault(_gm.display_name.strip().lower(), _gm.user_id)
+
             _role_update = detect_group_relational_roles(
                 history_user_text,
                 speaker_user_id=user_id,
                 reply_to_user_id=_extract_reply_user_id(update),
-                mentioned_users=_extract_mentioned_user_ids(update),
+                mentioned_users=_mentioned,
             )
             if _role_update.bot_role is not None:
                 store.update_group_bot_relational_role(
@@ -1057,6 +1064,9 @@ def _make_message_handler(
                     relational_role=_role_update.speaker_role,
                 )
             for _target_uid, _rel_role in _role_update.third_party_roles:
+                # Skip unresolved mentions (e.g. @username not matching any member)
+                if _target_uid.startswith("@"):
+                    continue
                 store.update_group_member_relational_role(
                     group_id=group_id, user_id=_target_uid,
                     relational_role=_rel_role,
