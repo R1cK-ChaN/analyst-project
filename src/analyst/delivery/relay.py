@@ -73,9 +73,19 @@ async def run_relay(
 
     turn_count = 0
 
+    # Only capture DM messages from the bots — ignore group chats to avoid
+    # relaying unrelated group replies into the test conversation.
+    bot_a_chat_id = bot_a_entity.id
+    bot_b_chat_id = bot_b_entity.id
+
     @client.on(events.NewMessage(from_users=[bot_a_id, bot_b_id]))
     async def on_bot_message(event: events.NewMessage.Event) -> None:
         nonlocal turn_count
+
+        # Filter: only relay messages from the DM chats with the two bots.
+        chat_id = event.chat_id
+        if chat_id not in (bot_a_chat_id, bot_b_chat_id):
+            return
 
         if event.sender_id == bot_a_id:
             target, direction = bot_b_entity, "A→B"
