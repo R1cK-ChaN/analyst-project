@@ -777,13 +777,13 @@ _THIRD_PARTY_PRONOUN_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(rf"(?:this|that|she|he) is your ({_ROLE_ALTS})(?:$|[,. !])", re.IGNORECASE),
 )
 
-# C2) Third-party via @mention: "@Alice是你妈妈" / "@Alice is your mother"
+# C2) Third-party via @mention: "@Alice是你妈妈" / "@Alice 这是你妈妈" / "@Alice is your mother"
 _THIRD_PARTY_MENTION_PATTERN = re.compile(
-    rf"@(\S+?)(?:\s+)?(?:就)?是你(?:的)?({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.])",
+    rf"@(\S+?)(?:\s+)?(?:这|那|她|他|ta)?(?:就)?是你(?:的)?({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.])",
     re.IGNORECASE,
 )
 _THIRD_PARTY_MENTION_EN_PATTERN = re.compile(
-    rf"@(\S+?) is your ({_ROLE_ALTS})(?:$|[,. !])",
+    rf"@(\S+?) (?:(?:this|that|she|he) )?is your ({_ROLE_ALTS})(?:$|[,. !])",
     re.IGNORECASE,
 )
 

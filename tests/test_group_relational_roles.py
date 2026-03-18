@@ -223,6 +223,25 @@ class TestThirdPartyRoleAssignment(unittest.TestCase):
         self.assertEqual(len(r.third_party_roles), 1)
         self.assertEqual(r.third_party_roles[0], ("u2", "妈妈"))
 
+    def test_cn_mention_with_zhe(self):
+        """'@name 这是你妈妈' — demonstrative between mention and role."""
+        r = detect_group_relational_roles(
+            "@c332478 这是你妈妈，认准了",
+            speaker_user_id="u1",
+            mentioned_users={"c332478": "u2"},
+        )
+        self.assertEqual(len(r.third_party_roles), 1)
+        self.assertEqual(r.third_party_roles[0], ("u2", "妈妈"))
+
+    def test_en_mention_with_this(self):
+        """'@Bob this is your dad'."""
+        r = detect_group_relational_roles(
+            "@Bob this is your dad",
+            speaker_user_id="u1",
+            mentioned_users={"bob": "u3"},
+        )
+        self.assertEqual(r.third_party_roles[0], ("u3", "爸爸"))
+
     def test_en_mention_assignment(self):
         r = detect_group_relational_roles(
             "@Bob is your dad",
