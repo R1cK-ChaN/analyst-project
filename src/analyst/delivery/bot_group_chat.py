@@ -56,6 +56,34 @@ def _should_reply_in_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """Return True if the bot should reply in a group chat (mentioned or replied-to)."""
     return _is_bot_mentioned(update, context) or _is_reply_to_bot(update, context)
 
+def _extract_reply_user_id(update: Update) -> str | None:
+    """Return the user_id of the replied-to message author, if any."""
+    message = update.effective_message
+    if message is None or message.reply_to_message is None:
+        return None
+    from_user = message.reply_to_message.from_user
+    if from_user is None:
+        return None
+    return str(from_user.id)
+
+
+def _extract_mentioned_user_ids(update: Update) -> dict[str, str]:
+    """Extract @-mentioned users from message entities.
+
+    Returns {display_name_lower: str(user_id)} for TEXT_MENTION entities.
+    """
+    message = update.effective_message
+    if message is None or not message.entities:
+        return {}
+    result: dict[str, str] = {}
+    text = message.text or ""
+    for entity in message.entities:
+        if entity.type == MessageEntity.TEXT_MENTION and entity.user:
+            name = text[entity.offset : entity.offset + entity.length].lstrip("@")
+            result[name.strip().lower()] = str(entity.user.id)
+    return result
+
+
 def _extract_reply_context(update: Update) -> str | None:
     """Extract text from a replied-to message, if any."""
     message = update.effective_message

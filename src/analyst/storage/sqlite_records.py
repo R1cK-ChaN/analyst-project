@@ -438,6 +438,7 @@ class GroupProfileRecord:
     group_name: str
     group_topic: str
     group_notes: str
+    bot_relational_role: str
     member_count: int
     created_at: str
     updated_at: str
@@ -449,6 +450,7 @@ class GroupMemberRecord:
     display_name: str
     role_in_group: str
     personality_notes: str
+    relational_role: str
     first_seen_at: str
     last_seen_at: str
     message_count: int

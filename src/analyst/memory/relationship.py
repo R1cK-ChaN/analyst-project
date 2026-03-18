@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -703,4 +703,208 @@ def _bump_nickname_frequency(
         name = entry.get("name", "")
         if name and name in user_text:
             result[i] = {**entry, "frequency": entry.get("frequency", 0) + 1}
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Group relational roles
+# ---------------------------------------------------------------------------
+
+_RELATIONAL_ROLE_VOCAB: dict[str, str] = {
+    # -- Family --
+    "爸爸": "爸爸", "爸": "爸爸", "老爸": "爸爸", "父亲": "爸爸", "爹": "爸爸",
+    "妈妈": "妈妈", "妈": "妈妈", "老妈": "妈妈", "母亲": "妈妈",
+    "哥哥": "哥哥", "哥": "哥哥", "大哥": "哥哥",
+    "姐姐": "姐姐", "姐": "姐姐", "大姐": "姐姐",
+    "弟弟": "弟弟", "弟": "弟弟",
+    "妹妹": "妹妹", "妹": "妹妹",
+    "孩子": "孩子", "宝宝": "孩子", "儿子": "儿子", "女儿": "女儿",
+    "老公": "老公", "老婆": "老婆",
+    "爷爷": "爷爷", "奶奶": "奶奶", "外公": "外公", "外婆": "外婆",
+    "叔叔": "叔叔", "阿姨": "阿姨",
+    # -- Affectionate / social --
+    "宝贝": "宝贝", "亲爱的": "亲爱的", "小宝": "宝贝",
+    "老板": "老板", "大佬": "大佬", "师傅": "师傅", "师父": "师傅",
+    "徒弟": "徒弟", "学生": "学生", "老师": "老师",
+    "闺蜜": "闺蜜", "兄弟": "兄弟", "哥们": "兄弟",
+    "主人": "主人",
+    # -- English family → Chinese --
+    "father": "爸爸", "dad": "爸爸", "daddy": "爸爸", "papa": "爸爸",
+    "mother": "妈妈", "mom": "妈妈", "mommy": "妈妈", "mama": "妈妈", "mum": "妈妈",
+    "brother": "哥哥", "bro": "哥哥", "big brother": "哥哥",
+    "sister": "姐姐", "sis": "姐姐", "big sister": "姐姐",
+    "little brother": "弟弟", "little sister": "妹妹",
+    "child": "孩子", "kid": "孩子", "son": "儿子", "daughter": "女儿",
+    "husband": "老公", "wife": "老婆",
+    "grandpa": "爷爷", "grandma": "奶奶",
+    "uncle": "叔叔", "auntie": "阿姨", "aunt": "阿姨",
+    # -- English affectionate / social → Chinese --
+    "baby": "宝贝", "dear": "亲爱的", "darling": "亲爱的",
+    "honey": "亲爱的", "sweetheart": "亲爱的",
+    "boss": "老板", "master": "主人",
+    "teacher": "老师", "mentor": "师傅",
+    "student": "学生", "apprentice": "徒弟",
+    "bestie": "闺蜜", "buddy": "兄弟", "mate": "兄弟",
+}
+
+# Build regex alternation from vocab keys, longest-first to avoid partial matches
+_ROLE_ALTS = "|".join(
+    re.escape(k) for k in sorted(_RELATIONAL_ROLE_VOCAB, key=len, reverse=True)
+)
+
+# --- Assignment patterns ---
+
+# A) Speaker claims role: "我是你爸爸" / "I'm your dad"
+_SPEAKER_ROLE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(rf"我是你(?:的)?({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.])", re.IGNORECASE),
+    re.compile(rf"(?:你)?叫我({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.])", re.IGNORECASE),
+    re.compile(rf"(?:你)?喊我({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.])", re.IGNORECASE),
+    re.compile(rf"I(?:'m| am) your ({_ROLE_ALTS})(?:$|[,. !])", re.IGNORECASE),
+    re.compile(rf"call me ({_ROLE_ALTS})(?:$|[,. !])", re.IGNORECASE),
+)
+
+# B) Bot role: "你是我们的孩子" / "you are our child"
+_BOT_ROLE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(rf"你(?:就)?是(?:我们?的)?({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.])", re.IGNORECASE),
+    re.compile(rf"you(?:'re| are) (?:our |my )?({_ROLE_ALTS})(?:$|[,. !])", re.IGNORECASE),
+)
+
+# C) Third-party via pronoun/demonstrative: "这是你妈妈" / "she is your mother"
+_THIRD_PARTY_PRONOUN_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(rf"(?:这|那|她|他|ta)(?:就)?是你(?:的)?({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.])", re.IGNORECASE),
+    re.compile(rf"(?:this|that|she|he) is your ({_ROLE_ALTS})(?:$|[,. !])", re.IGNORECASE),
+)
+
+# C2) Third-party via @mention: "@Alice是你妈妈" / "@Alice is your mother"
+_THIRD_PARTY_MENTION_PATTERN = re.compile(
+    rf"@(\S+?)(?:\s+)?(?:就)?是你(?:的)?({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.])",
+    re.IGNORECASE,
+)
+_THIRD_PARTY_MENTION_EN_PATTERN = re.compile(
+    rf"@(\S+?) is your ({_ROLE_ALTS})(?:$|[,. !])",
+    re.IGNORECASE,
+)
+
+# --- Removal patterns ---
+
+# D1) Speaker revokes own role: "我不是你爸爸了" / "I'm not your dad anymore"
+_SPEAKER_REVOKE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(rf"我不是你(?:的)?({_ROLE_ALTS})(?:了|$|[，。！,.])", re.IGNORECASE),
+    re.compile(rf"别叫我({_ROLE_ALTS})(?:$|[了，。！,.])", re.IGNORECASE),
+    re.compile(rf"I(?:'m| am) not your ({_ROLE_ALTS})(?: anymore)?(?:$|[,. !])", re.IGNORECASE),
+    re.compile(rf"don'?t call me ({_ROLE_ALTS})(?:$|[,. !])", re.IGNORECASE),
+)
+
+# D2) Revoke bot role: "你不是我孩子了" / "you're not my child anymore"
+_BOT_REVOKE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(rf"你不是(?:我们?(?:的)?)?({_ROLE_ALTS})(?:了|$|[，。！,.])", re.IGNORECASE),
+    re.compile(rf"you(?:'re| are) not (?:our |my )?({_ROLE_ALTS})(?: anymore)?(?:$|[,. !])", re.IGNORECASE),
+)
+
+
+@dataclass
+class GroupRelationalRoleUpdate:
+    """Result of detecting relational role assignments in a group message.
+
+    None = no change, "" = remove, "爸爸" = assign.
+    """
+
+    bot_role: str | None = None
+    speaker_role: str | None = None
+    third_party_roles: list[tuple[str, str]] = field(default_factory=list)
+
+
+def _normalize_role(raw: str) -> str | None:
+    """Return normalized role or None if not in vocabulary."""
+    key = raw.strip().lower()
+    return _RELATIONAL_ROLE_VOCAB.get(key)
+
+
+def detect_group_relational_roles(
+    user_text: str,
+    *,
+    speaker_user_id: str,
+    reply_to_user_id: str | None = None,
+    mentioned_users: dict[str, str] | None = None,
+) -> GroupRelationalRoleUpdate:
+    """Detect relational role assignments/revocations from a group message.
+
+    Args:
+        user_text: Raw message text.
+        speaker_user_id: Telegram user_id of the message sender.
+        reply_to_user_id: user_id of the replied-to message author, if any.
+        mentioned_users: {display_name_lower: user_id} for @-mentioned users.
+
+    Returns:
+        GroupRelationalRoleUpdate with detected changes.
+    """
+    if not user_text:
+        return GroupRelationalRoleUpdate()
+
+    result = GroupRelationalRoleUpdate()
+    text = user_text.strip()
+    mentions = mentioned_users or {}
+
+    # --- Revocations (check first so they take priority over assignments) ---
+
+    # D1: Speaker revokes own role
+    for pat in _SPEAKER_REVOKE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            role = _normalize_role(m.group(1))
+            if role is not None:
+                result.speaker_role = ""
+                break
+
+    # D2: Bot role revoked
+    for pat in _BOT_REVOKE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            role = _normalize_role(m.group(1))
+            if role is not None:
+                result.bot_role = ""
+                break
+
+    # --- Assignments (only if not already revoked) ---
+
+    # A: Speaker assigns own role
+    if result.speaker_role is None:
+        for pat in _SPEAKER_ROLE_PATTERNS:
+            m = pat.search(text)
+            if m:
+                role = _normalize_role(m.group(1))
+                if role is not None:
+                    result.speaker_role = role
+                    break
+
+    # B: Bot role assigned
+    if result.bot_role is None:
+        for pat in _BOT_ROLE_PATTERNS:
+            m = pat.search(text)
+            if m:
+                role = _normalize_role(m.group(1))
+                if role is not None:
+                    result.bot_role = role
+                    break
+
+    # C: Third-party via @mention
+    for pat in (_THIRD_PARTY_MENTION_PATTERN, _THIRD_PARTY_MENTION_EN_PATTERN):
+        for m in pat.finditer(text):
+            mention_name = m.group(1).strip().lower()
+            role = _normalize_role(m.group(2))
+            if role is not None:
+                target_id = mentions.get(mention_name)
+                if target_id:
+                    result.third_party_roles.append((target_id, role))
+
+    # C2: Third-party via pronoun → resolve to reply_to_user_id
+    if reply_to_user_id:
+        for pat in _THIRD_PARTY_PRONOUN_PATTERNS:
+            m = pat.search(text)
+            if m:
+                role = _normalize_role(m.group(1))
+                if role is not None:
+                    result.third_party_roles.append((reply_to_user_id, role))
+                    break
+
     return result

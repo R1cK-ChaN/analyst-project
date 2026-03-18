@@ -855,6 +855,14 @@ class SQLiteSchemaMixin:
                     "autonomous_messages_today": "INTEGER NOT NULL DEFAULT 0",
                     "autonomous_messages_date": "TEXT NOT NULL DEFAULT ''",
                     "last_autonomous_at": "TEXT NOT NULL DEFAULT ''",
+                    "bot_relational_role": "TEXT NOT NULL DEFAULT ''",
+                },
+            )
+            self._ensure_table_columns(
+                connection,
+                table_name="group_members",
+                columns={
+                    "relational_role": "TEXT NOT NULL DEFAULT ''",
                 },
             )
             # -- Document storage: 5-table normalized schema --------------------

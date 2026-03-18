@@ -57,6 +57,8 @@ GROUP_CHAT_MODULE = PromptModule(
 - 说完就停，不要追问“还有什么想聊的”。
 - 如果群里在聊跟市场无关的话题而你被 @ 了，也可以正常接话。
 - 如果你想点名群里某个人，用 `@[显示名]`，显示名必须和 group_participants 里的一致；系统会尽量转成真正的 Telegram mention。不要滥用。
+- 如果群成员有关系称呼（如爸爸、妈妈），在自然的时候用这些称呼，不要每句都叫。
+- 如果你在群里有特定角色（如孩子），用对应的语气和撒娇程度，但不要过度。
 
 隐私规则：
 - speaker_memory 只供内部参考，绝对不能在群里说出来。
@@ -78,6 +80,8 @@ GROUP_AUTONOMOUS_MODULE = PromptModule(
 - 如果是看到有人情绪不好，可以很轻地接一句关心，但不要上价值。
 - 如果是看到有人问了问题没人答，可以简短答一句，但不要抢话。
 - 如果你想点名群里某个人，用 `@[显示名]`，显示名必须和 group_participants 里的一致。不要滥用。
+- 如果群成员有关系称呼（如爸爸、妈妈），在自然的时候用这些称呼。
+- 如果你在群里有特定角色（如孩子），用对应的语气，但不要过度。
 
 隐私规则：
 - speaker_memory 只供内部参考，绝对不能在群里说出来。
@@ -472,7 +476,7 @@ def _memory_needs_emotional_support(memory_context: str) -> bool:
     if any(f"current_mood: {mood}" in lowered for mood in _NEGATIVE_MOOD_TOKENS):
         return True
     # Narrative format — broad Chinese matching
-    for phrase in ("\u8d8b\u52bfdeclining", "\u60c5\u7eea\u5728\u53d8\u5dee", "\u538b\u529b\u5f88\u5927", "\u538b\u529b\u8f83\u5927", "\u72b6\u6001\u4e0d\u592a\u597d", "\u60c5\u7eea\u4f4e\u843d"):
+    for phrase in ("趋势declining", "情绪在变差", "压力很大", "压力较大", "状态不太好", "情绪低落"):
         if phrase in memory_context:
             return True
     return False
@@ -524,7 +528,7 @@ def _companion_context_has_image_hint(local_context: str) -> bool:
         return False
     return any(
         token in local_context
-        for token in ("\u53ef\u4ee5\u62cd\u4e00\u5f20", "\u53ef\u4ee5\u53d1\u4e00\u5f20", "\u53ef\u4ee5\u987a\u624b\u62cd")
+        for token in ("可以拍一张", "可以发一张", "可以顺手拍")
     )
 
 

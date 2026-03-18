@@ -411,7 +411,12 @@ def build_group_chat_context(
 
     # Layer 3: Participant model (who's in this group)
     members = store.list_group_members(group_id, limit=15)
-    participant_lines = _render_participant_model(members, current_speaker_id=speaker_user_id)
+    group_profile = store.get_group_profile(group_id)
+    participant_lines = _render_participant_model(
+        members,
+        current_speaker_id=speaker_user_id,
+        bot_relational_role=group_profile.bot_relational_role,
+    )
 
     # Layer 4: Public-only inferred roles/persona hints
     recent_group_messages = store.list_recent_group_messages(group_id, limit=80)
@@ -440,14 +445,19 @@ def _render_participant_model(
     members: list[GroupMemberRecord],
     *,
     current_speaker_id: str = "",
+    bot_relational_role: str = "",
 ) -> list[str]:
     lines: list[str] = []
     for member in members:
         parts = [member.display_name or member.user_id]
         if member.user_id == current_speaker_id:
             parts.append("(current speaker)")
+        if member.relational_role:
+            parts.append(f"关系: {member.relational_role}")
         parts.append(f"msgs: {member.message_count}")
         lines.append(f"- {' | '.join(parts)}")
+    if bot_relational_role:
+        lines.append(f"- 你在这个群里的角色: {bot_relational_role}")
     return lines
 
 

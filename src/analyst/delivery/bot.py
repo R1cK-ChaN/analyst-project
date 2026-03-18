@@ -87,8 +87,10 @@ from .bot_constants import (  # noqa: E402
 )
 from .bot_group_chat import (  # noqa: E402
     _append_group_buffer,
+    _extract_mentioned_user_ids,
     _extract_message_text,
     _extract_reply_context,
+    _extract_reply_user_id,
     _get_user_display_name,
     _is_group_chat,
     _render_group_context,
@@ -1035,6 +1037,30 @@ def _make_message_handler(
                 display_name=sender_name,
             )
             refresh_group_member_public_inference(store=store, group_id=group_id)
+
+            # Detect and persist group relational role assignments
+            from analyst.memory.relationship import detect_group_relational_roles
+
+            _role_update = detect_group_relational_roles(
+                history_user_text,
+                speaker_user_id=user_id,
+                reply_to_user_id=_extract_reply_user_id(update),
+                mentioned_users=_extract_mentioned_user_ids(update),
+            )
+            if _role_update.bot_role is not None:
+                store.update_group_bot_relational_role(
+                    group_id=group_id, bot_relational_role=_role_update.bot_role,
+                )
+            if _role_update.speaker_role is not None:
+                store.update_group_member_relational_role(
+                    group_id=group_id, user_id=user_id,
+                    relational_role=_role_update.speaker_role,
+                )
+            for _target_uid, _rel_role in _role_update.third_party_roles:
+                store.update_group_member_relational_role(
+                    group_id=group_id, user_id=_target_uid,
+                    relational_role=_rel_role,
+                )
 
             if not _should_reply_in_group(update, context):
                 asyncio.ensure_future(

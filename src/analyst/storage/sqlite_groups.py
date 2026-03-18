@@ -119,6 +119,7 @@ class SQLiteGroupMixin:
                 group_name="",
                 group_topic="",
                 group_notes="",
+                bot_relational_role="",
                 member_count=0,
                 created_at=now,
                 updated_at=now,
@@ -128,6 +129,7 @@ class SQLiteGroupMixin:
             group_name=row["group_name"],
             group_topic=row["group_topic"],
             group_notes=row["group_notes"],
+            bot_relational_role=row["bot_relational_role"],
             member_count=row["member_count"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -171,6 +173,7 @@ class SQLiteGroupMixin:
                 display_name=row["display_name"],
                 role_in_group=row["role_in_group"],
                 personality_notes=row["personality_notes"],
+                relational_role=row["relational_role"],
                 first_seen_at=row["first_seen_at"],
                 last_seen_at=row["last_seen_at"],
                 message_count=row["message_count"],
@@ -194,6 +197,31 @@ class SQLiteGroupMixin:
                 WHERE group_id = ? AND user_id = ?
                 """,
                 (role_in_group, personality_notes, group_id, user_id),
+            )
+
+    def update_group_member_relational_role(
+        self,
+        *,
+        group_id: str,
+        user_id: str,
+        relational_role: str,
+    ) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "UPDATE group_members SET relational_role = ? WHERE group_id = ? AND user_id = ?",
+                (relational_role, group_id, user_id),
+            )
+
+    def update_group_bot_relational_role(
+        self,
+        *,
+        group_id: str,
+        bot_relational_role: str,
+    ) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "UPDATE group_profiles SET bot_relational_role = ? WHERE group_id = ?",
+                (bot_relational_role, group_id),
             )
 
     def append_group_message(
