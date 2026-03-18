@@ -756,10 +756,12 @@ _ROLE_ALTS = "|".join(
 
 # A) Speaker claims role: "我是你爸爸" / "I'm your dad"
 _SPEAKER_ROLE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(rf"我是你(?:的)?({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.])", re.IGNORECASE),
+    re.compile(rf"我是你(?:的)?({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.\s])", re.IGNORECASE),
+    re.compile(rf"我是({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.\s])", re.IGNORECASE),
     re.compile(rf"(?:你)?叫我({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.])", re.IGNORECASE),
     re.compile(rf"(?:你)?喊我({_ROLE_ALTS})(?:$|[了吧哦啊，。！,.])", re.IGNORECASE),
     re.compile(rf"I(?:'m| am) your ({_ROLE_ALTS})(?:$|[,. !])", re.IGNORECASE),
+    re.compile(rf"I(?:'m| am) (?:the )?({_ROLE_ALTS})(?:$|[,. !])", re.IGNORECASE),
     re.compile(rf"call me ({_ROLE_ALTS})(?:$|[,. !])", re.IGNORECASE),
 )
 

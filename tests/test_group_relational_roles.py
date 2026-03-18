@@ -82,6 +82,20 @@ class TestSpeakerRoleAssignment(unittest.TestCase):
         r = detect_group_relational_roles("我是你的妈妈", speaker_user_id="u1")
         self.assertEqual(r.speaker_role, "妈妈")
 
+    def test_cn_wo_shi_mama_without_ni(self):
+        """'我是妈妈' without '你' should still match."""
+        r = detect_group_relational_roles("我是妈妈", speaker_user_id="u1")
+        self.assertEqual(r.speaker_role, "妈妈")
+
+    def test_cn_wo_shi_mama_with_trailing_text(self):
+        """'我是妈妈 那爸爸是谁' should match."""
+        r = detect_group_relational_roles("我是妈妈 那爸爸是谁", speaker_user_id="u1")
+        self.assertEqual(r.speaker_role, "妈妈")
+
+    def test_en_i_am_the_boss(self):
+        r = detect_group_relational_roles("I am the boss", speaker_user_id="u1")
+        self.assertEqual(r.speaker_role, "老板")
+
     def test_cn_jiao_wo_gege(self):
         r = detect_group_relational_roles("叫我哥哥", speaker_user_id="u1")
         self.assertEqual(r.speaker_role, "哥哥")
