@@ -446,21 +446,56 @@ IMAGE_PLACEHOLDER = "[IMAGE]"
 VIDEO_PLACEHOLDER = "[VIDEO]"
 
 
-def _casualize_commas(text: str) -> str:
-    """Replace some Chinese commas with spaces for a casual typing feel.
+_QUESHI_REPLACEMENTS = ("嗯", "是", "对", "行", "")
+"""Replacements when 确实 appears at the start of a message."""
 
-    In short clauses (≤8 chars between commas), replace ， with a space.
-    Longer clauses keep their commas since spaces would be confusing.
-    """
-    import re as _re
-    parts = text.split("，")
-    if len(parts) <= 1:
+
+def _replace_queshi(text: str) -> str:
+    """Hard post-process: replace 确实 openers since the model ignores prompt rules."""
+    import random as _rng
+    stripped = text.lstrip()
+    if not stripped.startswith("确实"):
         return text
+    rest = stripped[2:].lstrip("，, 、")
+    replacement = _rng.choice(_QUESHI_REPLACEMENTS)
+    if replacement:
+        if rest:
+            return replacement + " " + rest
+        return replacement
+    # Empty replacement — just return the rest
+    return rest.capitalize() if rest else text
+
+
+def _truncate_bubble(text: str, max_len: int = 50) -> str:
+    """Hard truncate a bubble to *max_len* chars at the nearest sentence boundary.
+
+    Finds the last Chinese sentence-ending mark (。！？) or comma (，)
+    before max_len and cuts there.  Falls back to hard cut + ellipsis.
+    """
+    if len(text) <= max_len:
+        return text
+    # Look for a natural break point
+    for sep in ("。", "！", "？", "，", " "):
+        pos = text[:max_len].rfind(sep)
+        if pos > max_len // 3:
+            return text[:pos + (1 if sep != " " else 0)].rstrip()
+    # Hard cut
+    return text[:max_len].rstrip()
+
+
+def _casualize_commas(text: str) -> str:
+    """Replace some Chinese commas with spaces — only for SHORT messages.
+
+    Long messages keep their commas for readability.  Only messages
+    under 25 chars get the casual space treatment.
+    """
+    if len(text) > 25 or "，" not in text:
+        return text
+    import random as _rng
+    parts = text.split("，")
     result: list[str] = [parts[0]]
     for part in parts[1:]:
-        prev = result[-1]
-        # If both the previous and current segment are short, use space
-        if len(prev.split()[-1] if prev else "") <= 8 and len(part.split()[0] if part else "") <= 8:
+        if _rng.random() < 0.6:
             result.append(" " + part.lstrip())
         else:
             result.append("，" + part)
@@ -548,36 +583,57 @@ def _split_oversized(text: str, limit: int = _MAX_BUBBLE_LENGTH) -> list[str]:
     return chunks or [text]
 
 
-_BUBBLE_MERGE_THRESHOLD = 80
-"""Merge multi-bubble replies back into one if total length is under this."""
+_COMPANION_MAX_BUBBLE_CHARS = 50
+"""Hard cap for companion chat bubble length.  The model consistently
+ignores prompt-based length limits, so we enforce it in post-processing.
+50 chars ≈ 2 short Chinese sentences — feels like a real chat message."""
 
 
 def split_into_bubbles(text: str) -> list[str]:
     """Split a reply on [SPLIT] markers into separate chat bubbles.
 
-    Each resulting bubble is guaranteed to fit within the Telegram
-    message-length limit (4 096 chars).  Oversized segments are further
-    split at paragraph / line / word boundaries.  Trailing sentence-ending
-    punctuation is randomly stripped for a casual chat feel.
+    Forces single bubble for companion mode — the model keeps generating
+    [SPLIT] but real people almost never send two separate messages for
+    one thought.  Only splits when the total text exceeds the Telegram
+    per-message limit (4096 chars).
 
-    Short multi-bubble replies are merged back into a single bubble to
-    avoid the unnatural "prepared speech" feel of rapid two-paragraph sends.
+    Post-processing pipeline:
+    1. Merge all [SPLIT] segments into one
+    2. Truncate to ~50 chars at sentence boundary
+    3. Replace 确实 openers
+    4. Casualize commas for short messages
+    5. Strip trailing punctuation
     """
+    # Always merge into one bubble — ignore [SPLIT] markers
+    merged = text.replace(SPLIT_MARKER, "\n").strip()
+    if not merged:
+        return [text]
+
+    # Truncate the merged text to companion length limit
+    truncated = _truncate_bubble(merged, max_len=_COMPANION_MAX_BUBBLE_CHARS)
+
+    # If the truncated text is still over Telegram's limit, split
+    bubbles = _split_oversized(truncated)
+
+    # Post-processing pipeline
+    processed: list[str] = []
+    for b in bubbles:
+        b = _replace_queshi(b)
+        b = _casualize_commas(b)
+        b = _strip_trailing_punctuation(b)
+        if b:
+            processed.append(b)
+    return processed or [text]
+
+
+def split_into_bubbles_raw(text: str) -> list[str]:
+    """Split without companion post-processing.  Used by non-chat callers."""
     parts = text.split(SPLIT_MARKER)
     bubbles: list[str] = []
     for p in parts:
         stripped = p.strip()
         if stripped:
             bubbles.extend(_split_oversized(stripped))
-    # Merge short multi-bubbles back into one
-    if len(bubbles) >= 2:
-        total_len = sum(len(b) for b in bubbles)
-        if total_len <= _BUBBLE_MERGE_THRESHOLD:
-            bubbles = ["\n".join(bubbles)]
-    # Post-process for casual chat feel
-    bubbles = [_casualize_commas(b) for b in bubbles]
-    bubbles = [_strip_trailing_punctuation(b) for b in bubbles]
-    bubbles = [b for b in bubbles if b]
     return bubbles or [text]
 
 

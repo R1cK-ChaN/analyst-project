@@ -126,39 +126,45 @@ class TestSplitOversized(unittest.TestCase):
             self.assertLessEqual(len(chunk), 4096)
         self.assertEqual("".join(result), text)
 
-    def test_split_into_bubbles_enforces_limit(self) -> None:
-        from analyst.runtime.chat import SPLIT_MARKER, split_into_bubbles
-        # Two bubbles, one of which exceeds 4096
+    def test_split_raw_enforces_limit(self) -> None:
+        from analyst.runtime.chat import SPLIT_MARKER, split_into_bubbles_raw
         text = ("a" * 3000) + SPLIT_MARKER + ("b" * 5000)
-        result = split_into_bubbles(text)
+        result = split_into_bubbles_raw(text)
         for bubble in result:
             self.assertLessEqual(len(bubble), 4096)
-        self.assertGreaterEqual(len(result), 3)  # second part was sub-split
+        self.assertGreaterEqual(len(result), 3)
 
-    def test_split_into_bubbles_no_marker_long_text(self) -> None:
-        from analyst.runtime.chat import split_into_bubbles
+    def test_split_raw_no_marker_long_text(self) -> None:
+        from analyst.runtime.chat import split_into_bubbles_raw
         text = "x" * 5000
-        result = split_into_bubbles(text)
+        result = split_into_bubbles_raw(text)
         for bubble in result:
             self.assertLessEqual(len(bubble), 4096)
         self.assertEqual("".join(result), text)
 
-    def test_split_into_bubbles_short_merged(self) -> None:
-        """Short multi-bubble replies get merged into one."""
+    def test_split_into_bubbles_always_single(self) -> None:
+        """Companion mode: always one bubble regardless of [SPLIT]."""
         from analyst.runtime.chat import SPLIT_MARKER, split_into_bubbles
         text = "Hello" + SPLIT_MARKER + "World"
         result = split_into_bubbles(text)
-        # Short bubbles (total < 80 chars) are merged
         self.assertEqual(len(result), 1)
-        self.assertIn("Hello", result[0])
-        self.assertIn("World", result[0])
 
-    def test_split_into_bubbles_long_stays_split(self) -> None:
-        """Long multi-bubble replies stay split."""
-        from analyst.runtime.chat import SPLIT_MARKER, split_into_bubbles
-        text = ("a" * 50) + SPLIT_MARKER + ("b" * 50)
+    def test_split_into_bubbles_truncates(self) -> None:
+        """Companion mode: long text gets truncated."""
+        from analyst.runtime.chat import split_into_bubbles
+        text = "这是一段很长的话，" * 10  # ~90 chars
         result = split_into_bubbles(text)
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 1)
+        self.assertLessEqual(len(result[0]), 60)  # truncated
+
+    def test_split_into_bubbles_replaces_queshi(self) -> None:
+        """Companion mode: 确实 at start gets replaced."""
+        from analyst.runtime.chat import split_into_bubbles
+        import random
+        random.seed(42)
+        text = "确实，你说得对"
+        result = split_into_bubbles(text)
+        self.assertFalse(result[0].startswith("确实"))
 
 
 class TestTelegramFormatter(unittest.TestCase):
