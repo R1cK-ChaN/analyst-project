@@ -345,6 +345,7 @@ class CompanionLifestyleStateRecord:
 
 @dataclass(frozen=True)
 class CompanionDailyScheduleRecord:
+    client_id: str
     schedule_date: str
     timezone_name: str
     routine_state_snapshot: str

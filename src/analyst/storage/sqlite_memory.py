@@ -721,12 +721,14 @@ class SQLiteMemoryMixin:
     def get_companion_daily_schedule(
         self,
         *,
+        client_id: str = "",
         schedule_date: str,
         timezone_name: str = "Asia/Singapore",
     ) -> CompanionDailyScheduleRecord:
         with self._connection(commit=False) as connection:
             return self._get_companion_daily_schedule_in_connection(
                 connection,
+                client_id=client_id,
                 schedule_date=schedule_date,
                 timezone_name=timezone_name,
             )
@@ -734,6 +736,7 @@ class SQLiteMemoryMixin:
     def upsert_companion_daily_schedule(
         self,
         *,
+        client_id: str = "",
         schedule_date: str,
         timezone_name: str | None = None,
         routine_state_snapshot: str | None = None,
@@ -750,6 +753,7 @@ class SQLiteMemoryMixin:
         with self._connection(commit=True) as connection:
             return self._upsert_companion_daily_schedule_in_connection(
                 connection,
+                client_id=client_id,
                 schedule_date=schedule_date,
                 timezone_name=timezone_name,
                 routine_state_snapshot=routine_state_snapshot,
@@ -1774,11 +1778,13 @@ class SQLiteMemoryMixin:
         self,
         row: sqlite3.Row | None,
         *,
+        client_id: str = "",
         schedule_date: str,
         timezone_name: str,
     ) -> CompanionDailyScheduleRecord:
         if row is None:
             return CompanionDailyScheduleRecord(
+                client_id=client_id,
                 schedule_date=schedule_date,
                 timezone_name=timezone_name,
                 routine_state_snapshot="",
@@ -1795,6 +1801,7 @@ class SQLiteMemoryMixin:
                 updated_at="",
             )
         return CompanionDailyScheduleRecord(
+            client_id=row["client_id"],
             schedule_date=row["schedule_date"],
             timezone_name=row["timezone_name"],
             routine_state_snapshot=row["routine_state_snapshot"],
@@ -1856,19 +1863,21 @@ class SQLiteMemoryMixin:
         self,
         connection: sqlite3.Connection,
         *,
+        client_id: str = "",
         schedule_date: str,
         timezone_name: str,
     ) -> CompanionDailyScheduleRecord:
         row = connection.execute(
             """
             SELECT * FROM companion_daily_schedule
-            WHERE schedule_date = ?
+            WHERE client_id = ? AND schedule_date = ?
             LIMIT 1
             """,
-            (schedule_date,),
+            (client_id, schedule_date),
         ).fetchone()
         return self._row_to_companion_daily_schedule(
             row,
+            client_id=client_id,
             schedule_date=schedule_date,
             timezone_name=timezone_name,
         )
@@ -1958,6 +1967,7 @@ class SQLiteMemoryMixin:
         self,
         connection: sqlite3.Connection,
         *,
+        client_id: str = "",
         schedule_date: str,
         timezone_name: str | None = None,
         routine_state_snapshot: str | None = None,
@@ -1973,11 +1983,13 @@ class SQLiteMemoryMixin:
     ) -> CompanionDailyScheduleRecord:
         current = self._get_companion_daily_schedule_in_connection(
             connection,
+            client_id=client_id,
             schedule_date=schedule_date,
             timezone_name=timezone_name or "Asia/Singapore",
         )
         now_iso = utc_now().isoformat()
         next_record = CompanionDailyScheduleRecord(
+            client_id=client_id,
             schedule_date=schedule_date,
             timezone_name=current.timezone_name if timezone_name is None else timezone_name,
             routine_state_snapshot=current.routine_state_snapshot if routine_state_snapshot is None else routine_state_snapshot,
@@ -1996,6 +2008,7 @@ class SQLiteMemoryMixin:
         connection.execute(
             """
             INSERT INTO companion_daily_schedule (
+                client_id,
                 schedule_date,
                 timezone_name,
                 routine_state_snapshot,
@@ -2010,8 +2023,8 @@ class SQLiteMemoryMixin:
                 last_explicit_update_at,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(schedule_date) DO UPDATE SET
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(client_id, schedule_date) DO UPDATE SET
                 timezone_name = excluded.timezone_name,
                 routine_state_snapshot = excluded.routine_state_snapshot,
                 morning_plan = excluded.morning_plan,
@@ -2027,6 +2040,7 @@ class SQLiteMemoryMixin:
                 updated_at = excluded.updated_at
             """,
             (
+                next_record.client_id,
                 next_record.schedule_date,
                 next_record.timezone_name,
                 next_record.routine_state_snapshot,

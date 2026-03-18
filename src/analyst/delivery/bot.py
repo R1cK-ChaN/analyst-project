@@ -176,7 +176,7 @@ async def _send_companion_proactive_message(
         channel_id=state.channel,
         thread_id=state.thread_id,
         kind=kind,
-        companion_local_context=_companion_local_context(store, lifestyle_state, now),
+        companion_local_context=_companion_local_context(store, lifestyle_state, now, client_id=state.client_id),
     )
 
     # --- Image decision for proactive outreach ---
@@ -232,6 +232,7 @@ async def _send_companion_proactive_message(
     apply_companion_schedule_update(
         store,
         reply.schedule_update,
+        client_id=state.client_id,
         now=now,
         routine_state=str(getattr(lifestyle_state, "routine_state", "") or ""),
     )
@@ -1098,7 +1099,7 @@ def _make_message_handler(
             thread_id=thread_id,
             now=now_utc,
         )
-        companion_local_context = _companion_local_context(store, companion_lifestyle_state, now_utc)
+        companion_local_context = _companion_local_context(store, companion_lifestyle_state, now_utc, client_id=user_id)
 
         in_group = _is_group_chat(update)
         if not in_group:
@@ -1302,8 +1303,9 @@ def _make_message_handler(
                 bubble_text = bubble_text[: MAX_TELEGRAM_LENGTH - 1] + "\u2026"
             if i > 0:
                 await update.effective_chat.send_action(ChatAction.TYPING)
-                delay = min(2.0 + len(bubble_text) * 0.03, 8.0) + random.uniform(-1.0, 1.0)
-                await asyncio.sleep(max(delay, 2.0))
+                # Typing speed ~3-5 chars/sec for Chinese; add randomness
+                delay = min(3.0 + len(bubble_text) * 0.08, 15.0) + random.uniform(-1.5, 2.0)
+                await asyncio.sleep(max(delay, 3.0))
             reply_kwargs: dict[str, Any] = {"text": bubble_text}
             if bubble_entities:
                 reply_kwargs["entities"] = bubble_entities

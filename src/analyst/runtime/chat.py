@@ -527,6 +527,10 @@ def _split_oversized(text: str, limit: int = _MAX_BUBBLE_LENGTH) -> list[str]:
     return chunks or [text]
 
 
+_BUBBLE_MERGE_THRESHOLD = 80
+"""Merge multi-bubble replies back into one if total length is under this."""
+
+
 def split_into_bubbles(text: str) -> list[str]:
     """Split a reply on [SPLIT] markers into separate chat bubbles.
 
@@ -534,6 +538,9 @@ def split_into_bubbles(text: str) -> list[str]:
     message-length limit (4 096 chars).  Oversized segments are further
     split at paragraph / line / word boundaries.  Trailing sentence-ending
     punctuation is randomly stripped for a casual chat feel.
+
+    Short multi-bubble replies are merged back into a single bubble to
+    avoid the unnatural "prepared speech" feel of rapid two-paragraph sends.
     """
     parts = text.split(SPLIT_MARKER)
     bubbles: list[str] = []
@@ -541,6 +548,11 @@ def split_into_bubbles(text: str) -> list[str]:
         stripped = p.strip()
         if stripped:
             bubbles.extend(_split_oversized(stripped))
+    # Merge short multi-bubbles back into one
+    if len(bubbles) >= 2:
+        total_len = sum(len(b) for b in bubbles)
+        if total_len <= _BUBBLE_MERGE_THRESHOLD:
+            bubbles = ["\n".join(bubbles)]
     # Strip trailing punctuation for casual chat feel
     bubbles = [_strip_trailing_punctuation(b) for b in bubbles]
     bubbles = [b for b in bubbles if b]
@@ -860,17 +872,38 @@ def _starts_with_haha(text: str) -> bool:
     return stripped.startswith("哈哈") or stripped.startswith("haha") or stripped.startswith("哈 ")
 
 
+def _starts_with_queshi(text: str) -> bool:
+    """Check if text starts with '确实' (the lazy agreement filler)."""
+    stripped = text.lstrip()
+    return stripped.startswith("确实")
+
+
+def _is_pure_echo(text: str, prev_user_text: str) -> bool:
+    """Check if the assistant response is mostly echoing the user's words."""
+    if not prev_user_text or len(text) < 10:
+        return False
+    # If more than half of the user's key phrases appear in the response
+    user_phrases = [w for w in prev_user_text.split() if len(w) >= 2]
+    if not user_phrases:
+        return False
+    matches = sum(1 for p in user_phrases if p in text)
+    return matches >= len(user_phrases) * 0.5
+
+
 def _build_style_hints(history: list[dict[str, str]] | None) -> str:
     """Analyze recent assistant messages and build dynamic style correction hints."""
     if not history:
         return ""
-    # Collect last 3 assistant messages
+    # Collect last 3 assistant messages and last user message
     recent_assistant: list[str] = []
+    last_user: str = ""
     for msg in reversed(history or []):
         if msg["role"] == "assistant":
             recent_assistant.append(msg["content"])
             if len(recent_assistant) >= 3:
                 break
+        elif msg["role"] == "user" and not last_user:
+            last_user = msg["content"]
     if not recent_assistant:
         return ""
 
@@ -884,7 +917,21 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
     # 哈哈 opener dedup
     haha_count = sum(1 for text in recent_assistant if _starts_with_haha(text))
     if haha_count >= 1:
-        hints.append("这轮开头不要用哈哈，换个方式。")
+        hints.append("这轮开头不要用哈哈。")
+
+    # 确实 opener dedup — if ANY of the last 2 started with 确实, ban it
+    queshi_count = sum(1 for text in recent_assistant[:2] if _starts_with_queshi(text))
+    if queshi_count >= 1:
+        hints.append("这轮不要用确实开头，说点你自己的想法。")
+
+    # Anti-sycophancy: if recent messages are all agreement, push for personality
+    agreement_starters = ("确实", "对", "是的", "没错", "也是", "嗯确实", "对对")
+    agree_count = sum(
+        1 for text in recent_assistant[:3]
+        if any(text.lstrip().startswith(s) for s in agreement_starters)
+    )
+    if agree_count >= 2:
+        hints.append("你最近一直在附和，这轮说点自己的看法或经历，不要再同意了。")
 
     if not hints:
         return ""

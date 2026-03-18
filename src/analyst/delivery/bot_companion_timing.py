@@ -148,7 +148,7 @@ def _seen_no_rush_delay(text: str) -> tuple[float, bool] | None:
 
 def _first_reply_delay_seconds(text: str, *, has_image: bool = False) -> float:
     if has_image:
-        return random.uniform(2.0, 5.0)
+        return random.uniform(3.0, 8.0)
     stripped = text.strip()
     if not stripped:
         return 0.0
@@ -156,15 +156,15 @@ def _first_reply_delay_seconds(text: str, *, has_image: bool = False) -> float:
     if bucket == "seen_no_rush":
         # Deterministic short pause for plain callers; the probabilistic long
         # delay is handled via _seen_no_rush_delay at the call site.
-        return random.uniform(3.0, 8.0)
+        return random.uniform(5.0, 12.0)
     if bucket == "instant":
-        return random.uniform(3.0, 8.0)
+        return random.uniform(5.0, 12.0)
     if bucket == "emotional":
-        return random.uniform(8.0, 20.0)
+        return random.uniform(12.0, 30.0)
     if bucket == "deep_story":
-        return random.uniform(10.0, 25.0)
+        return random.uniform(15.0, 40.0)
     # normal
-    return random.uniform(5.0, 15.0)
+    return random.uniform(8.0, 20.0)
 
 def evaluate_relationship_checkin_kind(
     relationship: Any,
@@ -438,6 +438,8 @@ def _companion_local_context(
     store: SQLiteEngineStore,
     lifestyle_state: Any,
     now: datetime,
+    *,
+    client_id: str = "",
 ) -> str:
     local_now = _companion_local_now(now)
     day_type = "weekend" if _is_weekend(local_now) else "weekday"
@@ -451,6 +453,7 @@ def _companion_local_context(
     )
     schedule_context = build_companion_schedule_context(
         store,
+        client_id=client_id,
         now=now,
         routine_state=str(getattr(lifestyle_state, "routine_state", "") or ""),
     )

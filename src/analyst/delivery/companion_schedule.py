@@ -77,11 +77,13 @@ def _user_controls_companion_schedule(user_text: str) -> bool:
 def ensure_companion_daily_schedule(
     store: SQLiteEngineStore,
     *,
+    client_id: str = "",
     now: datetime | None = None,
     routine_state: str = "",
 ) -> CompanionDailyScheduleRecord:
     local_now = companion_schedule_local_now(now)
     return store.upsert_companion_daily_schedule(
+        client_id=client_id,
         schedule_date=local_now.date().isoformat(),
         timezone_name=COMPANION_SCHEDULE_TIMEZONE_NAME,
         routine_state_snapshot=routine_state or None,
@@ -91,12 +93,14 @@ def ensure_companion_daily_schedule(
 def build_companion_schedule_context(
     store: SQLiteEngineStore,
     *,
+    client_id: str = "",
     now: datetime | None = None,
     routine_state: str = "",
 ) -> str:
     local_now = companion_schedule_local_now(now)
     schedule = ensure_companion_daily_schedule(
         store,
+        client_id=client_id,
         now=local_now,
         routine_state=routine_state,
     )
@@ -122,6 +126,7 @@ def apply_companion_schedule_update(
     store: SQLiteEngineStore,
     update: CompanionScheduleUpdate,
     *,
+    client_id: str = "",
     now: datetime | None = None,
     routine_state: str = "",
     user_text: str = "",
@@ -129,6 +134,7 @@ def apply_companion_schedule_update(
     local_now = companion_schedule_local_now(now)
     schedule = ensure_companion_daily_schedule(
         store,
+        client_id=client_id,
         now=local_now,
         routine_state=routine_state,
     )
@@ -161,6 +167,7 @@ def apply_companion_schedule_update(
     if update.revision_note is not None:
         updates["revision_note"] = update.revision_note
     return store.upsert_companion_daily_schedule(
+        client_id=client_id,
         schedule_date=schedule.schedule_date,
         timezone_name=COMPANION_SCHEDULE_TIMEZONE_NAME,
         **updates,

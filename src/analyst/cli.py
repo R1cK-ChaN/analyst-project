@@ -444,7 +444,7 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
             thread_id=args.thread_id,
             message=user_text,
             history=history,
-            companion_local_context=build_companion_schedule_context(store),
+            companion_local_context=build_companion_schedule_context(store, client_id=args.client_id),
         )
         reply = run_companion_turn_for_input(
             conversation=conversation,

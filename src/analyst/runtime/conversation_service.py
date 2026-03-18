@@ -255,7 +255,10 @@ def persist_companion_turn_for_input(
     reminder_updater: ReminderUpdater = apply_companion_reminder_update,
     interaction_recorder: InteractionRecorder = record_chat_interaction,
 ) -> None:
-    schedule_kwargs: dict[str, Any] = {"user_text": conversation.current_user_text or conversation.message}
+    schedule_kwargs: dict[str, Any] = {
+        "client_id": conversation.user_id,
+        "user_text": conversation.current_user_text or conversation.message,
+    }
     if now is not None:
         schedule_kwargs["now"] = now
     if routine_state:

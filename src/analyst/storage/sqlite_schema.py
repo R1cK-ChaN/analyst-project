@@ -571,7 +571,8 @@ class SQLiteSchemaMixin:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS companion_daily_schedule (
-                    schedule_date TEXT PRIMARY KEY,
+                    client_id TEXT NOT NULL DEFAULT '',
+                    schedule_date TEXT NOT NULL,
                     timezone_name TEXT NOT NULL DEFAULT 'Asia/Singapore',
                     routine_state_snapshot TEXT NOT NULL DEFAULT '',
                     morning_plan TEXT NOT NULL DEFAULT '',
@@ -584,10 +585,59 @@ class SQLiteSchemaMixin:
                     revision_note TEXT NOT NULL DEFAULT '',
                     last_explicit_update_at TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (client_id, schedule_date)
                 )
                 """
             )
+            # --- Migration: add client_id to companion_daily_schedule ---
+            cols = [r[1] for r in connection.execute(
+                "PRAGMA table_info(companion_daily_schedule)"
+            ).fetchall()]
+            if "client_id" not in cols:
+                connection.execute(
+                    "ALTER TABLE companion_daily_schedule ADD COLUMN client_id TEXT NOT NULL DEFAULT ''"
+                )
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS companion_daily_schedule_new (
+                        client_id TEXT NOT NULL DEFAULT '',
+                        schedule_date TEXT NOT NULL,
+                        timezone_name TEXT NOT NULL DEFAULT 'Asia/Singapore',
+                        routine_state_snapshot TEXT NOT NULL DEFAULT '',
+                        morning_plan TEXT NOT NULL DEFAULT '',
+                        lunch_plan TEXT NOT NULL DEFAULT '',
+                        afternoon_plan TEXT NOT NULL DEFAULT '',
+                        dinner_plan TEXT NOT NULL DEFAULT '',
+                        evening_plan TEXT NOT NULL DEFAULT '',
+                        current_plan TEXT NOT NULL DEFAULT '',
+                        next_plan TEXT NOT NULL DEFAULT '',
+                        revision_note TEXT NOT NULL DEFAULT '',
+                        last_explicit_update_at TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY (client_id, schedule_date)
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO companion_daily_schedule_new
+                        (client_id, schedule_date, timezone_name, routine_state_snapshot,
+                         morning_plan, lunch_plan, afternoon_plan, dinner_plan,
+                         evening_plan, current_plan, next_plan, revision_note,
+                         last_explicit_update_at, created_at, updated_at)
+                    SELECT client_id, schedule_date, timezone_name, routine_state_snapshot,
+                           morning_plan, lunch_plan, afternoon_plan, dinner_plan,
+                           evening_plan, current_plan, next_plan, revision_note,
+                           last_explicit_update_at, created_at, updated_at
+                    FROM companion_daily_schedule
+                    """
+                )
+                connection.execute("DROP TABLE companion_daily_schedule")
+                connection.execute(
+                    "ALTER TABLE companion_daily_schedule_new RENAME TO companion_daily_schedule"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS companion_reminders (

@@ -143,11 +143,22 @@ class TestSplitOversized(unittest.TestCase):
             self.assertLessEqual(len(bubble), 4096)
         self.assertEqual("".join(result), text)
 
-    def test_split_into_bubbles_normal_case_unchanged(self) -> None:
+    def test_split_into_bubbles_short_merged(self) -> None:
+        """Short multi-bubble replies get merged into one."""
         from analyst.runtime.chat import SPLIT_MARKER, split_into_bubbles
         text = "Hello" + SPLIT_MARKER + "World"
         result = split_into_bubbles(text)
-        self.assertEqual(result, ["Hello", "World"])
+        # Short bubbles (total < 80 chars) are merged
+        self.assertEqual(len(result), 1)
+        self.assertIn("Hello", result[0])
+        self.assertIn("World", result[0])
+
+    def test_split_into_bubbles_long_stays_split(self) -> None:
+        """Long multi-bubble replies stay split."""
+        from analyst.runtime.chat import SPLIT_MARKER, split_into_bubbles
+        text = ("a" * 50) + SPLIT_MARKER + ("b" * 50)
+        result = split_into_bubbles(text)
+        self.assertEqual(len(result), 2)
 
 
 class TestTelegramFormatter(unittest.TestCase):
