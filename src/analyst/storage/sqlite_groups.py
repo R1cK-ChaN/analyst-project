@@ -143,21 +143,23 @@ class SQLiteGroupMixin:
         display_name: str = "",
         role_in_group: str = "",
         personality_notes: str = "",
+        username: str = "",
     ) -> None:
         now = utc_now().isoformat()
         with self._connection(commit=True) as connection:
             connection.execute(
                 """
-                INSERT INTO group_members (group_id, user_id, display_name, role_in_group, personality_notes, first_seen_at, last_seen_at, message_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                INSERT INTO group_members (group_id, user_id, display_name, role_in_group, personality_notes, first_seen_at, last_seen_at, message_count, username)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
                 ON CONFLICT(group_id, user_id) DO UPDATE SET
                     display_name = CASE WHEN excluded.display_name != '' THEN excluded.display_name ELSE group_members.display_name END,
                     role_in_group = CASE WHEN excluded.role_in_group != '' THEN excluded.role_in_group ELSE group_members.role_in_group END,
                     personality_notes = CASE WHEN excluded.personality_notes != '' THEN excluded.personality_notes ELSE group_members.personality_notes END,
+                    username = CASE WHEN excluded.username != '' THEN excluded.username ELSE group_members.username END,
                     last_seen_at = excluded.last_seen_at,
                     message_count = group_members.message_count + 1
                 """,
-                (group_id, user_id, display_name, role_in_group, personality_notes, now, now),
+                (group_id, user_id, display_name, role_in_group, personality_notes, now, now, username),
             )
 
     def list_group_members(self, group_id: str, *, limit: int = 20) -> list[GroupMemberRecord]:
@@ -177,6 +179,7 @@ class SQLiteGroupMixin:
                 first_seen_at=row["first_seen_at"],
                 last_seen_at=row["last_seen_at"],
                 message_count=row["message_count"],
+                username=row["username"],
             )
             for row in rows
         ]

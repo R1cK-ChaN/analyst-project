@@ -863,6 +863,7 @@ class SQLiteSchemaMixin:
                 table_name="group_members",
                 columns={
                     "relational_role": "TEXT NOT NULL DEFAULT ''",
+                    "username": "TEXT NOT NULL DEFAULT ''",
                 },
             )
             # -- Document storage: 5-table normalized schema --------------------

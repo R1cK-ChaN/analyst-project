@@ -1031,10 +1031,14 @@ def _make_message_handler(
                 display_name=sender_name,
                 content=history_user_text,
             )
+            _sender_username = ""
+            if update.effective_user and update.effective_user.username:
+                _sender_username = update.effective_user.username
             store.upsert_group_member(
                 group_id=group_id,
                 user_id=user_id,
                 display_name=sender_name,
+                username=_sender_username,
             )
             refresh_group_member_public_inference(store=store, group_id=group_id)
 
@@ -1042,11 +1046,13 @@ def _make_message_handler(
             from analyst.memory.relationship import detect_group_relational_roles
 
             _mentioned = _extract_mentioned_user_ids(update)
-            # Enrich mention lookup with group member display names
+            # Enrich mention lookup with group member display names and usernames
             _group_members = store.list_group_members(group_id, limit=30)
             for _gm in _group_members:
                 if _gm.display_name:
                     _mentioned.setdefault(_gm.display_name.strip().lower(), _gm.user_id)
+                if _gm.username:
+                    _mentioned.setdefault(_gm.username.strip().lower(), _gm.user_id)
 
             _role_update = detect_group_relational_roles(
                 history_user_text,

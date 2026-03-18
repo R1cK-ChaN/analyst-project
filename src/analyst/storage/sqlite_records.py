@@ -454,6 +454,7 @@ class GroupMemberRecord:
     first_seen_at: str
     last_seen_at: str
     message_count: int
+    username: str = ""
 
 @dataclass(frozen=True)
 class GroupMessageRecord:
