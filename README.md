@@ -2,7 +2,7 @@
 
 Standalone Analyst product scaffold. This folder now contains its own installable Python package under `src/analyst/` and can run without importing from the sibling `information/` repo.
 
-Current status on March 17, 2026:
+Current status on March 20, 2026:
 
 ### Engine & Data
 - the live WS1 engine is implemented under `src/analyst/engine/` with a dedicated macro-data client boundary under `src/analyst/macro_data/`
@@ -22,13 +22,18 @@ Current status on March 17, 2026:
 - a unified tools layer (`src/analyst/tools/`) provides `ToolKit` composable builder and 17 tool builders (6 live data scrapers + web search + web fetch + live calendar + article fetch + portfolio sync + image generation + optional live-photo generation + sandboxed Python analysis + analysis operators + artifact cache lookup + artifact cache store); all tools route live data operations through the `MacroDataClient` boundary, and a shared MCP bridge exposes a safe read-only subset to Claude Code native turns
 - an analysis operator algebra (`src/analyst/analysis/operators/`) provides 13 deterministic compute operators with typed I/O (Series/Dataset/Metric/Signal); operators run in host process via numpy, auto-cache results as artifacts, and are accessible through the unified `run_analysis` tool
 - an artifact cache (`src/analyst/analysis/`) provides deterministic identity (SHA-256), SQLite-backed storage with TTL
-- the research agent system prompt enforces a soft pipeline policy (PLAN → ACQUIRE → COMPUTE → INTERPRET) and tool priority (analysis operators > data tools > python sandbox)
 - a Docker-based sandbox module (`src/analyst/sandbox/`) provides isolated Python code execution for agent-driven data analysis with AST policy validation and ephemeral containers
+
+### Research Service Split
+- the research agent (20 tools, PLAN→ACQUIRE→COMPUTE→INTERPRET pipeline) has been fully extracted to a standalone sibling service at `/home/rick/Desktop/analyst/research-service` (GitHub: `R1cK-ChaN/research-service`)
+- the companion agent calls research via HTTP delegate (`src/analyst/research/delegate.py`) when `ANALYST_RESEARCH_BASE_URL` is set; without it the companion runs with image/photo tools only
+- the research service runs its own `PythonAgentLoop` (4 turns, 1400 tokens) with all 20 research tools, 13 analysis operators, and Docker sandbox
+- same tool name (`research_agent`), same parameters, same return shape — companion behavior is unchanged
 
 ### Runtime & Execution
 - the execution layer is split between product-owned host-loop orchestration and provider-native execution: OpenRouter/Anthropic models run through the Python tool-calling loop, while Claude Code can run as a native agent via the local MCP bridge
 - the layered conversation stack lives under `src/analyst/runtime/` (`chat.py`, `conversation_service.py`, `environment_adapter.py`, `platform/telegram.py`, and `capabilities.py`)
-- a round sub-agent layer is implemented for research, sales, and runtime-assisted content generation, with scoped memory, recursion prevention, and SQLite audit logging
+- a sub-agent layer is implemented for sales and runtime-assisted content generation, with scoped memory, recursion prevention, and SQLite audit logging; the research agent has been decoupled to a standalone HTTP service (see Research Service Split)
 - the portfolio package supports CSV import and live broker sync via an extensible adapter layer (IBKR, Longbridge 长桥, Tiger 老虎), with EWMA risk pipeline, VIX regime signals, and agent-actionable tools
 
 ### Delivery (Telegram Bot — 陈襄/Shawn Chan)
@@ -43,12 +48,14 @@ Current status on March 17, 2026:
 
 ### Infrastructure
 - the `ingestion/` package has been fully removed — all scraper code lives in `macro-data-service`; utility functions extracted to `src/analyst/utils.py`
-- the standalone HTTP communication path between `analyst-project` and `macro-data-service` is covered by an end-to-end integration test
+- the research agent has been fully removed — all research code lives in `research-service`; companion connects via `HttpResearchClient` in `src/analyst/research/`
+- the standalone HTTP communication paths to `macro-data-service` and `research-service` are covered by integration tests
 - oversized production modules reconstructed into feature-specific modules behind compatibility facades
 
 ### Test Coverage
-- 986 tests passing (`python3 -m pytest tests/ -q --ignore=tests/test_calendar_normalization.py --ignore=tests/test_document_storage.py --ignore=tests/test_macro_data_integration.py`)
+- 1429 tests passing (`python3 -m pytest tests/ -q --ignore=tests/test_calendar_normalization.py`)
 - key test suites: relationship state (85 tests), group intervention (56 tests), analysis operators (54 tests), sandbox (36 tests), artifact cache (24 tests), memory (90+ tests), Telegram bot wiring, companion check-ins, proactive outreach, image decision, injection defense
+- research-service has its own 26 tests at `/home/rick/Desktop/analyst/research-service/tests/`
 
 ### Pending
 - China-specific ingestion, live end-to-end provider verification, and WeCom delivery are still pending
@@ -65,7 +72,7 @@ analyst-project/
 │   └── Current_System_Migration_Plan.md
 │                                   Plan for evolving current agent/information code into Analyst product modules
 │
-├── tests/                          ← LOCAL VALIDATION (986 tests)
+├── tests/                          ← LOCAL VALIDATION (1429 tests)
 │   ├── test_relationship_state.py  Relationship state, intimacy, stage transitions, tendencies, nicknames (85 tests)
 │   ├── test_group_intervention.py  Autonomous group intervention triggers, penalties, re-evaluation (56 tests)
 │   ├── test_analysis_operators.py  13 operators, type system, registry, composability validation (54 tests)
@@ -82,9 +89,10 @@ analyst-project/
 │   ├── cli.py                      Local CLI entrypoint
 │   ├── contracts.py                Shared product contracts
 │   ├── env.py                      Multi-file .env resolver
+│   ├── research/                   Research service HTTP client + delegate tool (calls research-service)
 │   ├── macro_data/                 Macro-data client boundary + local compatibility service
 │   ├── information/                Local information layer using bundled demo data
-│   ├── agents/                     Agent role specs (companion, research) with prompt builders and tool assembly
+│   ├── agents/                     Agent role specs (companion) with prompt builders and tool assembly
 │   ├── runtime/                    Chat orchestration, conversation service, environment adapters, platform policy, capability registry
 │   ├── analysis/                   Artifact cache + 13 analysis operators with typed I/O + operator registry
 │   ├── tools/                      17 agent tools — ToolKit builder + live data scrapers + web search/fetch + calendar + portfolio sync + image gen + live photo + sandbox + analysis operators + artifact cache
@@ -177,10 +185,10 @@ The standalone package inside `analyst-project/` can be smoke-tested with:
 python3 -m unittest discover -s tests -v
 ```
 
-Full test suite (986 tests, scraper tests moved to macro-data-service):
+Full test suite (1429 tests; scraper tests in macro-data-service, research agent tests in research-service):
 
 ```bash
-python3 -m pytest tests/ -q --ignore=tests/test_calendar_normalization.py --ignore=tests/test_document_storage.py --ignore=tests/test_macro_data_integration.py
+python3 -m pytest tests/ -q --ignore=tests/test_calendar_normalization.py
 ```
 
 Quick local usage:
@@ -193,9 +201,15 @@ python3 -m venv .venv
 pip install -e .
 macro-data-service serve --host 127.0.0.1 --port 8765
 
-# In another shell, point analyst-project at the service
+# Standalone research service (decoupled research agent)
+cd /home/rick/Desktop/analyst/research-service
+OPENROUTER_API_KEY=<key> ANALYST_MACRO_DATA_BASE_URL=http://127.0.0.1:8765 \
+  python3 -m research.server --port 8766
+
+# In another shell, point analyst-project at both services
 export ANALYST_MACRO_DATA_BASE_URL=http://127.0.0.1:8765
 export ANALYST_MACRO_DATA_API_TOKEN=
+export ANALYST_RESEARCH_BASE_URL=http://127.0.0.1:8766
 
 # Demo commands (no API keys needed)
 PYTHONPATH=src python3 -m analyst regime
@@ -232,7 +246,7 @@ This validates the current standalone implementation:
 
 - bundled demo data + demo engine path
 - WS1 live engine: macro-data client boundary, calendar/news query surface, executor split (host loop vs Claude Code native path), backend namespace under `engine/backends/`, and provider adapters
-- extracted service communication: standalone `macro-data-service` HTTP API verified via `tests/test_macro_data_integration.py`
+- extracted service communication: standalone `macro-data-service` HTTP API + standalone `research-service` HTTP API
 - sub-agent execution: scoped tag extraction, memory retrieval with punctuation boundaries, SQLite audit logging
 - unified tools layer: ToolKit composable builder + 17 tools plus local MCP bridge for Claude Code
 - Docker-based sandbox: AST policy validation + ephemeral container execution for agent-driven Python analysis

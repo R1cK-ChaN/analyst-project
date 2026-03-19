@@ -1,6 +1,6 @@
 # Analyst — Implementation Status
 
-**Status date:** March 15, 2026 (updated after ingestion removal, macro-data decoupling completion, and sandbox module addition)
+**Status date:** March 20, 2026 (updated after research agent decoupled to standalone HTTP service)
 
 This document is the current implementation snapshot for `analyst-project/`.
 
@@ -26,7 +26,9 @@ The sibling `information/` repo is currently reference material only. The standa
 
 The macro-data stack now also has a standalone sibling codebase at `/home/rick/Desktop/analyst/macro-data-service`.
 
-`analyst-project` now prefers talking to that service over HTTP when `ANALYST_MACRO_DATA_BASE_URL` is set, and falls back to an in-process compatibility adapter only when the external endpoint is unset.
+The research agent has been extracted to a standalone sibling service at `/home/rick/Desktop/analyst/research-service` (GitHub: `R1cK-ChaN/research-service`). The companion calls it over HTTP via `ANALYST_RESEARCH_BASE_URL`.
+
+`analyst-project` now prefers talking to both services over HTTP when the respective `_BASE_URL` env vars are set.
 
 As of March 13, 2026, the largest production modules in storage, delivery, and ingestion were decomposed into feature-scoped implementation modules behind compatibility facades. Public imports and entrypoints stayed stable while internal responsibilities were split into smaller files.
 
@@ -57,6 +59,18 @@ Implemented and completed:
 - `tools/` and `storage/` have zero ingestion imports — all data operations route through `MacroDataClient`
 - `LocalMacroDataService` retains store-based operations (calendar, news, indicators from SQLite); live-fetch operations return a clear "requires macro-data-service" error
 - utility functions (`normalize_indicator_name`, `canonicalize_url`, `content_hash`) extracted to `src/analyst/utils.py`
+
+### Research service split
+
+Implemented and completed:
+
+- standalone sibling service repo at `/home/rick/Desktop/analyst/research-service` (GitHub: `R1cK-ChaN/research-service`)
+- research agent (20 tools, 13 operators, PLAN→ACQUIRE→COMPUTE→INTERPRET pipeline) fully extracted
+- `src/analyst/research/client.py` provides `HttpResearchClient` + `coerce_research_client()`
+- `src/analyst/research/delegate.py` provides `build_research_delegate_tool()` — creates a tool named `research_agent` with identical parameters and return shape
+- companion connects via `ANALYST_RESEARCH_BASE_URL` env var; without it, companion runs with image/photo tools only
+- **decoupling completed**: `agents/research/` directory and `agents/companion/spec_builder.py` removed from `analyst-project`
+- research service runs on port 8766 by default, requires `OPENROUTER_API_KEY` and `ANALYST_MACRO_DATA_BASE_URL`
 
 ### Shared contracts
 
