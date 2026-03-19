@@ -58,8 +58,8 @@ class PromptAssemblySelectionTest(unittest.TestCase):
     def test_companion_default_prompt_remains_small(self) -> None:
         self.assertLess(len(COMPANION_SYSTEM_PROMPT), 4500)
 
-    def test_companion_prompt_reflects_sunny_snt_companion_identity(self) -> None:
-        self.assertIn("sunny、cheerful", COMPANION_SYSTEM_PROMPT)
+    def test_companion_prompt_reflects_human_feel_snt_companion_identity(self) -> None:
+        self.assertIn("真实的人发消息", COMPANION_SYSTEM_PROMPT)
         self.assertIn("SnT team", COMPANION_SYSTEM_PROMPT)
         self.assertIn("Shawn Chan", COMPANION_SYSTEM_PROMPT)
         self.assertIn("不要主动聊金融", COMPANION_SYSTEM_PROMPT)
@@ -413,6 +413,33 @@ class StyleHintsTest(unittest.TestCase):
         self.assertIn("别升华", result)
         self.assertIn("别写成小作文", result)
 
+    def test_that_starter_suppression_when_recent_reply_repeats_that(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "assistant", "content": "那种东西看着就枯燥"},
+            {"role": "user", "content": "嗯"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("别再用那/那种起手", result)
+
+    def test_binary_question_suppression_when_recent_reply_probes(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "assistant", "content": "你是打算先做完 还是准备歇会儿？"},
+            {"role": "user", "content": "先做完"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("别连问", result)
+
+    def test_literary_style_contagion_suppression_when_user_is_writerly(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "user", "content": "那种恒温空间 连空气都是被管理过的"},
+            {"role": "assistant", "content": "这种地方待久了会烦"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("别跟着写文", result)
+
     def test_ends_with_question_chinese_mark(self) -> None:
         from analyst.runtime.chat import _ends_with_question
         self.assertTrue(_ends_with_question("你好吗？"))
@@ -458,6 +485,18 @@ class CompanionStyleContentTest(unittest.TestCase):
 
     def test_plain_fact_first_rule_present(self) -> None:
         self.assertIn("先接眼前这件小事", COMPANION_SYSTEM_PROMPT)
+
+    def test_no_that_starter_rule_present(self) -> None:
+        self.assertIn("少用\"那\"\"那种\"\"那会儿\"", COMPANION_SYSTEM_PROMPT)
+
+    def test_no_follow_up_question_rule_present(self) -> None:
+        self.assertIn("默认不要追问", COMPANION_SYSTEM_PROMPT)
+
+    def test_human_feel_priority_rule_present(self) -> None:
+        self.assertIn("human feeling > 好听 > 聪明 > 讨喜", COMPANION_SYSTEM_PROMPT)
+
+    def test_anti_style_contagion_rule_present(self) -> None:
+        self.assertIn("对方哪怕写得很文艺", COMPANION_SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":

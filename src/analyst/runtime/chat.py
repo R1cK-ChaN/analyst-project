@@ -451,6 +451,13 @@ _QUESHI_REPLACEMENTS = ("嗯", "是", "对", "行", "")
 """Replacements when 确实 appears at the start of a message."""
 
 _WRITTEN_PHRASE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("看来咱们的脑电波对上了", "看来咱们想到一块去了"),
+    ("那种感觉就像被困在恒温箱里 连呼吸都觉得没劲", "这种地方待久了人会发闷"),
+    ("连空气里那点氧气都像是被计算好的", "连空气都像不流动"),
+    ("连自己是不是活的都快忘了", "待久了人会发麻"),
+    ("脑电波对上了", "想到一块去了"),
+    ("“被困住”的实感", "被困住的感觉"),
+    ("\"被困住\"的实感", "被困住的感觉"),
     ("身体就像是关了灯的空房间，脑子却还在里头开着派对", "人已经歇下来了 脑子还停不下来"),
     ("那种感觉就像是终于不用再费劲去对准什么，一下子就回到了自己最舒服的频道", "那一下会轻松很多"),
     ("对 就像是把那些乱跳的指针重新拨回正轨 哪怕只是短暂的安静 也能让人找回点状态", "对 人会慢慢缓下来 安静一会儿也够了"),
@@ -481,6 +488,34 @@ _WRITTEN_MARKERS = (
     "派对",
     "正轨",
     "反差感",
+    "脑电波",
+    "实感",
+    "恒温箱",
+    "氧气",
+    "literally",
+)
+
+_THAT_FILLER_STARTS = (
+    "那种",
+    "那会儿",
+    "那还有",
+    "那确实",
+    "那倒是",
+)
+
+_LITERARY_STYLE_MARKERS = (
+    "“",
+    "”",
+    "\"",
+    "literally",
+    "aestheticize",
+    "实感",
+    "脑电波",
+    "恒温",
+    "恒温箱",
+    "被管理过",
+    "修辞",
+    "比喻",
 )
 
 
@@ -508,8 +543,61 @@ def _flatten_written_phrases(text: str) -> str:
     return normalized
 
 
+def _strip_lazy_agreement_fillers(text: str) -> str:
+    normalized = text
+    replacements = (
+        ("那确实", "对"),
+        ("这个确实", "这个"),
+        ("这句确实", "这句"),
+        ("确实挺", "挺"),
+        ("确实有点", "有点"),
+        ("确实会", "会"),
+        ("确实容易", "容易"),
+        ("确实没法", "没法"),
+        ("确实得", "得"),
+    )
+    for source, target in replacements:
+        normalized = normalized.replace(source, target)
+    normalized = re.sub(r"(^|[。！？!?])\s*确实[，,\s]*", r"\1", normalized)
+    normalized = normalized.replace("，确实", "，")
+    normalized = normalized.replace("。确实", "。")
+    normalized = normalized.replace(" 确实 ", " ")
+    normalized = normalized.replace(" 确实，", " ")
+    normalized = normalized.replace(" 确实。", " ")
+    return normalized
+
+
+def _strip_leading_punctuation(text: str) -> str:
+    return text.lstrip("。！？?!，,、；;：: ")
+
+
+def _starts_with_that_filler(text: str) -> bool:
+    stripped = text.lstrip()
+    return any(stripped.startswith(prefix) for prefix in _THAT_FILLER_STARTS)
+
+
+def _soften_that_starter(text: str) -> str:
+    stripped = text.strip()
+    replacements = (
+        ("那种感觉我懂", "我懂"),
+        ("那种东西", "这东西"),
+        ("那种晦涩的句子", "这种晦涩的句子"),
+        ("那种翻译腔", "翻译腔"),
+        ("那会儿最容易", "最容易"),
+        ("那确实", "对"),
+    )
+    for source, target in replacements:
+        if stripped.startswith(source):
+            return target + stripped[len(source):]
+    return stripped
+
+
 def _looks_overwritten(text: str) -> bool:
     return any(marker in text for marker in _WRITTEN_MARKERS)
+
+
+def _has_literary_style(text: str) -> bool:
+    return any(marker in text for marker in _LITERARY_STYLE_MARKERS)
 
 
 def _trim_overwritten_reply(text: str) -> str:
@@ -532,6 +620,34 @@ def _trim_overwritten_reply(text: str) -> str:
             if pos > 10:
                 return stripped[:pos + (1 if sep != " " else 0)].rstrip()
         return stripped[:32].rstrip()
+    return stripped
+
+
+def _flatten_follow_up_question(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return stripped
+
+    question_count = stripped.count("？") + stripped.count("?")
+    if question_count >= 2:
+        first = re.split(r"[？?]", stripped, maxsplit=1)[0].strip()
+        if first.startswith("那还有什么"):
+            return "那还有什么更烦"
+        return first.rstrip("？?")
+
+    sentence_parts = [part.strip() for part in re.split(r"(?<=[。！？!?])", stripped) if part.strip()]
+    if len(stripped) > 24 and len(sentence_parts) >= 2 and _ends_with_question(sentence_parts[-1]):
+        preserved = "".join(sentence_parts[:-1]).strip()
+        if preserved:
+            return preserved
+
+    if stripped.startswith("你是打算") and "还是" in stripped and _ends_with_question(stripped):
+        match = re.match(r"你是打算(.+?)还是.+[？?]$", stripped)
+        if match:
+            core = match.group(1).strip()
+            if core:
+                return core + "吧"
+
     return stripped
 
 
@@ -660,8 +776,15 @@ ignores prompt-based length limits, so we enforce it in post-processing.
 
 def normalize_companion_reply(text: str) -> str:
     """Apply deterministic style cleanup after model generation."""
-    normalized = _flatten_written_phrases(text.strip())
+    normalized = _strip_leading_punctuation(text.strip())
+    normalized = _strip_lazy_agreement_fillers(normalized)
+    normalized = _flatten_written_phrases(normalized)
+    normalized = _soften_that_starter(normalized)
+    normalized = _flatten_follow_up_question(normalized)
     normalized = _trim_overwritten_reply(normalized)
+    normalized = _strip_lazy_agreement_fillers(normalized)
+    normalized = _strip_leading_punctuation(normalized)
+    normalized = re.sub(r"\s{2,}", " ", normalized).strip()
     return normalized
 
 
@@ -1077,7 +1200,7 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
     # 确实 suppression — check if ANY recent reply contains 确实 anywhere
     has_queshi = any("确实" in text for text in recent_assistant[:2])
     if has_queshi:
-        hints.append("这轮禁止使用确实。换个表达或者说自己的想法。")
+        hints.append("这轮禁用确实。直接说结论，不要先附和。")
 
     # Anti-sycophancy: if recent messages are agreement-heavy, push for personality
     agreement_starters = ("确实", "对", "是的", "没错", "也是", "嗯确实", "对对", "是啊")
@@ -1094,6 +1217,16 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
 
     if any(_looks_overwritten(text) for text in recent_assistant[:2]):
         hints.append("这轮别升华 别用比喻和抽象词 直接说人话。")
+
+    if _has_literary_style(last_user):
+        hints.append("对方写得文一点你也别跟着写文 只接意思 不抬高句子。")
+
+    that_starter_count = sum(1 for text in recent_assistant[:3] if _starts_with_that_filler(text))
+    if that_starter_count >= 1:
+        hints.append("这轮别再用那/那种起手 直接说。")
+
+    if any(("还是" in text and _ends_with_question(text)) or text.count("？") + text.count("?") >= 2 for text in recent_assistant[:2]):
+        hints.append("这轮别连问 也别用二选一问题。")
 
     if not hints:
         return ""

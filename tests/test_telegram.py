@@ -171,6 +171,21 @@ class TestSplitOversized(unittest.TestCase):
         text = "看来这台笔记本现在也有了点故事感"
         self.assertEqual(_flatten_written_phrases(text), "看来这台笔记本现在也有了点痕迹")
 
+    def test_split_into_bubbles_strips_leading_punctuation(self) -> None:
+        from analyst.runtime.chat import split_into_bubbles
+        result = split_into_bubbles("。这种时候没人打扰 刚好能把手头那点杂事理清楚")
+        self.assertEqual(result[0], "这种时候没人打扰 刚好能把手头那点杂事理清楚")
+
+    def test_split_into_bubbles_strips_lazy_queshi_inside_sentence(self) -> None:
+        from analyst.runtime.chat import split_into_bubbles
+        result = split_into_bubbles("论文啊 那你先忙 这个确实没法急")
+        self.assertEqual(result[0], "论文啊 那你先忙 这个没法急")
+
+    def test_soften_that_starter(self) -> None:
+        from analyst.runtime.chat import split_into_bubbles
+        result = split_into_bubbles("那种东西看着就枯燥")
+        self.assertEqual(result[0], "这东西看着就枯燥")
+
     def test_trim_overwritten_reply_prefers_first_sentence(self) -> None:
         from analyst.runtime.chat import _trim_overwritten_reply
         text = "那我就当你原谅我刚才的口误了。这会儿外面风还没停 你要是没回去就多坐会儿。"
@@ -183,6 +198,23 @@ class TestSplitOversized(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertNotIn("频道", result[0])
         self.assertLessEqual(len(result[0]), 42)
+
+    def test_binary_follow_up_question_flattens(self) -> None:
+        from analyst.runtime.chat import split_into_bubbles
+        result = split_into_bubbles("你是打算趁这会儿把手头的事做完 还是准备偷个懒？")
+        self.assertEqual(result[0], "趁这会儿把手头的事做完吧")
+
+    def test_trailing_follow_up_question_is_dropped_when_point_already_made(self) -> None:
+        from analyst.runtime.chat import split_into_bubbles
+        text = "那确实 逻辑通了 读起来就不那么费劲了。你现在是在看什么方面的文献？"
+        result = split_into_bubbles(text)
+        self.assertEqual(result[0], "对 逻辑通了 读起来就不那么费劲了")
+
+    def test_split_into_bubbles_flattens_literary_writer_mode(self) -> None:
+        from analyst.runtime.chat import split_into_bubbles
+        text = "哈哈，看来咱们的脑电波对上了，这句确实挺有那种“被困住”的实感"
+        result = split_into_bubbles(text)
+        self.assertEqual(result[0], "哈哈，看来咱们想到一块去了，这句挺有那种被困住的感觉")
 
 
 class TestTelegramFormatter(unittest.TestCase):
