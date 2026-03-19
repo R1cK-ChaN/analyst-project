@@ -216,6 +216,18 @@ class TestSplitOversized(unittest.TestCase):
         result = split_into_bubbles(text)
         self.assertEqual(result[0], "哈哈，看来咱们想到一块去了，这句挺有那种被困住的感觉")
 
+    def test_split_into_bubbles_softens_managerial_advice(self) -> None:
+        from analyst.runtime.chat import split_into_bubbles
+        text = "写完赶紧去补一杯，换个心情"
+        result = split_into_bubbles(text)
+        self.assertEqual(result[0], "写完再去补一杯也行")
+
+    def test_split_into_bubbles_drops_directive_tail(self) -> None:
+        from analyst.runtime.chat import split_into_bubbles
+        text = "这个说法好，心态一下就平衡了。赶紧把这“迷你杯”解决掉，去换杯大的。"
+        result = split_into_bubbles(text)
+        self.assertEqual(result[0], "这个说法好")
+
 
 class TestTelegramFormatter(unittest.TestCase):
     def setUp(self) -> None:

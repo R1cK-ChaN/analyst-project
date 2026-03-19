@@ -451,6 +451,7 @@ _QUESHI_REPLACEMENTS = ("嗯", "是", "对", "行", "")
 """Replacements when 确实 appears at the start of a message."""
 
 _WRITTEN_PHRASE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("有时候那种意外的走向，比你一开始预设的要自然得多", "有时候跑偏了反而更顺"),
     ("看来咱们的脑电波对上了", "看来咱们想到一块去了"),
     ("那种感觉就像被困在恒温箱里 连呼吸都觉得没劲", "这种地方待久了人会发闷"),
     ("连空气里那点氧气都像是被计算好的", "连空气都像不流动"),
@@ -518,6 +519,29 @@ _LITERARY_STYLE_MARKERS = (
     "比喻",
 )
 
+_STEERING_MARKERS = (
+    "赶紧",
+    "记得",
+    "先别",
+    "干脆",
+    "去补一杯",
+    "去换",
+    "奖励自己",
+    "顺手买一杯",
+    "透透气",
+    "换个心情",
+)
+
+_WRAP_UP_MARKERS = (
+    "挺特别",
+    "挺扎心",
+    "自然得多",
+    "心态一下就",
+    "刚好把",
+    "反而能让人",
+    "这么想也顺",
+)
+
 
 def _replace_queshi(text: str) -> str:
     """Hard post-process: replace 确实 openers since the model ignores prompt rules."""
@@ -567,6 +591,29 @@ def _strip_lazy_agreement_fillers(text: str) -> str:
     return normalized
 
 
+def _flatten_managerial_phrases(text: str) -> str:
+    normalized = text
+    replacements = (
+        ("那得心疼死 笔记本还好吗？", "那也太亏了 笔记本没事吧"),
+        ("写完赶紧去补一杯，换个心情", "写完再去补一杯也行"),
+        ("写完赶紧去补一杯 换个心情", "写完再去补一杯也行"),
+        ("先别在那儿硬扛了 剩下的那点干脆倒掉 换个心情继续", "不想喝就别硬扛了"),
+        ("喝完这口就赶紧去换新的", "喝完这口再换新的也行"),
+        ("赶紧把这“迷你杯”解决掉，去换杯大的", "这杯喝完再换杯大的也行"),
+        ("赶紧把这“迷你杯”解决掉 去换杯大的", "这杯喝完再换杯大的也行"),
+        ("记得奖励自己喝杯冰的", "写完喝杯冰的也不错"),
+        ("刚好把刚才那杯的遗憾补上", "也算补回来一点"),
+        ("外面那种闷热感反而能让人清醒", "出去走一圈人会清醒点"),
+        ("心态一下就平衡了", "这么想也顺一点"),
+        ("这名字听起来挺特别的", "这名字挺少见"),
+        ("这话说得挺扎心", "这话挺准"),
+        ("比你一开始预设的要自然得多", "有时候反而更顺"),
+    )
+    for source, target in replacements:
+        normalized = normalized.replace(source, target)
+    return normalized
+
+
 def _strip_leading_punctuation(text: str) -> str:
     return text.lstrip("。！？?!，,、；;：: ")
 
@@ -600,6 +647,14 @@ def _has_literary_style(text: str) -> bool:
     return any(marker in text for marker in _LITERARY_STYLE_MARKERS)
 
 
+def _has_steering_tone(text: str) -> bool:
+    return any(marker in text for marker in _STEERING_MARKERS)
+
+
+def _has_wrap_up_tone(text: str) -> bool:
+    return any(marker in text for marker in _WRAP_UP_MARKERS)
+
+
 def _trim_overwritten_reply(text: str) -> str:
     """Trim trailing reflection so replies stay like chat, not polished prose."""
     stripped = text.strip()
@@ -620,6 +675,25 @@ def _trim_overwritten_reply(text: str) -> str:
             if pos > 10:
                 return stripped[:pos + (1 if sep != " " else 0)].rstrip()
         return stripped[:32].rstrip()
+    return stripped
+
+
+def _trim_managerial_tail(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return stripped
+
+    sentence_parts = [part.strip() for part in re.split(r"(?<=[。！？!?])", stripped) if part.strip()]
+    if len(sentence_parts) >= 2 and (_has_steering_tone(sentence_parts[-1]) or _has_wrap_up_tone(sentence_parts[-1])):
+        preserved = "".join(sentence_parts[:-1]).strip()
+        if preserved:
+            return preserved
+
+    comma_parts = [part.strip() for part in re.split(r"[，,]", stripped) if part.strip()]
+    if len(comma_parts) >= 2 and (_has_steering_tone(comma_parts[-1]) or _has_wrap_up_tone(comma_parts[-1])):
+        trimmed = "，".join(comma_parts[:-1]).strip()
+        if trimmed:
+            return trimmed
     return stripped
 
 
@@ -779,9 +853,11 @@ def normalize_companion_reply(text: str) -> str:
     normalized = _strip_leading_punctuation(text.strip())
     normalized = _strip_lazy_agreement_fillers(normalized)
     normalized = _flatten_written_phrases(normalized)
+    normalized = _flatten_managerial_phrases(normalized)
     normalized = _soften_that_starter(normalized)
     normalized = _flatten_follow_up_question(normalized)
     normalized = _trim_overwritten_reply(normalized)
+    normalized = _trim_managerial_tail(normalized)
     normalized = _strip_lazy_agreement_fillers(normalized)
     normalized = _strip_leading_punctuation(normalized)
     normalized = re.sub(r"\s{2,}", " ", normalized).strip()
@@ -1220,6 +1296,12 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
 
     if _has_literary_style(last_user):
         hints.append("对方写得文一点你也别跟着写文 只接意思 不抬高句子。")
+
+    if any(_has_steering_tone(text) for text in recent_assistant[:2]):
+        hints.append("这轮别安排对方怎么做 别像在带节奏。")
+
+    if any(_has_wrap_up_tone(text) for text in recent_assistant[:2]):
+        hints.append("这轮别补漂亮收尾句 平一点就停。")
 
     that_starter_count = sum(1 for text in recent_assistant[:3] if _starts_with_that_filler(text))
     if that_starter_count >= 1:

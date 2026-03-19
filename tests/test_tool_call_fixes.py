@@ -440,6 +440,24 @@ class StyleHintsTest(unittest.TestCase):
         result = _build_style_hints(history)
         self.assertIn("别跟着写文", result)
 
+    def test_steering_suppression_when_recent_reply_is_too_managerial(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "assistant", "content": "写完赶紧去补一杯，换个心情"},
+            {"role": "user", "content": "嗯"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("别安排对方怎么做", result)
+
+    def test_wrap_up_suppression_when_recent_reply_lands_too_neatly(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "assistant", "content": "这名字听起来挺特别的"},
+            {"role": "user", "content": "嗯"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("别补漂亮收尾句", result)
+
     def test_ends_with_question_chinese_mark(self) -> None:
         from analyst.runtime.chat import _ends_with_question
         self.assertTrue(_ends_with_question("你好吗？"))
@@ -497,6 +515,15 @@ class CompanionStyleContentTest(unittest.TestCase):
 
     def test_anti_style_contagion_rule_present(self) -> None:
         self.assertIn("对方哪怕写得很文艺", COMPANION_SYSTEM_PROMPT)
+
+    def test_peer_not_calibrated_companion_rule_present(self) -> None:
+        self.assertIn("更像同辈", COMPANION_SYSTEM_PROMPT)
+
+    def test_no_unsolicited_advice_rule_present(self) -> None:
+        self.assertIn("能不出主意就不出主意", COMPANION_SYSTEM_PROMPT)
+
+    def test_no_neat_wrap_up_rule_present(self) -> None:
+        self.assertIn("不要为了把这一轮收好看", COMPANION_SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":
