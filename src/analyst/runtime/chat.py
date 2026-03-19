@@ -1334,7 +1334,7 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
 _CANDIDATE_SLOT_HINTS: tuple[tuple[str, str], ...] = (
     (
         "A",
-        "这条候选只接眼前事实 用最少的字回 不做情绪管理 不主动总结。",
+        "这条候选是低能量位：用最少的字回应，可以只回一个语气词、半句话或很短的观察。不追问、不总结、不展开自己的事。",
     ),
     (
         "B",
@@ -1384,6 +1384,19 @@ _METAPHOR_PATTERNS = (
     r"往外蹦",
     r"红绿数字",
     r"冷不丁的一行字",
+)
+_EMOTIONAL_LABEL_PATTERNS = (
+    r"焦虑感",
+    r"焦虑",
+    r"紧绷",
+    r"更磨人",
+    r"磨人",
+    r"压力很大",
+    r"压力",
+    r"状态好一点",
+    r"情绪",
+    r"低落",
+    r"崩溃",
 )
 
 
@@ -1437,6 +1450,19 @@ def _implies_false_familiarity(text: str) -> bool:
 
 def _metaphor_marker_count(text: str) -> int:
     return sum(1 for pattern in _METAPHOR_PATTERNS if re.search(pattern, text))
+
+
+def _emotional_label_marker_count(text: str, user_text: str) -> int:
+    lowered_user = user_text.lower()
+    count = 0
+    for pattern in _EMOTIONAL_LABEL_PATTERNS:
+        if not re.search(pattern, text):
+            continue
+        literal = pattern.replace("\\", "")
+        if literal and literal.lower() in lowered_user:
+            continue
+        count += 1
+    return count
 
 
 def _looks_like_live_research_request(user_text: str) -> bool:
@@ -1585,6 +1611,7 @@ def _score_candidate_reply(
     disagreement_style = _extract_context_value(companion_local_context, "engagement_disagreement")
     self_topic_style = _extract_context_value(companion_local_context, "engagement_self_topic")
     callback_style = _extract_context_value(companion_local_context, "engagement_callback_style")
+    inference_scope = _extract_context_value(companion_local_context, "engagement_inference_scope")
     shared_history_gate = _extract_context_value(companion_local_context, "shared_history_gate")
     relationship_stage = _extract_relationship_stage_hint(memory_context, companion_local_context)
 
@@ -1657,6 +1684,14 @@ def _score_candidate_reply(
         score += 0.8
         reasons.append("callback")
 
+    emotional_labels = _emotional_label_marker_count(text, user_text)
+    if emotional_labels >= 2:
+        score -= 2.0
+        reasons.append("emotional_labeling")
+    elif emotional_labels == 1:
+        score -= 1.0
+        reasons.append("emotional_labeling")
+
     metaphor_markers = _metaphor_marker_count(text)
     if metaphor_markers >= 2:
         score -= 2.0
@@ -1664,6 +1699,12 @@ def _score_candidate_reply(
     elif metaphor_markers == 1 and _looks_overwritten(text):
         score -= 1.2
         reasons.append("metaphor_polished")
+
+    if inference_scope == "own_or_stated_only" and any(
+        pattern in text for pattern in ("你那边", "跟我一样", "你家那边", "你应该也是")
+    ):
+        score -= 1.2
+        reasons.append("projection")
 
     return score, tuple(reasons)
 
@@ -1709,15 +1750,20 @@ def _build_candidate_telemetry(
 def _select_best_candidate(
     candidates: list[ReplyCandidate],
     *,
+    companion_local_context: str,
     judge: CandidateJudge | None = None,
 ) -> ReplyCandidate:
     if judge is not None:
         judged_index = judge(candidates)
         if isinstance(judged_index, int) and 0 <= judged_index < len(candidates):
             return candidates[judged_index]
+    low_energy_style = _extract_context_value(companion_local_context, "engagement_low_energy")
+    preferred_order = {"B": 0, "C": 1, "A": 2}
+    if low_energy_style == "allowed":
+        preferred_order = {"A": 0, "B": 1, "C": 2}
     return max(
         candidates,
-        key=lambda candidate: (candidate.score, candidate.slot_id == "B", candidate.slot_id == "C"),
+        key=lambda candidate: (candidate.score, -preferred_order.get(candidate.slot_id, 99)),
     )
 
 
@@ -1829,7 +1875,10 @@ def generate_chat_reply(
                     reasons=reasons,
                 )
             )
-        selected = _select_best_candidate(candidates)
+        selected = _select_best_candidate(
+            candidates,
+            companion_local_context=effective_local_context,
+        )
         candidate_telemetry = _build_candidate_telemetry(candidates, selected=selected)
         selected_reply = ChatReply(
             text=selected.reply.text,

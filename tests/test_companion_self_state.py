@@ -166,6 +166,7 @@ class CompanionSelfStateTest(unittest.TestCase):
 
         self.assertEqual(callbacks, ())
         self.assertIn("shared_history_gate: locked", context)
+        self.assertIn("engagement_inference_scope: own_or_stated_only", context)
 
 
 class CandidateSelectionTest(unittest.TestCase):
@@ -249,6 +250,60 @@ class CandidateSelectionTest(unittest.TestCase):
         )
 
         self.assertEqual(reply.text, "看久了人会木")
+
+    def test_generate_chat_reply_penalizes_emotional_labeling(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "这种循环最烦<profile_update>{}</profile_update>",
+                "B": "写论文的那种焦虑感确实比加班更磨人<profile_update>{}</profile_update>",
+                "C": "先停一下脑子会松点<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "论文怎么改都差一点",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: acquaintance",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: soft\n"
+                "engagement_disagreement: soft\n"
+                "engagement_low_energy: avoid\n"
+                "engagement_inference_scope: own_or_stated_only"
+            ),
+        )
+
+        self.assertNotEqual(reply.text, "写论文的那种焦虑感确实比加班更磨人")
+
+    def test_generate_chat_reply_prefers_slot_a_for_low_energy_tie(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "嗯<profile_update>{}</profile_update>",
+                "B": "我刚到家<profile_update>{}</profile_update>",
+                "C": "先歇会儿<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "ok",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: acquaintance",
+            companion_local_context=(
+                "engagement_reply_length: terse\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: none\n"
+                "engagement_disagreement: soft\n"
+                "engagement_low_energy: allowed\n"
+                "engagement_inference_scope: own_or_stated_only"
+            ),
+        )
+
+        self.assertEqual(reply.text, "嗯")
 
     def test_generate_chat_reply_records_candidate_telemetry(self) -> None:
         executor = _MappedDummyExecutor(

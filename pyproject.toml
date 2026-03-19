@@ -35,6 +35,7 @@ dependencies = [
 analyst-cli = "analyst.cli:main"
 analyst-macro-data = "analyst.macro_data.cli:main"
 analyst-relay = "analyst.delivery.relay:main"
+analyst-relay-eval = "analyst.delivery.relay_eval:main"
 analyst-telegram = "analyst.delivery.bot:main"
 
 [tool.setuptools]

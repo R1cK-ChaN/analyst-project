@@ -72,6 +72,7 @@ class CompanionEngagementPolicy:
     self_topic_style: str
     disagreement_style: str
     callback_style: str
+    inference_scope: str
     allow_low_energy: bool
     reasons: tuple[str, ...]
 
@@ -285,6 +286,7 @@ def build_companion_turn_context_enrichment(
         self_state=self_state,
         callbacks=callbacks,
         local_now=local_now,
+        relationship_stage=relationship_stage,
     )
     store.upsert_companion_self_state(
         client_id=client_id,
@@ -307,6 +309,7 @@ def build_companion_turn_context_enrichment(
         f"engagement_disagreement: {policy.disagreement_style}",
         f"engagement_low_energy: {'allowed' if policy.allow_low_energy else 'avoid'}",
         f"engagement_callback_style: {policy.callback_style}",
+        f"engagement_inference_scope: {policy.inference_scope}",
         f"engagement_reasons: {'; '.join(policy.reasons) if policy.reasons else 'none'}",
         f"callback_same_fact_limit: once",
         f"callback_session_limit: {CALLBACK_MAX_PER_SESSION}",
@@ -345,6 +348,7 @@ def build_proactive_companion_context_enrichment(
         "engagement_disagreement: soft",
         "engagement_low_energy: avoid",
         "engagement_callback_style: soft",
+        "engagement_inference_scope: own_or_stated_only",
     ]
     return "\n".join(lines), self_state
 
@@ -490,8 +494,10 @@ def _derive_engagement_policy(
     self_state: CompanionSelfStateRecord,
     callbacks: tuple[str, ...],
     local_now: datetime,
+    relationship_stage: str,
 ) -> CompanionEngagementPolicy:
     reasons: list[str] = []
+    inference_scope = "own_or_stated_only" if relationship_stage in {"stranger", "acquaintance"} else "light"
     if _needs_emotional_priority(user_text=user_text, memory_context=memory_context):
         reasons.append("user_emotion_priority")
         return CompanionEngagementPolicy(
@@ -501,6 +507,7 @@ def _derive_engagement_policy(
             self_topic_style="none",
             disagreement_style="avoid",
             callback_style="soft" if callbacks else "none",
+            inference_scope=inference_scope,
             allow_low_energy=False,
             reasons=tuple(reasons),
         )
@@ -523,6 +530,7 @@ def _derive_engagement_policy(
             self_topic_style="none",
             disagreement_style="soft",
             callback_style="none",
+            inference_scope=inference_scope,
             allow_low_energy=True,
             reasons=tuple(reasons),
         )
@@ -534,6 +542,7 @@ def _derive_engagement_policy(
             self_topic_style="none",
             disagreement_style="soft",
             callback_style="none",
+            inference_scope=inference_scope,
             allow_low_energy=True,
             reasons=tuple(reasons),
         )
@@ -545,6 +554,7 @@ def _derive_engagement_policy(
             self_topic_style="soft",
             disagreement_style="medium",
             callback_style="soft" if callbacks else "none",
+            inference_scope=inference_scope,
             allow_low_energy=False,
             reasons=tuple(reasons),
         )
@@ -555,6 +565,7 @@ def _derive_engagement_policy(
         self_topic_style="soft",
         disagreement_style="soft",
         callback_style="soft" if callbacks else "none",
+        inference_scope=inference_scope,
         allow_low_energy=False,
         reasons=tuple(reasons or ["default"]),
     )
