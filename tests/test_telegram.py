@@ -166,6 +166,24 @@ class TestSplitOversized(unittest.TestCase):
         result = split_into_bubbles(text)
         self.assertFalse(result[0].startswith("确实"))
 
+    def test_flatten_written_phrases(self) -> None:
+        from analyst.runtime.chat import _flatten_written_phrases
+        text = "看来这台笔记本现在也有了点故事感"
+        self.assertEqual(_flatten_written_phrases(text), "看来这台笔记本现在也有了点痕迹")
+
+    def test_trim_overwritten_reply_prefers_first_sentence(self) -> None:
+        from analyst.runtime.chat import _trim_overwritten_reply
+        text = "那我就当你原谅我刚才的口误了。这会儿外面风还没停 你要是没回去就多坐会儿。"
+        self.assertEqual(_trim_overwritten_reply(text), "那我就当你原谅我刚才的口误了。")
+
+    def test_split_into_bubbles_trims_written_tail(self) -> None:
+        from analyst.runtime.chat import split_into_bubbles
+        text = "那种感觉就像是终于不用再费劲去对准什么，一下子就回到了自己最舒服的频道"
+        result = split_into_bubbles(text)
+        self.assertEqual(len(result), 1)
+        self.assertNotIn("频道", result[0])
+        self.assertLessEqual(len(result[0]), 42)
+
 
 class TestTelegramFormatter(unittest.TestCase):
     def setUp(self) -> None:

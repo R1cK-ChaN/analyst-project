@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum
@@ -449,6 +450,39 @@ VIDEO_PLACEHOLDER = "[VIDEO]"
 _QUESHI_REPLACEMENTS = ("嗯", "是", "对", "行", "")
 """Replacements when 确实 appears at the start of a message."""
 
+_WRITTEN_PHRASE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("身体就像是关了灯的空房间，脑子却还在里头开着派对", "人已经歇下来了 脑子还停不下来"),
+    ("那种感觉就像是终于不用再费劲去对准什么，一下子就回到了自己最舒服的频道", "那一下会轻松很多"),
+    ("对 就像是把那些乱跳的指针重新拨回正轨 哪怕只是短暂的安静 也能让人找回点状态", "对 人会慢慢缓下来 安静一会儿也够了"),
+    ("感觉整个人都像被重新校准了一样", "人会松一点"),
+    ("那种感觉就像是终于不用再费劲去对准什么", "那一下会轻松很多"),
+    ("对 就像是把状态慢慢拉回来", "对 人会慢慢缓下来"),
+    ("哪怕只是短暂的安静 也能让人找回点状态", "安静一会儿也够了"),
+    ("把那些乱跳的指针重新拨回正轨", "把状态慢慢拉回来"),
+    ("回到了自己最舒服的频道", "回到自己最舒服的状态"),
+    ("最舒服的频道", "最舒服的状态"),
+    ("“故事感”", "痕迹"),
+    ("故事感", "痕迹"),
+    ("做了个批注", "留了个记号"),
+    ("第一手注脚", "第一个记号"),
+    ("反差感", "感觉"),
+    ("重新校准", "缓过来"),
+)
+
+_WRITTEN_MARKERS = (
+    "就像",
+    "像是",
+    "仿佛",
+    "故事感",
+    "频道",
+    "校准",
+    "批注",
+    "注脚",
+    "派对",
+    "正轨",
+    "反差感",
+)
+
 
 def _replace_queshi(text: str) -> str:
     """Hard post-process: replace 确实 openers since the model ignores prompt rules."""
@@ -464,6 +498,41 @@ def _replace_queshi(text: str) -> str:
         return replacement
     # Empty replacement — just return the rest
     return rest.capitalize() if rest else text
+
+
+def _flatten_written_phrases(text: str) -> str:
+    """Replace a few high-signal overwritten stock phrases with plainer chat wording."""
+    normalized = text
+    for source, target in _WRITTEN_PHRASE_REPLACEMENTS:
+        normalized = normalized.replace(source, target)
+    return normalized
+
+
+def _looks_overwritten(text: str) -> bool:
+    return any(marker in text for marker in _WRITTEN_MARKERS)
+
+
+def _trim_overwritten_reply(text: str) -> str:
+    """Trim trailing reflection so replies stay like chat, not polished prose."""
+    stripped = text.strip()
+    if len(stripped) <= 26:
+        return stripped
+
+    sentence_parts = [part.strip() for part in re.split(r"(?<=[。！？!?])", stripped) if part.strip()]
+    if len(sentence_parts) >= 2 and len(stripped) > 34:
+        return sentence_parts[0]
+
+    comma_parts = [part.strip() for part in re.split(r"[，,]", stripped) if part.strip()]
+    if len(comma_parts) >= 3 and len(stripped) > 34:
+        return "，".join(comma_parts[:2])
+
+    if _looks_overwritten(stripped) and len(stripped) > 32:
+        for sep in ("。", "！", "？", "，", " "):
+            pos = stripped[:32].rfind(sep)
+            if pos > 10:
+                return stripped[:pos + (1 if sep != " " else 0)].rstrip()
+        return stripped[:32].rstrip()
+    return stripped
 
 
 def _truncate_bubble(text: str, max_len: int = 50) -> str:
@@ -583,10 +652,17 @@ def _split_oversized(text: str, limit: int = _MAX_BUBBLE_LENGTH) -> list[str]:
     return chunks or [text]
 
 
-_COMPANION_MAX_BUBBLE_CHARS = 50
+_COMPANION_MAX_BUBBLE_CHARS = 42
 """Hard cap for companion chat bubble length.  The model consistently
 ignores prompt-based length limits, so we enforce it in post-processing.
-50 chars ≈ 2 short Chinese sentences — feels like a real chat message."""
+42 chars keeps replies closer to natural one-thought texting."""
+
+
+def normalize_companion_reply(text: str) -> str:
+    """Apply deterministic style cleanup after model generation."""
+    normalized = _flatten_written_phrases(text.strip())
+    normalized = _trim_overwritten_reply(normalized)
+    return normalized
 
 
 def split_into_bubbles(text: str) -> list[str]:
@@ -606,6 +682,7 @@ def split_into_bubbles(text: str) -> list[str]:
     """
     # Always merge into one bubble — ignore [SPLIT] markers
     merged = text.replace(SPLIT_MARKER, "\n").strip()
+    merged = normalize_companion_reply(merged)
     if not merged:
         return [text]
 
@@ -1011,6 +1088,13 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
     if agree_count >= 2:
         hints.append("你最近一直在附和 这轮说自己的经历或不同看法。")
 
+    recent_lengths = [len(text) for text in recent_assistant[:2]]
+    if recent_lengths and (sum(recent_lengths) / len(recent_lengths) >= 28 or max(recent_lengths) >= 36):
+        hints.append("这轮更短一点 只保留一个重点 别写成小作文。")
+
+    if any(_looks_overwritten(text) for text in recent_assistant[:2]):
+        hints.append("这轮别升华 别用比喻和抽象词 直接说人话。")
+
     if not hints:
         return ""
     return "[STYLE CORRECTION] " + " ".join(hints)
@@ -1093,6 +1177,7 @@ def generate_chat_reply(
     schedule_update = extract_embedded_schedule_update(result.final_text)
     contains_image_placeholder = IMAGE_PLACEHOLDER in response_text
     response_text = normalize_user_reply(response_text)
+    response_text = normalize_companion_reply(response_text)
     if not response_text:
         response_text = "嗯"
     media = _extract_media(result.messages)
@@ -1227,6 +1312,7 @@ def generate_proactive_companion_reply(
     reminder_update = extract_embedded_reminder_update(result.final_text)
     schedule_update = extract_embedded_schedule_update(result.final_text)
     response_text = normalize_user_reply(response_text)
+    response_text = normalize_companion_reply(response_text)
     if not response_text:
         response_text = "在想你今天过得怎么样。"
     media = _extract_media(result.messages) if active_tools else []

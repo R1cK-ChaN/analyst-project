@@ -403,6 +403,16 @@ class StyleHintsTest(unittest.TestCase):
         self.assertIn("不要用问句结尾", result)
         self.assertIn("不要用哈哈", result)
 
+    def test_written_style_suppression_when_recent_reply_is_too_polished(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "assistant", "content": "那种感觉就像是终于不用再费劲去对准什么，一下子就回到了自己最舒服的频道"},
+            {"role": "user", "content": "嗯"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("别升华", result)
+        self.assertIn("别写成小作文", result)
+
     def test_ends_with_question_chinese_mark(self) -> None:
         from analyst.runtime.chat import _ends_with_question
         self.assertTrue(_ends_with_question("你好吗？"))
@@ -445,6 +455,9 @@ class CompanionStyleContentTest(unittest.TestCase):
 
     def test_anti_metaphor_rule_present(self) -> None:
         self.assertIn("不要用比喻", COMPANION_SYSTEM_PROMPT)
+
+    def test_plain_fact_first_rule_present(self) -> None:
+        self.assertIn("先接眼前这件小事", COMPANION_SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":

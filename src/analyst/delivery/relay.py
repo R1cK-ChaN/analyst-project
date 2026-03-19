@@ -18,6 +18,7 @@ import asyncio
 import logging
 import random
 import sys
+from typing import Any
 
 from telethon import TelegramClient, events
 
@@ -47,6 +48,19 @@ def _resolve_peer(raw: str) -> int | str:
         return int(raw)
     except ValueError:
         return raw
+
+
+async def _forward_message(client: TelegramClient, target: Any, message: Any) -> bool:
+    """Forward text/media while preserving captions on media messages."""
+    caption = message.text or None
+    if message.media:
+        kwargs = {"caption": caption} if caption else {}
+        await client.send_file(target, message.media, **kwargs)
+        return True
+    if caption:
+        await client.send_message(target, caption)
+        return True
+    return False
 
 
 async def run_relay(
@@ -98,11 +112,8 @@ async def run_relay(
 
         await asyncio.sleep(random.uniform(delay_min, delay_max))
 
-        if event.message.text:
-            await client.send_message(target, event.message.text)
-        elif event.message.media:
-            await client.send_file(target, event.message.media)
-        else:
+        forwarded = await _forward_message(client, target, event.message)
+        if not forwarded:
             logger.warning("Turn %d: empty message, skipping", turn_count)
             return
 
