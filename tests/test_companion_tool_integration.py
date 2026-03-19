@@ -16,12 +16,6 @@ from analyst.agents.companion.companion_agent import (
     build_companion_role_spec,
 )
 from analyst.agents.companion.companion_prompts import build_companion_system_prompt
-from analyst.agents.companion.spec_builder import (
-    ResearchDelegationSpec,
-    _sanitize_context,
-    build_research_delegation_spec,
-    render_research_delegation_prompt,
-)
 from analyst.engine.executor import ExecutorBackend
 from analyst.engine.live_provider import ClaudeCodeProvider
 from analyst.engine.live_types import AgentTool, LLMProvider
@@ -105,7 +99,7 @@ class TestBuildCompanionRoleSpec(unittest.TestCase):
 class TestBuildCompanionTools(unittest.TestCase):
     """Test _build_companion_tools tool list composition."""
 
-    @patch("analyst.agents.companion.companion_agent.build_research_agent_tool")
+    @patch("analyst.agents.companion.companion_agent.build_research_delegate_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
     def test_contains_generate_image(self, mock_img, mock_live, mock_research):
@@ -117,7 +111,7 @@ class TestBuildCompanionTools(unittest.TestCase):
         tool_names = [t.name for t in tools]
         self.assertIn("generate_image", tool_names)
 
-    @patch("analyst.agents.companion.companion_agent.build_research_agent_tool")
+    @patch("analyst.agents.companion.companion_agent.build_research_delegate_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
     def test_may_contain_live_photo(self, mock_img, mock_live, mock_research):
@@ -129,7 +123,7 @@ class TestBuildCompanionTools(unittest.TestCase):
         tool_names = [t.name for t in tools]
         self.assertIn("generate_live_photo", tool_names)
 
-    @patch("analyst.agents.companion.companion_agent.build_research_agent_tool")
+    @patch("analyst.agents.companion.companion_agent.build_research_delegate_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
     def test_contains_research_agent_for_non_claudecode(self, mock_img, mock_live, mock_research):
@@ -141,7 +135,7 @@ class TestBuildCompanionTools(unittest.TestCase):
         tool_names = [t.name for t in tools]
         self.assertIn("research_agent", tool_names)
 
-    @patch("analyst.agents.companion.companion_agent.build_research_agent_tool")
+    @patch("analyst.agents.companion.companion_agent.build_research_delegate_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
     def test_excludes_research_agent_for_claudecode(self, mock_img, mock_live, mock_research):
@@ -155,7 +149,7 @@ class TestBuildCompanionTools(unittest.TestCase):
         # build_research_agent_tool should not even be called
         mock_research.assert_not_called()
 
-    @patch("analyst.agents.companion.companion_agent.build_research_agent_tool")
+    @patch("analyst.agents.companion.companion_agent.build_research_delegate_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
     def test_no_live_photo_when_unavailable(self, mock_img, mock_live, mock_research):
@@ -167,7 +161,7 @@ class TestBuildCompanionTools(unittest.TestCase):
         tool_names = [t.name for t in tools]
         self.assertNotIn("generate_live_photo", tool_names)
 
-    @patch("analyst.agents.companion.companion_agent.build_research_agent_tool")
+    @patch("analyst.agents.companion.companion_agent.build_research_delegate_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
     def test_no_research_agent_when_builder_returns_none(self, mock_img, mock_live, mock_research):
@@ -217,164 +211,9 @@ class TestBuildCompanionSystemPrompt(unittest.TestCase):
 # 2. Research Delegation
 # ---------------------------------------------------------------------------
 
-class TestBuildResearchDelegationSpec(unittest.TestCase):
-    """Test build_research_delegation_spec."""
-
-    def test_valid_spec_creation(self):
-        args = {
-            "task": "What moved the S&P 500 today?",
-            "goal": "Explain the market move to the user.",
-            "analysis_type": "markets",
-            "output_format": "summary",
-            "time_horizon": "today",
-            "context": "User is concerned about tech exposure.",
-        }
-        spec = build_research_delegation_spec(args)
-        self.assertIsInstance(spec, ResearchDelegationSpec)
-        self.assertEqual(spec.task, "What moved the S&P 500 today?")
-        self.assertEqual(spec.analysis_type, "markets")
-        self.assertEqual(spec.output_format, "summary")
-        self.assertEqual(spec.time_horizon, "today")
-
-    def test_normalized_analysis_type(self):
-        args = {"task": "Check macro data", "analysis_type": "MACRO"}
-        spec = build_research_delegation_spec(args)
-        self.assertEqual(spec.analysis_type, "macro")
-
-    def test_normalized_output_format(self):
-        args = {"task": "Check news", "output_format": "Bullet_Points"}
-        spec = build_research_delegation_spec(args)
-        self.assertEqual(spec.output_format, "bullet_points")
-
-    def test_invalid_analysis_type_falls_back_to_general(self):
-        args = {"task": "Some task", "analysis_type": "nonexistent_type"}
-        spec = build_research_delegation_spec(args)
-        self.assertEqual(spec.analysis_type, "general")
-
-    def test_invalid_output_format_falls_back_to_summary(self):
-        args = {"task": "Some task", "output_format": "invalid_format"}
-        spec = build_research_delegation_spec(args)
-        self.assertEqual(spec.output_format, "summary")
-
-    def test_missing_task_raises_value_error(self):
-        with self.assertRaises(ValueError):
-            build_research_delegation_spec({})
-
-    def test_empty_task_raises_value_error(self):
-        with self.assertRaises(ValueError):
-            build_research_delegation_spec({"task": ""})
-
-    def test_default_goal(self):
-        spec = build_research_delegation_spec({"task": "Lookup rates"})
-        self.assertIn("factual answer", spec.goal)
-
-    def test_default_time_horizon(self):
-        spec = build_research_delegation_spec({"task": "Lookup rates"})
-        self.assertEqual(spec.time_horizon, "current")
-
-    def test_task_truncation(self):
-        long_task = "x" * 600
-        spec = build_research_delegation_spec({"task": long_task})
-        self.assertLessEqual(len(spec.task), 500)
-        self.assertTrue(spec.task.endswith("..."))
-
-
-class TestRenderResearchDelegationPrompt(unittest.TestCase):
-    """Test render_research_delegation_prompt output."""
-
-    def test_prompt_formatting(self):
-        spec = ResearchDelegationSpec(
-            task="Check Fed rate expectations",
-            goal="Give the companion a factual answer it can relay naturally.",
-            analysis_type="macro",
-            time_horizon="this week",
-            output_format="briefing",
-            context="User mentioned FOMC.",
-        )
-        prompt = render_research_delegation_prompt(spec)
-        self.assertIn("Primary task:", prompt)
-        self.assertIn("Check Fed rate expectations", prompt)
-        self.assertIn("Research brief:", prompt)
-        self.assertIn("- Analysis type: macro", prompt)
-        self.assertIn("- Time horizon: this week", prompt)
-        self.assertIn("- Output format: briefing", prompt)
-        self.assertIn("User-safe context:", prompt)
-        self.assertIn("User mentioned FOMC.", prompt)
-        self.assertIn("Response requirements:", prompt)
-
-    def test_prompt_without_context(self):
-        spec = ResearchDelegationSpec(
-            task="Check S&P",
-            goal="Explain movement",
-            analysis_type="markets",
-            time_horizon="today",
-            output_format="summary",
-            context="",
-        )
-        prompt = render_research_delegation_prompt(spec)
-        self.assertNotIn("User-safe context:", prompt)
-
-    def test_prompt_contains_tool_instruction(self):
-        spec = ResearchDelegationSpec(
-            task="Lookup VIX",
-            goal="Report regime",
-            analysis_type="markets",
-            time_horizon="current",
-            output_format="summary",
-            context="",
-        )
-        prompt = render_research_delegation_prompt(spec)
-        self.assertIn("Use tools if freshness or factual accuracy matters", prompt)
-        self.assertIn("Be concise and concrete", prompt)
-
-
-class TestSanitizeContext(unittest.TestCase):
-    """Test _sanitize_context filters internal metadata."""
-
-    def test_filters_client_profile(self):
-        text = "client_profile: {name: John}\nUser likes crypto."
-        result = _sanitize_context(text)
-        self.assertNotIn("client_profile", result)
-        self.assertIn("User likes crypto", result)
-
-    def test_filters_topic_state(self):
-        text = "topic_state: active\nBTC is up 5%."
-        result = _sanitize_context(text)
-        self.assertNotIn("topic_state", result)
-        self.assertIn("BTC is up 5%", result)
-
-    def test_filters_speaker_memory(self):
-        text = "speaker_memory: {...}\nUser asked about yields."
-        result = _sanitize_context(text)
-        self.assertNotIn("speaker_memory", result)
-        self.assertIn("User asked about yields", result)
-
-    def test_filters_delivery_history(self):
-        text = "delivery_history: old stuff\nMarket update."
-        result = _sanitize_context(text)
-        self.assertNotIn("delivery_history", result)
-        self.assertIn("Market update", result)
-
-    def test_filters_profile_update_tags(self):
-        text = "<profile_update>\nsome update\n</profile_update>\nClean line."
-        result = _sanitize_context(text)
-        self.assertNotIn("<profile_update>", result)
-        self.assertNotIn("</profile_update>", result)
-        self.assertIn("Clean line", result)
-
-    def test_empty_input(self):
-        self.assertEqual(_sanitize_context(""), "")
-        self.assertEqual(_sanitize_context(None), "")
-
-    def test_normal_text_passes_through(self):
-        text = "The user wants to understand why oil prices dropped."
-        result = _sanitize_context(text)
-        self.assertIn("oil prices dropped", result)
-
-    def test_truncation_at_max_chars(self):
-        long_text = "Safe context line. " * 100
-        result = _sanitize_context(long_text)
-        self.assertLessEqual(len(result), 700)
+# ---------------------------------------------------------------------------
+# Delegation spec tests removed — now in research-service/tests/test_agent_spec.py
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +223,7 @@ class TestSanitizeContext(unittest.TestCase):
 class TestCapabilityToolsCompanion(unittest.TestCase):
     """Test build_capability_tools for the companion surface."""
 
-    @patch("analyst.agents.companion.companion_agent.build_research_agent_tool")
+    @patch("analyst.agents.companion.companion_agent.build_research_delegate_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
     def test_build_capability_tools_companion(self, mock_img, mock_live, mock_research):
@@ -686,29 +525,6 @@ class TestSystemPromptWithMemory(unittest.TestCase):
 # Additional edge-case and integration tests
 # ---------------------------------------------------------------------------
 
-class TestResearchDelegationEdgeCases(unittest.TestCase):
-    """Additional edge-case tests for research delegation."""
-
-    def test_whitespace_only_task_raises(self):
-        with self.assertRaises(ValueError):
-            build_research_delegation_spec({"task": "   "})
-
-    def test_context_with_multiple_filtered_lines(self):
-        text = (
-            "client_profile: secret\n"
-            "topic_state: internal\n"
-            "User asked about gold.\n"
-            "current_thread: something\n"
-            "They want a quick answer."
-        )
-        result = _sanitize_context(text)
-        self.assertNotIn("client_profile", result)
-        self.assertNotIn("topic_state", result)
-        self.assertNotIn("current_thread", result)
-        self.assertIn("User asked about gold", result)
-        self.assertIn("quick answer", result)
-
-
 class TestCapabilitySurfaceValidation(unittest.TestCase):
     """Test capability surface validation edge cases."""
 
@@ -716,7 +532,7 @@ class TestCapabilitySurfaceValidation(unittest.TestCase):
         with self.assertRaises(KeyError):
             get_capability_surface("nonexistent_surface")
 
-    @patch("analyst.agents.companion.companion_agent.build_research_agent_tool")
+    @patch("analyst.agents.companion.companion_agent.build_research_delegate_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
     def test_sub_agent_validation_skipped_for_claudecode(

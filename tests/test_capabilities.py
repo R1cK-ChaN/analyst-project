@@ -19,14 +19,15 @@ class CapabilityRegistryTest(unittest.TestCase):
         self.assertEqual(companion.native_tool_names, ("WebSearch", "WebFetch"))
         self.assertIn("generate_image", companion.shared_mcp_tool_names)
 
-    def test_companion_surface_builds_declared_sub_agent_when_provider_present(self) -> None:
+    def test_companion_surface_builds_tools_when_provider_present(self) -> None:
         tools = build_capability_tools(
             "companion",
             store=MagicMock(),
             provider=MagicMock(),
         )
         tool_names = {tool.name for tool in tools}
-        self.assertIn("research_agent", tool_names)
+        # research_agent is now an optional HTTP delegate (depends on ANALYST_RESEARCH_BASE_URL)
+        self.assertIn("generate_image", tool_names)
 
 
 class NativeModeCapabilityTest(unittest.TestCase):

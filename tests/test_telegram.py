@@ -434,7 +434,7 @@ class TestChatPersonaRouting(unittest.TestCase):
 
         with patch("analyst.agents.companion.companion_agent.build_image_gen_tool", return_value=image_tool), \
              patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool", return_value=live_tool), \
-             patch("analyst.agents.companion.companion_agent.build_research_agent_tool", return_value=research_tool):
+             patch("analyst.agents.companion.companion_agent.build_research_delegate_tool", return_value=research_tool):
             tools = build_chat_tools(
                 engine=MagicMock(),
                 store=MagicMock(),
@@ -456,7 +456,7 @@ class TestChatPersonaRouting(unittest.TestCase):
         ) as provider_factory_mock, \
              patch("analyst.agents.companion.companion_agent.build_image_gen_tool", return_value=MagicMock()), \
              patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool", return_value=MagicMock()), \
-             patch("analyst.agents.companion.companion_agent.build_research_agent_tool", return_value=MagicMock()):
+             patch("analyst.agents.companion.companion_agent.build_research_delegate_tool", return_value=MagicMock()):
             build_companion_services()
 
         kwargs = provider_factory_mock.call_args.kwargs

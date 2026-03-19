@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from analyst.engine.backends import ClaudeCodeProvider
 from analyst.engine.live_types import AgentTool
+from analyst.research.delegate import build_research_delegate_tool
 from analyst.tools import ToolKit, build_image_gen_tool, build_optional_live_photo_tool
 
 from ..base import AgentRoleSpec, RoleDependencies
-from ..research.research_agent import build_research_agent_tool
 from .companion_prompts import build_companion_system_prompt
 
 
@@ -24,7 +24,7 @@ def _build_companion_tools(dependencies: RoleDependencies) -> list[AgentTool]:
     if live_photo_tool is not None:
         kit.add(live_photo_tool)
     if not isinstance(dependencies.provider, ClaudeCodeProvider):
-        research_tool = build_research_agent_tool(provider=dependencies.provider, store=dependencies.store)
+        research_tool = build_research_delegate_tool()
         if research_tool is not None:
             kit.add(research_tool)
     return kit.to_list()

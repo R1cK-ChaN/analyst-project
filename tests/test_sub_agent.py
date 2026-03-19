@@ -11,8 +11,6 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from analyst.agents import RolePromptContext
 from analyst.engine.agent_loop import AgentLoopConfig
 from analyst.engine.live_types import AgentTool, CompletionResult, ConversationMessage, ToolCall
-from analyst.agents.companion.spec_builder import build_research_delegation_spec, render_research_delegation_prompt
-from analyst.agents.research.research_agent import build_research_agent_tool, build_research_role_spec
 from analyst.engine.sub_agent import SubAgentSpec, SubAgentHandler, build_sub_agent_tool, _extract_scope_tags
 from analyst.engine.sub_agent_specs import (
     build_research_sub_agents,
@@ -191,56 +189,8 @@ def test_build_sub_agent_tool():
     assert "task" in tool.parameters["required"]
 
 
-def test_research_delegation_spec_sanitizes_internal_context():
-    spec = build_research_delegation_spec(
-        {
-            "task": "Explain today's rates move",
-            "analysis_type": "markets",
-            "context": "client_profile\nNeed rates and dollar angle\n<profile_update>{}</profile_update>",
-        }
-    )
-    prompt = render_research_delegation_prompt(spec)
-
-    assert spec.analysis_type == "markets"
-    assert "Need rates and dollar angle" in prompt
-    assert "client_profile" not in prompt
-    assert "<profile_update>" not in prompt
-
-
-def test_build_research_agent_tool_records_companion_audit():
-    store = _temp_store()
-    provider = FakeProvider([_make_completion("Treasury yields rose as rate-cut expectations were priced back.")])
-    tool = build_research_agent_tool(provider=provider, store=store)
-
-    assert tool is not None
-    result = tool.handler(
-        {
-            "task": "Why did Treasury yields rise today?",
-            "analysis_type": "markets",
-            "goal": "Help me explain the move simply.",
-            "context": "topic_state\nFocus on rates and the dollar",
-        }
-    )
-
-    assert result["status"] == "ok"
-    user_prompt = provider.calls[0]["messages"][0].content
-    assert "Analysis type: markets" in user_prompt
-    assert "Focus on rates and the dollar" in user_prompt
-    assert "topic_state" not in user_prompt
-
-    runs = store.list_recent_subagent_runs(limit=10)
-    assert len(runs) == 1
-    assert runs[0]["parent_agent"] == "companion"
-    assert runs[0]["task_type"] == "research_agent"
-
-
-def test_research_role_prompt_includes_current_time_rules():
-    prompt = build_research_role_spec().build_system_prompt(
-        RolePromptContext(current_time_label="2026-03-13 10:00 UTC")
-    )
-
-    assert "2026-03-13 10:00 UTC" in prompt
-    assert "Never invent calendar dates" in prompt
+# Research delegation spec tests and research agent tool tests removed —
+# now in research-service/tests/
 
 
 # ---- tests: spec builders ----
