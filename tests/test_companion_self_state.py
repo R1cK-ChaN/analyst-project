@@ -22,26 +22,25 @@ from analyst.runtime.chat import generate_chat_reply
 from analyst.storage import SQLiteEngineStore
 
 
-class _DummyExecutor:
+class _MappedDummyExecutor:
     backend = ExecutorBackend.HOST_LOOP
     provider = None
     config = AgentLoopConfig(max_turns=2, max_tokens=256, temperature=0.2)
     mcp_tool_names = ()
 
-    def __init__(self) -> None:
+    def __init__(self, *, slot_texts: dict[str, str] | None = None, fallback_text: str | None = None) -> None:
         self.calls: list[AgentRunRequest] = []
+        self.slot_texts = slot_texts or {}
+        self.fallback_text = fallback_text or "Treasury yields rose after the CPI surprise.<profile_update>{}</profile_update>"
 
     def run_turn(self, request: AgentRunRequest) -> AgentLoopResult:
         self.calls.append(request)
         prompt = request.system_prompt
-        if "[CANDIDATE SLOT A]" in prompt:
-            final = "累不累<profile_update>{}</profile_update>"
-        elif "[CANDIDATE SLOT B]" in prompt:
-            final = "又？上次不也是<profile_update>{}</profile_update>"
-        elif "[CANDIDATE SLOT C]" in prompt:
-            final = "听起来你今天真的很累了<profile_update>{}</profile_update>"
-        else:
-            final = "Treasury yields rose after the CPI surprise.<profile_update>{}</profile_update>"
+        final = self.fallback_text
+        for slot_id, text in self.slot_texts.items():
+            if f"[CANDIDATE SLOT {slot_id}]" in prompt:
+                final = text
+                break
         return AgentLoopResult(
             messages=[ConversationMessage(role="assistant", content=final)],
             final_text=final,
@@ -110,7 +109,7 @@ class CompanionSelfStateTest(unittest.TestCase):
                 thread_id="main",
                 user_text="在工位发呆",
                 history=[],
-                memory_context="active_topic: work / office",
+                memory_context="relationship_stage: familiar\nactive_topic: work / office",
                 routine_state="work",
                 now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
             )
@@ -138,23 +137,53 @@ class CompanionSelfStateTest(unittest.TestCase):
                 thread_id="main",
                 user_text="还是有点困",
                 history=[{"role": "assistant", "content": "嗯"}] * 6,
-                memory_context="active_topic: work / office",
+                memory_context="relationship_stage: familiar\nactive_topic: work / office",
                 routine_state="work",
                 now=datetime(2026, 3, 19, 5, 0, tzinfo=timezone.utc),
             )
 
         self.assertNotIn("interview on Friday", callbacks_after)
 
+    def test_callback_candidates_blocked_when_relationship_stage_is_cold(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            store.upsert_client_profile(
+                "u1",
+                personal_facts=["interview on Friday", "cat named Mochi"],
+                interaction_increment=1,
+            )
+            context, _, _, callbacks = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="在工位发呆",
+                history=[],
+                memory_context="relationship_stage: acquaintance\nactive_topic: work / office",
+                routine_state="work",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(callbacks, ())
+        self.assertIn("shared_history_gate: locked", context)
+
 
 class CandidateSelectionTest(unittest.TestCase):
-    def test_generate_chat_reply_prefers_medium_edge_candidate(self) -> None:
-        executor = _DummyExecutor()
+    def test_generate_chat_reply_prefers_medium_edge_candidate_when_history_gate_open(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "累不累<profile_update>{}</profile_update>",
+                "B": "又？上次不也是<profile_update>{}</profile_update>",
+                "C": "听起来你今天真的很累了<profile_update>{}</profile_update>",
+            }
+        )
 
         reply = generate_chat_reply(
             "今天又加班到11点",
             history=[],
             agent_loop=executor,
             tools=[],
+            memory_context="relationship_stage: familiar",
             companion_local_context=(
                 "engagement_reply_length: short\n"
                 "engagement_follow_up: avoid\n"
@@ -167,8 +196,92 @@ class CandidateSelectionTest(unittest.TestCase):
         self.assertEqual(reply.text, "又？上次不也是")
         self.assertEqual(len(executor.calls), 3)
 
+    def test_generate_chat_reply_penalizes_false_familiarity_on_cold_start(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "累不累<profile_update>{}</profile_update>",
+                "B": "又？上次不也是<profile_update>{}</profile_update>",
+                "C": "听起来你今天真的很累了<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "今天又加班到11点",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: stranger",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: soft\n"
+                "engagement_disagreement: medium\n"
+                "engagement_low_energy: avoid\n"
+                "engagement_callback_style: none\n"
+                "shared_history_gate: locked"
+            ),
+        )
+
+        self.assertEqual(reply.text, "累不累")
+
+    def test_generate_chat_reply_penalizes_metaphor_dense_candidate(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "看久了人会木<profile_update>{}</profile_update>",
+                "B": "那些红绿数字会往外蹦 心跳也跟着漏一拍<profile_update>{}</profile_update>",
+                "C": "听起来会很累<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "今天一直盯盘",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: familiar",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: soft\n"
+                "engagement_disagreement: soft\n"
+                "engagement_low_energy: avoid"
+            ),
+        )
+
+        self.assertEqual(reply.text, "看久了人会木")
+
+    def test_generate_chat_reply_records_candidate_telemetry(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "累不累<profile_update>{}</profile_update>",
+                "B": "我一般看到这种班表就头大<profile_update>{}</profile_update>",
+                "C": "听起来你今天真的很累了<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "今天又加班到11点",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: familiar",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: soft\n"
+                "engagement_disagreement: medium\n"
+                "engagement_low_energy: avoid"
+            ),
+        )
+
+        candidate_entries = [item for item in reply.tool_audit if item.get("telemetry_kind") == "reply_candidate"]
+        selection_entries = [item for item in reply.tool_audit if item.get("telemetry_kind") == "reply_selection"]
+        self.assertEqual(len(candidate_entries), 3)
+        self.assertEqual(len(selection_entries), 1)
+        self.assertIn(selection_entries[0]["selected_slot"], {"A", "B", "C"})
+
     def test_generate_chat_reply_skips_candidate_selection_for_live_research(self) -> None:
-        executor = _DummyExecutor()
+        executor = _MappedDummyExecutor()
 
         reply = generate_chat_reply(
             "What moved Treasury yields today?",

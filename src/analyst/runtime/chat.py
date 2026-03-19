@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -37,6 +38,8 @@ from .capabilities import (
     COMPANION_SHARED_MCP_TOOL_NAMES,
     build_capability_tools,
 )
+
+logger = logging.getLogger(__name__)
 
 COMPANION_MODEL_KEYS = (
     "ANALYST_COMPANION_OPENROUTER_MODEL",
@@ -1363,6 +1366,25 @@ _CANDIDATE_STANCE_MARKERS = (
     "无聊",
     "又？",
 )
+_FALSE_FAMILIARITY_PATTERNS = (
+    r"上次",
+    r"不也是",
+    r"又[？?]",
+    r"你不是也",
+    r"还是这么",
+    r"跟以前一样",
+    r"又来这套",
+)
+_METAPHOR_PATTERNS = (
+    r"就像",
+    r"像是",
+    r"仿佛",
+    r"心跳漏一拍",
+    r"心跳加速",
+    r"往外蹦",
+    r"红绿数字",
+    r"冷不丁的一行字",
+)
 
 
 def _extract_context_value(context: str, key: str) -> str:
@@ -1373,6 +1395,19 @@ def _extract_context_value(context: str, key: str) -> str:
         _, _, value = raw_line.partition(":")
         return value.strip()
     return ""
+
+
+def _extract_relationship_stage_hint(memory_context: str, companion_local_context: str) -> str:
+    local_hint = _extract_context_value(companion_local_context, "relationship_stage_hint")
+    if local_hint:
+        return local_hint
+    english = re.search(r"relationship_stage:\s*(\w+)", memory_context)
+    if english:
+        return english.group(1)
+    chinese = re.search(r"关系阶段:\s*(\w+)", memory_context)
+    if chinese:
+        return chinese.group(1)
+    return "stranger"
 
 
 def _contains_assistanty_tone(text: str) -> bool:
@@ -1394,6 +1429,14 @@ def _reply_uses_callback(text: str, context: str) -> bool:
         if cleaned and cleaned.lower() in lowered:
             return True
     return False
+
+
+def _implies_false_familiarity(text: str) -> bool:
+    return any(re.search(pattern, text) for pattern in _FALSE_FAMILIARITY_PATTERNS)
+
+
+def _metaphor_marker_count(text: str) -> int:
+    return sum(1 for pattern in _METAPHOR_PATTERNS if re.search(pattern, text))
 
 
 def _looks_like_live_research_request(user_text: str) -> bool:
@@ -1528,6 +1571,7 @@ def _score_candidate_reply(
     *,
     user_text: str,
     companion_local_context: str,
+    memory_context: str,
 ) -> tuple[float, tuple[str, ...]]:
     text = str(reply.text or "").strip()
     if not text:
@@ -1540,6 +1584,9 @@ def _score_candidate_reply(
     low_energy_style = _extract_context_value(companion_local_context, "engagement_low_energy")
     disagreement_style = _extract_context_value(companion_local_context, "engagement_disagreement")
     self_topic_style = _extract_context_value(companion_local_context, "engagement_self_topic")
+    callback_style = _extract_context_value(companion_local_context, "engagement_callback_style")
+    shared_history_gate = _extract_context_value(companion_local_context, "shared_history_gate")
+    relationship_stage = _extract_relationship_stage_hint(memory_context, companion_local_context)
 
     if _contains_assistanty_tone(text):
         score -= 3.0
@@ -1556,6 +1603,13 @@ def _score_candidate_reply(
     if follow_up_style == "avoid" and _ends_with_question(text):
         score -= 1.5
         reasons.append("question_end")
+    if (
+        shared_history_gate == "locked"
+        or callback_style == "none"
+        or relationship_stage in {"stranger", "acquaintance"}
+    ) and _implies_false_familiarity(text):
+        score -= 5.0
+        reasons.append("false_familiarity")
 
     text_len = len(text)
     if reply_length_target == "terse":
@@ -1603,7 +1657,53 @@ def _score_candidate_reply(
         score += 0.8
         reasons.append("callback")
 
+    metaphor_markers = _metaphor_marker_count(text)
+    if metaphor_markers >= 2:
+        score -= 2.0
+        reasons.append("metaphor_dense")
+    elif metaphor_markers == 1 and _looks_overwritten(text):
+        score -= 1.2
+        reasons.append("metaphor_polished")
+
     return score, tuple(reasons)
+
+
+def _build_candidate_telemetry(
+    candidates: list[ReplyCandidate],
+    *,
+    selected: ReplyCandidate,
+) -> list[dict[str, Any]]:
+    slot_entries: list[dict[str, Any]] = []
+    summary_parts: list[str] = []
+    for candidate in candidates:
+        summary_parts.append(
+            f"{candidate.slot_id}:{candidate.score:.2f}:{'/'.join(candidate.reasons) or 'none'}"
+        )
+        slot_entries.append(
+            {
+                "telemetry_kind": "reply_candidate",
+                "slot_id": candidate.slot_id,
+                "score": round(candidate.score, 3),
+                "reasons": list(candidate.reasons),
+                "text": candidate.reply.text,
+                "prompt_hint": candidate.prompt_hint,
+                "selected": candidate.slot_id == selected.slot_id,
+            }
+        )
+    slot_entries.append(
+        {
+            "telemetry_kind": "reply_selection",
+            "selected_slot": selected.slot_id,
+            "selected_score": round(selected.score, 3),
+            "selection_summary": " | ".join(summary_parts),
+        }
+    )
+    logger.info(
+        "companion_candidate_selection selected=%s summary=%s",
+        selected.slot_id,
+        " | ".join(summary_parts),
+    )
+    return slot_entries
 
 
 def _select_best_candidate(
@@ -1718,6 +1818,7 @@ def generate_chat_reply(
                 candidate_reply,
                 user_text=user_text,
                 companion_local_context=effective_local_context,
+                memory_context=memory_context,
             )
             candidates.append(
                 ReplyCandidate(
@@ -1729,7 +1830,16 @@ def generate_chat_reply(
                 )
             )
         selected = _select_best_candidate(candidates)
-        return _apply_companion_text_cleanup(selected.reply)
+        candidate_telemetry = _build_candidate_telemetry(candidates, selected=selected)
+        selected_reply = ChatReply(
+            text=selected.reply.text,
+            profile_update=selected.reply.profile_update,
+            reminder_update=selected.reply.reminder_update,
+            schedule_update=selected.reply.schedule_update,
+            media=selected.reply.media,
+            tool_audit=[*selected.reply.tool_audit, *candidate_telemetry],
+        )
+        return _apply_companion_text_cleanup(selected_reply)
 
     result = executor.run_turn(
         AgentRunRequest(

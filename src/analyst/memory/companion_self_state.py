@@ -17,6 +17,7 @@ COMPANION_SELF_STATE_TIMEZONE = "Asia/Singapore"
 _SELF_STATE_TZ = ZoneInfo(COMPANION_SELF_STATE_TIMEZONE)
 CALLBACK_MIN_TURN_GAP = 6
 CALLBACK_MAX_PER_SESSION = 1
+_SHARED_HISTORY_STAGES = {"familiar", "close"}
 
 _USER_EMOTION_MARKERS = (
     "焦虑",
@@ -78,6 +79,14 @@ class CompanionEngagementPolicy:
 _OPINION_SEEDS: tuple[OpinionSeed, ...] = (
     OpinionSeed("bubble_tea", "奶茶大多就是糖水 不太懂排队的意义", ("奶茶", "bubble tea", "甜", "糖")),
     OpinionSeed("overtime", "九点后的加班通常只是在表演努力", ("加班", "overtime", "老板", "work")),
+    OpinionSeed("small_talk", "硬撑着聊无效社交比加班还累", ("社交", "small talk", "应酬", "awkward")),
+    OpinionSeed("plans", "临时改计划这件事 我通常没什么耐心", ("plan", "plans", "改计划", "临时")),
+    OpinionSeed("weekend_plans", "周末行程排太满最后大多只会更累", ("weekend", "周末", "行程", "安排")),
+    OpinionSeed("spending", "为了省十块钱绕半个小时路很不值", ("省钱", "折扣", "便宜", "delivery fee")),
+    OpinionSeed("work_jargon", "工作里最烦的不是忙 是一堆空话套话", ("汇报", "jargon", "套话", "汇报")),
+    OpinionSeed("messaging", "一串分开发来的短消息比一条长消息更折磨人", ("消息", "text", "message", "微信")),
+    OpinionSeed("group_dinner", "团建吃饭最累的部分通常不是饭 是前后的客套", ("团建", "dinner", "聚餐", "吃饭")),
+    OpinionSeed("shopping", "为了拍照好看去一家店 我一般做不到", ("拍照", "shopping", "店", "打卡")),
     OpinionSeed("running", "跑步对我来说有点无聊 我宁可打球", ("跑步", "run", "running", "运动")),
     OpinionSeed("movies", "现在很多电影太吵了 我还是偏老港片", ("电影", "movie", "film", "港片")),
     OpinionSeed("brunch", "为了 brunch 排四十分钟队这件事一直很迷", ("brunch", "排队", "queue", "咖啡店")),
@@ -242,6 +251,8 @@ def build_companion_turn_context_enrichment(
     routine_state: str = "",
 ) -> tuple[str, CompanionSelfStateRecord, CompanionEngagementPolicy, tuple[str, ...]]:
     local_now = companion_self_local_now(now)
+    relationship_stage = _extract_relationship_stage(memory_context)
+    shared_history_gate = "open" if relationship_stage in _SHARED_HISTORY_STAGES else "locked"
     self_state = ensure_companion_self_state(
         store,
         client_id=client_id,
@@ -264,6 +275,7 @@ def build_companion_turn_context_enrichment(
         history=history or [],
         recent_messages=recent_messages,
         self_state=self_state,
+        relationship_stage=relationship_stage,
     )
     policy = _derive_engagement_policy(
         user_text=user_text,
@@ -286,6 +298,8 @@ def build_companion_turn_context_enrichment(
     lines = [
         "[COMPANION TURN POLICY]",
         "policy_priority: user_emotion > engagement > relationship_stage",
+        f"relationship_stage_hint: {relationship_stage}",
+        f"shared_history_gate: {shared_history_gate}",
         f"engagement_mode: {policy.mode}",
         f"engagement_reply_length: {policy.target_reply_length}",
         f"engagement_follow_up: {policy.follow_up_style}",
@@ -422,7 +436,10 @@ def _select_callback_candidates(
     history: list[dict[str, str]],
     recent_messages: list,
     self_state: CompanionSelfStateRecord,
+    relationship_stage: str,
 ) -> tuple[str, ...]:
+    if relationship_stage not in _SHARED_HISTORY_STAGES:
+        return ()
     if _recent_callback_blocks(history=history, recent_messages=recent_messages, self_state=self_state):
         return ()
     profile = store.get_client_profile(client_id)
@@ -598,6 +615,16 @@ def _interest_score(*, user_text: str, memory_context: str, self_state: Companio
 def _extract_active_topic(memory_context: str) -> str:
     match = re.search(r"active_topic:\s*(.+)", memory_context)
     return match.group(1).strip() if match else ""
+
+
+def _extract_relationship_stage(memory_context: str) -> str:
+    english = re.search(r"relationship_stage:\s*(\w+)", memory_context)
+    if english:
+        return english.group(1)
+    chinese = re.search(r"关系阶段:\s*(\w+)", memory_context)
+    if chinese:
+        return chinese.group(1)
+    return "stranger"
 
 
 def _normalize_text(text: str) -> str:
