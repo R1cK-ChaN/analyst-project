@@ -51,6 +51,7 @@ from .sqlite_records import (
     CompanionCheckInStateRecord,
     CompanionLifestyleStateRecord,
     CompanionDailyScheduleRecord,
+    CompanionSelfStateRecord,
     CompanionReminderRecord,
     ConversationMessageRecord,
     DeliveryQueueRecord,
@@ -590,6 +591,28 @@ class SQLiteSchemaMixin:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS companion_self_state (
+                    client_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    state_date TEXT NOT NULL,
+                    timezone_name TEXT NOT NULL DEFAULT 'Asia/Singapore',
+                    routine_state_snapshot TEXT NOT NULL DEFAULT '',
+                    internal_state_json TEXT NOT NULL DEFAULT '[]',
+                    opinion_profile_json TEXT NOT NULL DEFAULT '[]',
+                    used_callback_facts_json TEXT NOT NULL DEFAULT '[]',
+                    last_callback_fact TEXT NOT NULL DEFAULT '',
+                    last_callback_at TEXT NOT NULL DEFAULT '',
+                    last_engagement_mode TEXT NOT NULL DEFAULT '',
+                    last_engagement_reason TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (client_id, channel, thread_id, state_date)
+                )
+                """
+            )
             # --- Migration: add client_id to companion_daily_schedule ---
             cols = [r[1] for r in connection.execute(
                 "PRAGMA table_info(companion_daily_schedule)"
@@ -765,6 +788,10 @@ class SQLiteSchemaMixin:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_companion_daily_schedule_updated ON companion_daily_schedule(updated_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_companion_self_state_updated "
+                "ON companion_self_state(updated_at DESC)"
             )
             # -- Portfolio volatility management tables ---------------------
             connection.execute(

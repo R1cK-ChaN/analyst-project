@@ -362,6 +362,24 @@ class CompanionDailyScheduleRecord:
     updated_at: str
 
 @dataclass(frozen=True)
+class CompanionSelfStateRecord:
+    client_id: str
+    channel: str
+    thread_id: str
+    state_date: str
+    timezone_name: str
+    routine_state_snapshot: str
+    internal_state: list[str]
+    opinion_profile: list[str]
+    used_callback_facts: list[str]
+    last_callback_fact: str
+    last_callback_at: str
+    last_engagement_mode: str
+    last_engagement_reason: str
+    created_at: str
+    updated_at: str
+
+@dataclass(frozen=True)
 class CompanionImageLogRecord:
     image_log_id: int
     client_id: str

@@ -781,7 +781,8 @@ class TestRunProactiveCompanionTurn(unittest.TestCase):
         mock_gen.assert_called_once()
         gen_kwargs = mock_gen.call_args.kwargs
         self.assertEqual(gen_kwargs["kind"], "morning")
-        self.assertEqual(gen_kwargs["companion_local_context"], "morning context")
+        self.assertIn("morning context", gen_kwargs["companion_local_context"])
+        self.assertIn("[COMPANION PROACTIVE POLICY]", gen_kwargs["companion_local_context"])
         self.assertEqual(gen_kwargs["preferred_language"], "zh")
 
     def test_no_tools_passed_as_none(self) -> None:
@@ -853,7 +854,8 @@ class TestRunProactiveCompanionTurnForInput(unittest.TestCase):
         )
         gen_kwargs = mock_gen.call_args.kwargs
         self.assertEqual(gen_kwargs["kind"], "evening")
-        self.assertEqual(gen_kwargs["companion_local_context"], "evening hint")
+        self.assertIn("evening hint", gen_kwargs["companion_local_context"])
+        self.assertIn("[COMPANION PROACTIVE POLICY]", gen_kwargs["companion_local_context"])
         self.assertEqual(gen_kwargs["preferred_language"], "en")
 
     def test_empty_companion_local_context(self) -> None:
@@ -882,7 +884,7 @@ class TestRunProactiveCompanionTurnForInput(unittest.TestCase):
                 )
 
         gen_kwargs = mock_gen.call_args.kwargs
-        self.assertEqual(gen_kwargs["companion_local_context"], "")
+        self.assertIn("[COMPANION PROACTIVE POLICY]", gen_kwargs["companion_local_context"])
 
 
 # ---------------------------------------------------------------------------

@@ -176,7 +176,14 @@ async def _send_companion_proactive_message(
         channel_id=state.channel,
         thread_id=state.thread_id,
         kind=kind,
-        companion_local_context=_companion_local_context(store, lifestyle_state, now, client_id=state.client_id),
+        companion_local_context=_companion_local_context(
+            store,
+            lifestyle_state,
+            now,
+            client_id=state.client_id,
+            channel_id=state.channel,
+            thread_id=state.thread_id,
+        ),
     )
 
     # --- Image decision for proactive outreach ---
@@ -1099,7 +1106,14 @@ def _make_message_handler(
             thread_id=thread_id,
             now=now_utc,
         )
-        companion_local_context = _companion_local_context(store, companion_lifestyle_state, now_utc, client_id=user_id)
+        companion_local_context = _companion_local_context(
+            store,
+            companion_lifestyle_state,
+            now_utc,
+            client_id=user_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+        )
 
         in_group = _is_group_chat(update)
         if not in_group:
@@ -1149,8 +1163,9 @@ def _make_message_handler(
                     _dn = _gm.display_name.strip().lower()
                     if _dn not in _mentioned or str(_mentioned[_dn]).startswith("@"):
                         _mentioned[_dn] = _gm.user_id
-                if _gm.username:
-                    _un = _gm.username.strip().lower()
+                _gm_username = str(getattr(_gm, "username", "") or "")
+                if _gm_username:
+                    _un = _gm_username.strip().lower()
                     if _un not in _mentioned or str(_mentioned[_un]).startswith("@"):
                         _mentioned[_un] = _gm.user_id
 

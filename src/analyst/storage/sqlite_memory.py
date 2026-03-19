@@ -52,6 +52,7 @@ from .sqlite_records import (
     CompanionImageLogRecord,
     CompanionLifestyleStateRecord,
     CompanionDailyScheduleRecord,
+    CompanionSelfStateRecord,
     CompanionOutreachLogRecord,
     CompanionRelationshipStateRecord,
     CompanionReminderRecord,
@@ -766,6 +767,66 @@ class SQLiteMemoryMixin:
                 next_plan=next_plan,
                 revision_note=revision_note,
                 last_explicit_update_at=last_explicit_update_at,
+            )
+
+    def get_companion_self_state(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        state_date: str,
+        timezone_name: str = "Asia/Singapore",
+    ) -> CompanionSelfStateRecord:
+        with self._connection(commit=False) as connection:
+            return self._get_companion_self_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                state_date=state_date,
+                timezone_name=timezone_name,
+            )
+
+    def upsert_companion_self_state(
+        self,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        state_date: str,
+        timezone_name: str | None = None,
+        routine_state_snapshot: str | None = None,
+        internal_state: list[str] | None = None,
+        opinion_profile: list[str] | None = None,
+        used_callback_facts: list[str] | None = None,
+        last_callback_fact: str | None = None,
+        last_callback_at: str | None = None,
+        last_engagement_mode: str | None = None,
+        last_engagement_reason: str | None = None,
+    ) -> CompanionSelfStateRecord:
+        with self._connection(commit=True) as connection:
+            self._ensure_conversation_thread_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+            )
+            return self._upsert_companion_self_state_in_connection(
+                connection,
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                state_date=state_date,
+                timezone_name=timezone_name,
+                routine_state_snapshot=routine_state_snapshot,
+                internal_state=internal_state,
+                opinion_profile=opinion_profile,
+                used_callback_facts=used_callback_facts,
+                last_callback_fact=last_callback_fact,
+                last_callback_at=last_callback_at,
+                last_engagement_mode=last_engagement_mode,
+                last_engagement_reason=last_engagement_reason,
             )
 
     def get_companion_relationship_state(
@@ -1818,6 +1879,52 @@ class SQLiteMemoryMixin:
             updated_at=row["updated_at"],
         )
 
+    def _row_to_companion_self_state(
+        self,
+        row: sqlite3.Row | None,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        state_date: str,
+        timezone_name: str,
+    ) -> CompanionSelfStateRecord:
+        if row is None:
+            return CompanionSelfStateRecord(
+                client_id=client_id,
+                channel=channel,
+                thread_id=thread_id,
+                state_date=state_date,
+                timezone_name=timezone_name,
+                routine_state_snapshot="",
+                internal_state=[],
+                opinion_profile=[],
+                used_callback_facts=[],
+                last_callback_fact="",
+                last_callback_at="",
+                last_engagement_mode="",
+                last_engagement_reason="",
+                created_at="",
+                updated_at="",
+            )
+        return CompanionSelfStateRecord(
+            client_id=row["client_id"],
+            channel=row["channel"],
+            thread_id=row["thread_id"],
+            state_date=row["state_date"],
+            timezone_name=row["timezone_name"],
+            routine_state_snapshot=row["routine_state_snapshot"],
+            internal_state=json.loads(row["internal_state_json"]),
+            opinion_profile=json.loads(row["opinion_profile_json"]),
+            used_callback_facts=json.loads(row["used_callback_facts_json"]),
+            last_callback_fact=row["last_callback_fact"],
+            last_callback_at=row["last_callback_at"],
+            last_engagement_mode=row["last_engagement_mode"],
+            last_engagement_reason=row["last_engagement_reason"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
     def _row_to_companion_reminder(
         self,
         row: sqlite3.Row,
@@ -1879,6 +1986,33 @@ class SQLiteMemoryMixin:
             row,
             client_id=client_id,
             schedule_date=schedule_date,
+            timezone_name=timezone_name,
+        )
+
+    def _get_companion_self_state_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        state_date: str,
+        timezone_name: str,
+    ) -> CompanionSelfStateRecord:
+        row = connection.execute(
+            """
+            SELECT * FROM companion_self_state
+            WHERE client_id = ? AND channel = ? AND thread_id = ? AND state_date = ?
+            LIMIT 1
+            """,
+            (client_id, channel, thread_id, state_date),
+        ).fetchone()
+        return self._row_to_companion_self_state(
+            row,
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+            state_date=state_date,
             timezone_name=timezone_name,
         )
 
@@ -2053,6 +2187,107 @@ class SQLiteMemoryMixin:
                 next_record.next_plan,
                 next_record.revision_note,
                 next_record.last_explicit_update_at,
+                next_record.created_at,
+                next_record.updated_at,
+            ),
+        )
+        return next_record
+
+    def _upsert_companion_self_state_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        client_id: str,
+        channel: str,
+        thread_id: str,
+        state_date: str,
+        timezone_name: str | None = None,
+        routine_state_snapshot: str | None = None,
+        internal_state: list[str] | None = None,
+        opinion_profile: list[str] | None = None,
+        used_callback_facts: list[str] | None = None,
+        last_callback_fact: str | None = None,
+        last_callback_at: str | None = None,
+        last_engagement_mode: str | None = None,
+        last_engagement_reason: str | None = None,
+    ) -> CompanionSelfStateRecord:
+        current = self._get_companion_self_state_in_connection(
+            connection,
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+            state_date=state_date,
+            timezone_name=timezone_name or "Asia/Singapore",
+        )
+        now_iso = utc_now().isoformat()
+        created_at = current.created_at or now_iso
+        next_record = CompanionSelfStateRecord(
+            client_id=client_id,
+            channel=channel,
+            thread_id=thread_id,
+            state_date=state_date,
+            timezone_name=current.timezone_name if timezone_name is None else timezone_name,
+            routine_state_snapshot=(
+                current.routine_state_snapshot
+                if routine_state_snapshot is None else routine_state_snapshot
+            ),
+            internal_state=current.internal_state if internal_state is None else list(internal_state),
+            opinion_profile=current.opinion_profile if opinion_profile is None else list(opinion_profile),
+            used_callback_facts=(
+                current.used_callback_facts
+                if used_callback_facts is None else list(used_callback_facts)
+            ),
+            last_callback_fact=(
+                current.last_callback_fact if last_callback_fact is None else last_callback_fact
+            ),
+            last_callback_at=(
+                current.last_callback_at if last_callback_at is None else last_callback_at
+            ),
+            last_engagement_mode=(
+                current.last_engagement_mode
+                if last_engagement_mode is None else last_engagement_mode
+            ),
+            last_engagement_reason=(
+                current.last_engagement_reason
+                if last_engagement_reason is None else last_engagement_reason
+            ),
+            created_at=created_at,
+            updated_at=now_iso,
+        )
+        connection.execute(
+            """
+            INSERT INTO companion_self_state (
+                client_id, channel, thread_id, state_date, timezone_name,
+                routine_state_snapshot, internal_state_json, opinion_profile_json,
+                used_callback_facts_json, last_callback_fact, last_callback_at,
+                last_engagement_mode, last_engagement_reason, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(client_id, channel, thread_id, state_date) DO UPDATE SET
+                timezone_name = excluded.timezone_name,
+                routine_state_snapshot = excluded.routine_state_snapshot,
+                internal_state_json = excluded.internal_state_json,
+                opinion_profile_json = excluded.opinion_profile_json,
+                used_callback_facts_json = excluded.used_callback_facts_json,
+                last_callback_fact = excluded.last_callback_fact,
+                last_callback_at = excluded.last_callback_at,
+                last_engagement_mode = excluded.last_engagement_mode,
+                last_engagement_reason = excluded.last_engagement_reason,
+                updated_at = excluded.updated_at
+            """,
+            (
+                next_record.client_id,
+                next_record.channel,
+                next_record.thread_id,
+                next_record.state_date,
+                next_record.timezone_name,
+                next_record.routine_state_snapshot,
+                json.dumps(next_record.internal_state, ensure_ascii=False),
+                json.dumps(next_record.opinion_profile, ensure_ascii=False),
+                json.dumps(next_record.used_callback_facts, ensure_ascii=False),
+                next_record.last_callback_fact,
+                next_record.last_callback_at,
+                next_record.last_engagement_mode,
+                next_record.last_engagement_reason,
                 next_record.created_at,
                 next_record.updated_at,
             ),

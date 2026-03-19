@@ -17,6 +17,7 @@ from analyst.engine import (
     build_agent_executor,
     coerce_agent_executor,
 )
+from analyst.engine.executor import LegacyLoopExecutor
 from analyst.engine.backends import ClaudeCodeProvider
 from analyst.engine.agent_loop import AgentLoopConfig
 from analyst.engine.backends.factory import build_llm_provider_from_env
@@ -77,6 +78,18 @@ class TurnExecutionPlan:
     active_tools: list[AgentTool]
     native_tool_names: tuple[str, ...]
     mcp_tool_names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ReplyCandidate:
+    slot_id: str
+    prompt_hint: str
+    reply: ChatReply
+    score: float
+    reasons: tuple[str, ...]
+
+
+CandidateJudge = Callable[[list[ReplyCandidate]], int | None]
 
 
 def resolve_chat_persona_mode(value: str | ChatPersonaMode | None = None) -> ChatPersonaMode:
@@ -1315,6 +1328,299 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
     return "[STYLE CORRECTION] " + " ".join(hints)
 
 
+_CANDIDATE_SLOT_HINTS: tuple[tuple[str, str], ...] = (
+    (
+        "A",
+        "这条候选只接眼前事实 用最少的字回 不做情绪管理 不主动总结。",
+    ),
+    (
+        "B",
+        "这条候选允许带一点你自己的事或态度进去 但保持 medium edge 不要凶。",
+    ),
+    (
+        "C",
+        "这条候选按正常模式回 自然 低压 不讨好 也不刻意表演个性。",
+    ),
+)
+
+_CANDIDATE_ASSISTANTY_MARKERS = (
+    "听起来",
+    "我理解",
+    "建议你",
+    "你可以考虑",
+    "that sounds",
+    "i understand",
+    "maybe try",
+)
+_CANDIDATE_STANCE_MARKERS = (
+    "我更",
+    "我一般",
+    "我宁可",
+    "我还是",
+    "我不太",
+    "不太懂",
+    "太甜",
+    "无聊",
+    "又？",
+)
+
+
+def _extract_context_value(context: str, key: str) -> str:
+    prefix = f"{key}:"
+    for raw_line in str(context or "").splitlines():
+        if not raw_line.startswith(prefix):
+            continue
+        _, _, value = raw_line.partition(":")
+        return value.strip()
+    return ""
+
+
+def _contains_assistanty_tone(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _CANDIDATE_ASSISTANTY_MARKERS)
+
+
+def _has_personal_stance(text: str) -> bool:
+    return any(marker in text for marker in _CANDIDATE_STANCE_MARKERS)
+
+
+def _reply_uses_callback(text: str, context: str) -> bool:
+    lowered = text.lower()
+    for raw_line in str(context or "").splitlines():
+        if not raw_line.startswith("callback_candidate:"):
+            continue
+        _, _, candidate = raw_line.partition(":")
+        cleaned = candidate.strip()
+        if cleaned and cleaned.lower() in lowered:
+            return True
+    return False
+
+
+def _looks_like_live_research_request(user_text: str) -> bool:
+    lowered = user_text.lower()
+    if "what moved" in lowered:
+        return True
+    has_temporal = any(
+        token in lowered
+        for token in ("latest", "today", "right now", "最新", "今天", "现在", "刚刚")
+    )
+    has_news = any(token in lowered for token in ("breaking", "news", "新闻"))
+    has_market = any(
+        token in lowered
+        for token in (
+            "price",
+            "market",
+            "markets",
+            "treasury",
+            "cpi",
+            "fed",
+            "btc",
+            "bitcoin",
+            "yield",
+            "yields",
+            "价格",
+            "行情",
+            "市场",
+            "利率",
+            "美联储",
+            "比特币",
+            "收益率",
+        )
+    )
+    return has_market and (has_temporal or has_news)
+
+
+def _looks_like_reminder_request(user_text: str) -> bool:
+    lowered = user_text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "remind me",
+            "set a reminder",
+            "提醒我",
+            "记得提醒我",
+            "到时候叫我",
+        )
+    )
+
+
+def _should_use_candidate_selection(
+    *,
+    executor: AgentExecutor,
+    user_text: str,
+    user_content: MessageContent | None,
+    group_context: str,
+    group_autonomous: bool,
+) -> bool:
+    if isinstance(executor, LegacyLoopExecutor):
+        return False
+    if group_context or group_autonomous:
+        return False
+    if _has_attached_image(user_content):
+        return False
+    if _requires_image_tool_path(user_text) or _looks_like_live_research_request(user_text):
+        return False
+    if _looks_like_reminder_request(user_text):
+        return False
+    return True
+
+
+def _result_to_chat_reply(
+    result: Any,
+    *,
+    user_text: str,
+    user_content: MessageContent | None,
+    tools: list[AgentTool],
+    apply_companion_normalization: bool,
+    allow_media_repair: bool,
+) -> ChatReply:
+    response_text, profile_update = split_reply_and_profile_update(result.final_text)
+    reminder_update = extract_embedded_reminder_update(result.final_text)
+    schedule_update = extract_embedded_schedule_update(result.final_text)
+    contains_image_placeholder = IMAGE_PLACEHOLDER in response_text
+    response_text = normalize_user_reply(response_text)
+    if apply_companion_normalization:
+        response_text = normalize_companion_reply(response_text)
+    if not response_text:
+        response_text = "嗯"
+    media = _extract_media(result.messages)
+    if not media:
+        raw_events = result.raw_response.get("events", []) if isinstance(result.raw_response, dict) else []
+        media = _extract_media_from_events(raw_events)
+    tool_audit = _extract_tool_audit(result.messages)
+    if allow_media_repair and contains_image_placeholder and not media:
+        repaired_media, repaired_audit = _repair_missing_image_media(
+            response_text=result.final_text,
+            user_text=user_text,
+            user_content=user_content,
+            tools=tools,
+        )
+        if repaired_media:
+            media = repaired_media
+        if repaired_audit:
+            tool_audit = [*tool_audit, *repaired_audit]
+    return ChatReply(
+        text=response_text,
+        profile_update=profile_update,
+        reminder_update=reminder_update,
+        schedule_update=schedule_update,
+        media=media,
+        tool_audit=tool_audit,
+    )
+
+
+def _apply_companion_text_cleanup(reply: ChatReply) -> ChatReply:
+    cleaned = normalize_companion_reply(normalize_user_reply(reply.text))
+    if not cleaned:
+        cleaned = "嗯"
+    return ChatReply(
+        text=cleaned,
+        profile_update=reply.profile_update,
+        reminder_update=reply.reminder_update,
+        schedule_update=reply.schedule_update,
+        media=reply.media,
+        tool_audit=reply.tool_audit,
+    )
+
+
+def _score_candidate_reply(
+    reply: ChatReply,
+    *,
+    user_text: str,
+    companion_local_context: str,
+) -> tuple[float, tuple[str, ...]]:
+    text = str(reply.text or "").strip()
+    if not text:
+        return -100.0, ("empty",)
+
+    reasons: list[str] = []
+    score = 0.0
+    reply_length_target = _extract_context_value(companion_local_context, "engagement_reply_length")
+    follow_up_style = _extract_context_value(companion_local_context, "engagement_follow_up")
+    low_energy_style = _extract_context_value(companion_local_context, "engagement_low_energy")
+    disagreement_style = _extract_context_value(companion_local_context, "engagement_disagreement")
+    self_topic_style = _extract_context_value(companion_local_context, "engagement_self_topic")
+
+    if _contains_assistanty_tone(text):
+        score -= 3.0
+        reasons.append("assistanty")
+    if _is_pure_echo(text, user_text):
+        score -= 4.0
+        reasons.append("echo")
+    if _has_wrap_up_tone(text):
+        score -= 2.0
+        reasons.append("wrap_up")
+    if _has_steering_tone(text):
+        score -= 2.0
+        reasons.append("steering")
+    if follow_up_style == "avoid" and _ends_with_question(text):
+        score -= 1.5
+        reasons.append("question_end")
+
+    text_len = len(text)
+    if reply_length_target == "terse":
+        if text_len <= 12:
+            score += 2.0
+            reasons.append("terse_fit")
+        elif text_len <= 20:
+            score += 0.8
+        else:
+            score -= 2.0
+            reasons.append("too_long")
+    elif reply_length_target == "short":
+        if 4 <= text_len <= 36:
+            score += 1.6
+            reasons.append("short_fit")
+        elif text_len > 56:
+            score -= 1.5
+            reasons.append("too_long")
+    elif 8 <= text_len <= 68:
+        score += 1.2
+        reasons.append("medium_fit")
+
+    if low_energy_style == "allowed" and text_len <= 10:
+        score += 1.2
+        reasons.append("low_energy_fit")
+    if low_energy_style != "allowed" and text_len <= 2:
+        score -= 1.0
+        reasons.append("too_flat")
+
+    if self_topic_style != "none" and ("我" in text or text.lower().startswith("i ")):
+        score += 0.8
+        reasons.append("has_self")
+    if self_topic_style == "none" and ("我" in text or text.lower().startswith("i ")):
+        score -= 0.6
+        reasons.append("too_self")
+
+    if disagreement_style == "medium" and _has_personal_stance(text):
+        score += 1.0
+        reasons.append("has_stance")
+    if disagreement_style == "avoid" and _has_personal_stance(text):
+        score -= 1.2
+        reasons.append("too_edgy")
+
+    if _reply_uses_callback(text, companion_local_context):
+        score += 0.8
+        reasons.append("callback")
+
+    return score, tuple(reasons)
+
+
+def _select_best_candidate(
+    candidates: list[ReplyCandidate],
+    *,
+    judge: CandidateJudge | None = None,
+) -> ReplyCandidate:
+    if judge is not None:
+        judged_index = judge(candidates)
+        if isinstance(judged_index, int) and 0 <= judged_index < len(candidates):
+            return candidates[judged_index]
+    return max(
+        candidates,
+        key=lambda candidate: (candidate.score, candidate.slot_id == "B", candidate.slot_id == "C"),
+    )
+
+
 def generate_chat_reply(
     user_text: str,
     *,
@@ -1376,6 +1682,55 @@ def generate_chat_reply(
         _stage_match = _re.search(r"relationship_stage:\s*(\w+)", memory_context)
         _stage = _stage_match.group(1) if _stage_match else "stranger"
         system_prompt = system_prompt + "\n\n" + build_injection_defense_block(_stage)
+    if _should_use_candidate_selection(
+        executor=executor,
+        user_text=user_text,
+        user_content=user_content,
+        group_context=group_context,
+        group_autonomous=group_autonomous,
+    ):
+        candidates: list[ReplyCandidate] = []
+        for slot_id, prompt_hint in _CANDIDATE_SLOT_HINTS:
+            candidate_prompt = (
+                f"{system_prompt}\n\n[CANDIDATE SLOT {slot_id}] {prompt_hint}\n"
+                "[RERANK NOTE] This slot is intentionally different from the others. Do not converge to assistant-safe phrasing."
+            )
+            candidate_result = executor.run_turn(
+                AgentRunRequest(
+                    system_prompt=candidate_prompt,
+                    user_prompt=user_content or user_text,
+                    tools=[],
+                    history=history_messages,
+                    prefer_direct_response=True,
+                    native_tool_names=(),
+                    mcp_tool_names=(),
+                )
+            )
+            candidate_reply = _result_to_chat_reply(
+                candidate_result,
+                user_text=user_text,
+                user_content=user_content,
+                tools=[],
+                apply_companion_normalization=False,
+                allow_media_repair=False,
+            )
+            score, reasons = _score_candidate_reply(
+                candidate_reply,
+                user_text=user_text,
+                companion_local_context=effective_local_context,
+            )
+            candidates.append(
+                ReplyCandidate(
+                    slot_id=slot_id,
+                    prompt_hint=prompt_hint,
+                    reply=candidate_reply,
+                    score=score,
+                    reasons=reasons,
+                )
+            )
+        selected = _select_best_candidate(candidates)
+        return _apply_companion_text_cleanup(selected.reply)
+
     result = executor.run_turn(
         AgentRunRequest(
             system_prompt=system_prompt,
@@ -1387,37 +1742,13 @@ def generate_chat_reply(
             mcp_tool_names=plan.mcp_tool_names,
         )
     )
-    response_text, profile_update = split_reply_and_profile_update(result.final_text)
-    reminder_update = extract_embedded_reminder_update(result.final_text)
-    schedule_update = extract_embedded_schedule_update(result.final_text)
-    contains_image_placeholder = IMAGE_PLACEHOLDER in response_text
-    response_text = normalize_user_reply(response_text)
-    response_text = normalize_companion_reply(response_text)
-    if not response_text:
-        response_text = "嗯"
-    media = _extract_media(result.messages)
-    if not media:
-        raw_events = result.raw_response.get("events", []) if isinstance(result.raw_response, dict) else []
-        media = _extract_media_from_events(raw_events)
-    tool_audit = _extract_tool_audit(result.messages)
-    if contains_image_placeholder and not media:
-        repaired_media, repaired_audit = _repair_missing_image_media(
-            response_text=result.final_text,
-            user_text=user_text,
-            user_content=user_content,
-            tools=tools,
-        )
-        if repaired_media:
-            media = repaired_media
-        if repaired_audit:
-            tool_audit = [*tool_audit, *repaired_audit]
-    return ChatReply(
-        text=response_text,
-        profile_update=profile_update,
-        reminder_update=reminder_update,
-        schedule_update=schedule_update,
-        media=media,
-        tool_audit=tool_audit,
+    return _result_to_chat_reply(
+        result,
+        user_text=user_text,
+        user_content=user_content,
+        tools=tools,
+        apply_companion_normalization=True,
+        allow_media_repair=True,
     )
 
 

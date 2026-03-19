@@ -8,6 +8,12 @@ from analyst.delivery.companion_schedule import apply_companion_schedule_update
 from analyst.engine import AgentExecutor
 from analyst.engine.live_types import AgentTool, MessageContent
 from analyst.memory import build_chat_context, build_group_chat_context, record_chat_interaction
+from analyst.memory.companion_self_state import (
+    build_companion_turn_context_enrichment,
+    build_proactive_companion_context_enrichment,
+    detect_used_callback,
+    mark_callback_used,
+)
 from analyst.storage import SQLiteEngineStore
 from analyst.tools._request_context import RequestImageInput, bind_request_image
 
@@ -19,6 +25,17 @@ def _append_image_hint(context: str, hint: str) -> str:
     if context:
         return f"{context}\n{hint}"
     return hint
+
+
+def _extract_routine_state(context: str) -> str:
+    for raw_line in str(context or "").splitlines():
+        if not raw_line.startswith("routine_state:"):
+            continue
+        _, _, value = raw_line.partition(":")
+        candidate = value.strip()
+        if candidate and candidate != "(unset)":
+            return candidate
+    return ""
 
 
 MemoryContextBuilder = Callable[..., str]
@@ -134,6 +151,8 @@ def run_companion_turn_for_input(
     from analyst.delivery.injection_scanner import scan_for_injection
     injection_detected = scan_for_injection(conversation.message)
     profile = store.get_client_profile(conversation.user_id)
+    self_state = None
+    callback_candidates: tuple[str, ...] = ()
 
     # --- Image decision layer ---
     from analyst.delivery.image_decision import should_generate_image
@@ -141,6 +160,21 @@ def run_companion_turn_for_input(
 
     filtered_tools = list(tools)
     companion_local_context = conversation.companion_local_context
+    try:
+        enrichment, self_state, _, callback_candidates = build_companion_turn_context_enrichment(
+            store,
+            client_id=conversation.user_id,
+            channel_id=conversation.channel_id,
+            thread_id=conversation.thread_id,
+            user_text=conversation.message,
+            history=conversation.history,
+            memory_context=memory_context,
+            routine_state=_extract_routine_state(companion_local_context),
+        )
+        companion_local_context = _append_image_hint(companion_local_context, enrichment)
+    except Exception:
+        self_state = None
+        callback_candidates = ()
     try:
         _stage_match = _re.search(r"relationship_stage:\s*(\w+)", memory_context)
         _stage = _stage_match.group(1) if _stage_match else "acquaintance"
@@ -185,7 +219,7 @@ def run_companion_turn_for_input(
         pass  # If decision layer fails, fall through with original tools
 
     with bind_request_image(conversation.attached_image):
-        return reply_generator(
+        reply = reply_generator(
             conversation.message,
             history=conversation.history,
             agent_loop=agent_loop,
@@ -199,6 +233,11 @@ def run_companion_turn_for_input(
             injection_detected=injection_detected,
             group_autonomous=conversation.group_autonomous,
         )
+    if self_state is not None and callback_candidates:
+        used_callback = detect_used_callback(reply.text, callback_candidates)
+        if used_callback:
+            mark_callback_used(store, self_state=self_state, callback_fact=used_callback)
+    return reply
 
 
 def persist_companion_turn(
@@ -343,11 +382,23 @@ def run_proactive_companion_turn_for_input(
         persona_mode=conversation.persona_mode,
     )
     profile = store.get_client_profile(conversation.user_id)
+    companion_local_context = conversation.companion_local_context
+    try:
+        proactive_context, _ = build_proactive_companion_context_enrichment(
+            store,
+            client_id=conversation.user_id,
+            channel_id=conversation.channel_id,
+            thread_id=conversation.thread_id,
+            routine_state=_extract_routine_state(companion_local_context),
+        )
+        companion_local_context = _append_image_hint(companion_local_context, proactive_context)
+    except Exception:
+        pass
     return proactive_reply_generator(
         kind=conversation.kind,
         agent_loop=agent_loop,
         tools=tools,
         memory_context=memory_context,
         preferred_language=profile.preferred_language,
-        companion_local_context=conversation.companion_local_context,
+        companion_local_context=companion_local_context,
     )

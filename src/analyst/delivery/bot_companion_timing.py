@@ -8,6 +8,9 @@ from zoneinfo import ZoneInfo
 
 from analyst.contracts import utc_now
 from analyst.storage import SQLiteEngineStore
+from analyst.memory.companion_self_state import (
+    build_companion_self_context,
+)
 
 from analyst.memory.topic_state import _is_acknowledgement, _collapse_whitespace
 
@@ -156,15 +159,15 @@ def _first_reply_delay_seconds(text: str, *, has_image: bool = False) -> float:
     if bucket == "seen_no_rush":
         # Deterministic short pause for plain callers; the probabilistic long
         # delay is handled via _seen_no_rush_delay at the call site.
-        return random.uniform(5.0, 12.0)
+        return random.uniform(3.0, 8.0)
     if bucket == "instant":
-        return random.uniform(5.0, 12.0)
+        return random.uniform(3.0, 6.0)
     if bucket == "emotional":
-        return random.uniform(12.0, 30.0)
+        return random.uniform(16.0, 28.0)
     if bucket == "deep_story":
-        return random.uniform(15.0, 40.0)
+        return random.uniform(24.0, 40.0)
     # normal
-    return random.uniform(8.0, 20.0)
+    return random.uniform(8.0, 14.0)
 
 def evaluate_relationship_checkin_kind(
     relationship: Any,
@@ -440,6 +443,8 @@ def _companion_local_context(
     now: datetime,
     *,
     client_id: str = "",
+    channel_id: str = "",
+    thread_id: str = "",
 ) -> str:
     local_now = _companion_local_now(now)
     day_type = "weekend" if _is_weekend(local_now) else "weekday"
@@ -457,4 +462,17 @@ def _companion_local_context(
         now=now,
         routine_state=str(getattr(lifestyle_state, "routine_state", "") or ""),
     )
-    return f"{base}\n{schedule_context}"
+    self_context = ""
+    if client_id and channel_id and thread_id:
+        self_context, _ = build_companion_self_context(
+            store,
+            client_id=client_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            now=now,
+            routine_state=str(getattr(lifestyle_state, "routine_state", "") or ""),
+        )
+    parts = [base, schedule_context]
+    if self_context:
+        parts.append(self_context)
+    return "\n".join(part for part in parts if part)
