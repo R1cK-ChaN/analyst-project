@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 import re
 from typing import Any
 
-from analyst.macro_data import MacroDataClient
 from analyst.storage import (
     ClientProfileRecord,
     CompanionRelationshipStateRecord,
@@ -64,87 +63,6 @@ _GROUP_TENSION_MARKERS = (
     "烦死",
     "少来",
 )
-
-
-def build_research_context(
-    store: SQLiteEngineStore,
-    *,
-    data_client: MacroDataClient | None = None,
-    budget: RenderBudget | None = None,
-) -> str:
-    limits = budget or RenderBudget(total_chars=4500)
-    snapshots = store.list_recent_regime_snapshots(limit=3)
-    notes = store.list_recent_generated_notes(limit=3)
-    observations = store.list_recent_analytical_observations(limit=4)
-    if data_client is None:
-        recent_events: list[Any] = store.list_recent_events(limit=18, days=14, released_only=True)
-    else:
-        recent_events = data_client.invoke("get_recent_releases", {"limit": 18, "days": 14}).get("events", [])
-
-    sections: list[tuple[str, list[str]]] = []
-
-    regime_lines = [
-        f"- {snapshot.timestamp}: {trim_text(snapshot.summary, max_chars=limits.max_item_chars)}"
-        for snapshot in snapshots
-    ]
-    sections.append(("最近状态轨迹", regime_lines))
-
-    surprise_lines = _render_surprise_patterns(recent_events, limits=limits)
-    sections.append(("最近数据模式", surprise_lines))
-
-    observation_lines = [
-        f"- {observation.observation_type}: {trim_text(observation.summary, max_chars=limits.max_item_chars)}"
-        for observation in observations
-    ]
-    sections.append(("分析观察", observation_lines))
-
-    note_lines = [
-        f"- {note.title}: {trim_text(note.summary, max_chars=limits.max_item_chars)}"
-        for note in notes
-    ]
-    sections.append(("近期研究输出", note_lines))
-
-    return render_context_sections(sections, budget=limits)
-
-
-def build_trading_context(
-    store: SQLiteEngineStore,
-    *,
-    budget: RenderBudget | None = None,
-) -> str:
-    limits = budget or RenderBudget(total_chars=4500)
-    research = store.list_recent_research_artifacts(limit=limits.max_research_items)
-    trading = store.list_recent_trading_artifacts(limit=limits.max_trading_items)
-    decisions = store.list_recent_decisions(limit=4)
-    positions = store.list_position_state(limit=6)
-    performance = store.list_recent_performance_records(limit=4)
-
-    sections = [
-        (
-            "最新研究",
-            [f"- {item.title}: {trim_text(item.summary, max_chars=limits.max_item_chars)}" for item in research],
-        ),
-        (
-            "当前仓位",
-            [
-                f"- {item.symbol}: {item.direction} {item.exposure:.2f} | {trim_text(item.thesis, max_chars=limits.max_item_chars)}"
-                for item in positions
-            ],
-        ),
-        (
-            "最近决策",
-            [f"- {item.title}: {trim_text(item.summary, max_chars=limits.max_item_chars)}" for item in decisions],
-        ),
-        (
-            "已发布交易观点",
-            [f"- {item.title}: {trim_text(item.summary, max_chars=limits.max_item_chars)}" for item in trading],
-        ),
-        (
-            "表现记录",
-            [f"- {item.metric_name} {item.period_label}: {item.metric_value:.2f}" for item in performance],
-        ),
-    ]
-    return render_context_sections(sections, budget=limits)
 
 
 def build_user_context(
@@ -1242,24 +1160,3 @@ def _render_delivery_history(deliveries: list[DeliveryQueueRecord], *, limits: R
     return lines
 
 
-def _render_surprise_patterns(events: list[Any], *, limits: RenderBudget) -> list[str]:
-    by_category: dict[str, list[float]] = defaultdict(list)
-    for event in events:
-        surprise = event["surprise"] if isinstance(event, dict) else event.surprise
-        category = event["category"] if isinstance(event, dict) else event.category
-        if surprise is None or not category:
-            continue
-        by_category[category].append(float(surprise))
-
-    lines: list[str] = []
-    for category, surprises in sorted(by_category.items()):
-        avg = sum(surprises) / len(surprises)
-        beats = sum(1 for value in surprises if value > 0)
-        misses = sum(1 for value in surprises if value < 0)
-        lines.append(
-            trim_text(
-                f"- {category}: {len(surprises)} releases | beats {beats} | misses {misses} | avg surprise {avg:.3f}",
-                max_chars=limits.max_item_chars,
-            )
-        )
-    return lines[:4]

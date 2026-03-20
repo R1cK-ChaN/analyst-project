@@ -14,9 +14,7 @@ from analyst.memory import (
     ClientProfileUpdate,
     build_chat_context,
     build_group_chat_context,
-    build_research_context,
     build_user_context,
-    build_trading_context,
     record_chat_interaction,
     record_user_interaction,
     refresh_group_member_public_inference,
@@ -358,84 +356,6 @@ class MemoryPipelineTest(unittest.TestCase):
             self.assertIn("active_topic: planning / scheduling", context)
             self.assertIn("reply_focus: 我们明天要不要见面？", context)
             self.assertIn("cooling_topics: meal / food", context)
-
-    def test_research_and_trading_context_builders_use_typed_stores(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            store = SQLiteEngineStore(Path(temp_dir) / "engine.db")
-
-            snapshot = store.save_regime_snapshot(
-                regime_json={"dominant_narrative": "通胀黏性压制降息预期。"},
-                trigger_event="CPI",
-                summary="通胀黏性压制降息预期。",
-            )
-            note = store.save_generated_note(
-                note_type="flash_commentary",
-                title="数据快评 | CPI",
-                summary="利率定价继续偏鹰。",
-                body_markdown="### 一句话总结\nCPI 高于预期。",
-                regime_json={"dominant_narrative": "通胀黏性压制降息预期。"},
-                metadata={},
-            )
-            store.add_analytical_observation(
-                observation_type="pattern",
-                summary="CPI 已连续三个月高于预期。",
-                detail="说明通胀下行速度慢于市场预期。",
-                source_kind="generated_note",
-                source_id=note.note_id,
-                metadata={},
-            )
-            research_artifact = store.publish_research_artifact(
-                artifact_type="flash_commentary",
-                title=note.title,
-                summary=note.summary,
-                content_markdown=note.body_markdown,
-                source_kind="generated_note",
-                source_id=note.note_id,
-                tags=["ws1"],
-                metadata={},
-            )
-            decision = store.log_trading_decision(
-                decision_type="allocation_shift",
-                title="降低久期",
-                summary="在更久高利率路径下缩短久期。",
-                rationale_markdown="久期敏感资产先降风险。",
-                research_artifact_id=research_artifact.artifact_id,
-                signal_id=None,
-                metadata={},
-            )
-            store.upsert_position_state(
-                symbol="US10Y",
-                exposure=-0.25,
-                direction="short",
-                thesis="更久高利率压制长端利率下行空间。",
-                metadata={},
-            )
-            store.record_performance(
-                metric_name="pnl",
-                metric_value=1.8,
-                period_label="1w",
-                metadata={},
-            )
-            store.publish_trading_artifact(
-                artifact_type="recommendation",
-                title="短久期建议",
-                summary="先控制利率敏感资产久期。",
-                rationale_markdown="通胀与联储路径仍偏鹰。",
-                research_artifact_id=research_artifact.artifact_id,
-                decision_log_id=decision.decision_id,
-                signal={"instrument": "US10Y", "action": "short"},
-                confidence=0.74,
-                tags=["rates"],
-                metadata={},
-            )
-
-            research_context = build_research_context(store)
-            trading_context = build_trading_context(store)
-
-            self.assertIn(snapshot.summary, research_context)
-            self.assertIn("CPI 已连续三个月高于预期", research_context)
-            self.assertIn("短久期建议", trading_context)
-            self.assertIn("US10Y", trading_context)
 
     def test_days_since_last_active_handles_naive_timestamp(self) -> None:
         """Naive ISO timestamps (no tzinfo) must not crash the context builder."""

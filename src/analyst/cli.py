@@ -10,7 +10,6 @@ import shutil
 import sys
 from urllib.parse import urlparse
 
-from analyst.contracts import format_epoch
 from analyst.delivery.companion_schedule import (
     apply_companion_schedule_update,
     build_companion_schedule_context,
@@ -20,94 +19,19 @@ from analyst.memory import build_chat_context, record_chat_interaction
 from analyst.runtime.chat import build_companion_services, generate_chat_reply, split_into_bubbles
 from analyst.runtime.conversation_service import persist_companion_turn_for_input, run_companion_turn_for_input
 from analyst.runtime.environment_adapter import build_cli_conversation_input
-from analyst.storage.sqlite import NewsArticleRecord, StoredEventRecord
 from analyst.tools import build_image_gen_tool, build_live_photo_tool
 from analyst.tools._image_gen import GeneratedImage, ImageGenConfig, SeedreamImageClient
 from analyst.tools._request_context import RequestImageInput, bind_request_image
 
-from .app import build_demo_app, build_live_engine_app
-
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Standalone Analyst product demo")
+    parser = argparse.ArgumentParser(description="Analyst companion agent CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    ask = subparsers.add_parser("ask")
-    ask.add_argument("question")
-
-    draft = subparsers.add_parser("draft")
-    draft.add_argument("request")
-
-    prep = subparsers.add_parser("meeting-prep")
-    prep.add_argument("request")
-
-    route = subparsers.add_parser("route")
-    route.add_argument("message")
-
-    regime = subparsers.add_parser("regime")
-    regime.add_argument("--focus", default="global")
-
-    calendar = subparsers.add_parser("calendar")
-    calendar.add_argument("--limit", type=int, default=5)
-
-    premarket = subparsers.add_parser("premarket")
-    premarket.add_argument("--focus", default="global")
-
-    refresh = subparsers.add_parser("refresh")
-    refresh.add_argument("--once", action="store_true", help="Refresh all WS1 sources once")
-
-    live_cal = subparsers.add_parser("live-calendar")
-    live_cal.add_argument("--scope", choices=["today", "upcoming", "recent", "week"], default="today")
-    live_cal.add_argument("--country", default=None)
-    live_cal.add_argument("--category", default=None)
-    live_cal.add_argument("--importance", default=None)
-    live_cal.add_argument("--limit", type=int, default=20)
-
-    subparsers.add_parser("schedule")
-
-    flash = subparsers.add_parser("flash")
-    flash.add_argument("--indicator")
-
-    subparsers.add_parser("briefing")
-    subparsers.add_parser("wrap")
-    subparsers.add_parser("regime-refresh")
-
-    news_refresh = subparsers.add_parser("news-refresh")
-    news_refresh.add_argument("--category", default=None)
-
-    news_latest = subparsers.add_parser("news-latest")
-    news_latest.add_argument("--limit", type=int, default=20)
-    news_latest.add_argument("--impact", default=None)
-    news_latest.add_argument("--category", default=None)
-
-    news_search = subparsers.add_parser("news-search")
-    news_search.add_argument("query")
-    news_search.add_argument("--limit", type=int, default=20)
-
-
-    portfolio_import = subparsers.add_parser("portfolio-import")
-    portfolio_import.add_argument("csv_path", help="Path to CSV file with holdings")
-    portfolio_import.add_argument("--portfolio-id", default="default")
-    portfolio_import.add_argument("--db-path", default=None)
-
-    portfolio_sync = subparsers.add_parser("portfolio-sync")
-    portfolio_sync.add_argument("--broker", default="ibkr", help="Broker adapter (default: ibkr)")
-    portfolio_sync.add_argument("--account", default="", help="Broker account ID (auto-detect if omitted)")
-    portfolio_sync.add_argument("--gateway-url", default="", help="Override gateway URL")
-    portfolio_sync.add_argument("--portfolio-id", default="default")
-    portfolio_sync.add_argument("--db-path", default=None)
-    portfolio_sync.add_argument("--dry-run", action="store_true", help="Show positions without persisting")
-
-    portfolio_risk = subparsers.add_parser("portfolio-risk")
-    portfolio_risk.add_argument("--portfolio-id", default="default")
-    portfolio_risk.add_argument("--json", action="store_true", dest="as_json")
-    portfolio_risk.add_argument("--db-path", default=None)
 
     companion_chat = subparsers.add_parser("companion-chat")
     companion_chat.add_argument("--client-id", default="cli-demo")
     companion_chat.add_argument("--channel-id", default="cli:local")
     companion_chat.add_argument("--thread-id", default="main")
-    companion_chat.add_argument("--focus", default="global")
     companion_chat.add_argument("--db-path", default=None)
     companion_chat.add_argument("--once", default=None, help="Run a single companion chat turn and exit.")
     companion_chat.add_argument(
@@ -132,173 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the final saved-artifact manifest as JSON.",
     )
 
-    # -- RAG subcommands ----------------------------------------
-    rag_parser = subparsers.add_parser("rag")
-    rag_sub = rag_parser.add_subparsers(dest="rag_command", required=True)
-    rag_sub.add_parser("calibrate", help="Full rebuild of Milvus from SQLite")
-    rag_sub.add_parser("sync", help="Incremental sync of new SQLite records to Milvus")
-    rag_sub.add_parser("status", help="Show Milvus collection stats and watermarks")
-
     return parser
-
-
-def _record_field(record: dict[str, object] | object, field: str, default: object = "") -> object:
-    if isinstance(record, dict):
-        return record.get(field, default)
-    return getattr(record, field, default)
-
-
-def format_calendar_event(event: StoredEventRecord | dict[str, object]) -> str:
-    importance = str(_record_field(event, "importance", ""))
-    stars = {"high": "***", "medium": "**", "low": "*"}.get(importance, "*")
-    actual = str(_record_field(event, "actual", "") or "-")
-    forecast = str(_record_field(event, "forecast", "") or "-")
-    previous = str(_record_field(event, "previous", "") or "-")
-    timestamp = _record_field(event, "timestamp", 0)
-    dt = format_epoch(int(timestamp)) if isinstance(timestamp, (int, float)) else str(_record_field(event, "datetime_utc", "-"))
-    source = str(_record_field(event, "source", "")).upper()
-    return (
-        f"{dt}  {str(_record_field(event, 'country', '')):>2} {stars:>3}  [{source:<12}]  "
-        f"{str(_record_field(event, 'indicator', '')):<40}  A:{actual:<8} F:{forecast:<8} P:{previous}"
-    )
-
-
-def format_news_headline(article: NewsArticleRecord | dict[str, object]) -> str:
-    timestamp = _record_field(article, "timestamp", None)
-    if isinstance(timestamp, (int, float)):
-        dt = format_epoch(int(timestamp))
-    else:
-        dt = str(_record_field(article, "published_at_local", _record_field(article, "published_at", "-")))
-    impact = str(_record_field(article, "impact_level", "")).upper()
-    country = str(_record_field(article, "country", "") or "--")
-    subject_value = str(_record_field(article, "subject", "") or "")
-    subject = f"  [{subject_value}]" if subject_value else ""
-    return (
-        f"{dt}  {country:>2} [{impact:<8}]  [{str(_record_field(article, 'source_feed', '')):<20}]  "
-        f"{str(_record_field(article, 'title', ''))}{subject}"
-    )
-
-
-def _run_portfolio_sync(args: argparse.Namespace) -> int:
-    from analyst.portfolio import create_broker_adapter, validate_holdings
-    from analyst.portfolio.brokers import BrokerAuthError, BrokerConnectionError
-    from analyst.storage import SQLiteEngineStore
-
-    try:
-        adapter = create_broker_adapter(
-            args.broker,
-            gateway_url=args.gateway_url,
-            account_id=args.account,
-        )
-        result = adapter.fetch_positions(account_id=args.account)
-    except BrokerAuthError as exc:
-        print(f"AUTH ERROR: {exc}")
-        return 1
-    except BrokerConnectionError as exc:
-        print(f"CONNECTION ERROR: {exc}")
-        return 1
-    except ValueError as exc:
-        print(f"CONFIG ERROR: {exc}")
-        return 1
-
-    if not result.holdings:
-        print(f"No positions found in {args.broker} account {result.account_id}.")
-        for s in result.skipped:
-            print(f"  SKIPPED: {s}")
-        return 0
-
-    warnings = validate_holdings(result.holdings)
-    warnings.extend(result.warnings)
-    for w in warnings:
-        print(f"WARNING: {w}")
-
-    print(f"\n{len(result.holdings)} positions from {result.broker} account {result.account_id}:")
-    for h in result.holdings:
-        print(f"  {h.symbol:>8}  {h.weight:>6.1%}  ${h.notional:>12,.0f}  {h.asset_class:<14} {h.name}")
-    if result.skipped:
-        print(f"\nSkipped {len(result.skipped)} positions:")
-        for s in result.skipped:
-            print(f"  {s}")
-
-    if args.dry_run:
-        print("\n[dry-run] No changes written.")
-        return 0
-
-    db_path = Path(args.db_path) if args.db_path else None
-    store = SQLiteEngineStore(db_path=db_path)
-    store.replace_portfolio_holdings(
-        [
-            {
-                "symbol": h.symbol,
-                "name": h.name,
-                "asset_class": h.asset_class,
-                "weight": h.weight,
-                "notional": h.notional,
-            }
-            for h in result.holdings
-        ],
-        portfolio_id=args.portfolio_id,
-    )
-    print(f"\nImported {len(result.holdings)} holdings into portfolio '{args.portfolio_id}'.")
-    return 0
-
-
-def _run_portfolio_import(args: argparse.Namespace) -> int:
-    from analyst.portfolio import load_holdings_from_csv, validate_holdings
-    from analyst.storage import SQLiteEngineStore
-
-    db_path = Path(args.db_path) if args.db_path else None
-    store = SQLiteEngineStore(db_path=db_path)
-    holdings = load_holdings_from_csv(args.csv_path)
-    warnings = validate_holdings(holdings)
-    for w in warnings:
-        print(f"WARNING: {w}")
-    store.replace_portfolio_holdings(
-        [
-            {
-                "symbol": h.symbol,
-                "name": h.name,
-                "asset_class": h.asset_class,
-                "weight": h.weight,
-                "notional": h.notional,
-            }
-            for h in holdings
-        ],
-        portfolio_id=args.portfolio_id,
-    )
-    print(f"Imported {len(holdings)} holdings into portfolio '{args.portfolio_id}'.")
-    for h in holdings:
-        print(f"  {h.symbol:>8}  {h.weight:>6.1%}  ${h.notional:>10,.0f}  {h.name}")
-    return 0
-
-
-def _run_portfolio_risk(args: argparse.Namespace) -> int:
-    from analyst.portfolio import compute_portfolio_snapshot, load_portfolio_config
-    from analyst.storage import SQLiteEngineStore
-
-    db_path = Path(args.db_path) if args.db_path else None
-    store = SQLiteEngineStore(db_path=db_path)
-    config = load_portfolio_config()
-    snapshot = compute_portfolio_snapshot(store, args.portfolio_id, config)
-    if args.as_json:
-        print(json.dumps(snapshot.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
-    else:
-        print(f"Portfolio Risk Snapshot  ({snapshot.as_of.strftime('%Y-%m-%d %H:%M UTC')})")
-        print(f"  Annualized Vol : {snapshot.portfolio_vol_annualized:.1%}")
-        print(f"  Daily Vol      : {snapshot.portfolio_vol_daily:.4f}")
-        print(f"  Target Vol     : {snapshot.target_vol:.1%}")
-        print(f"  Scale Factor   : {snapshot.scale_factor:.2f}")
-        print(f"  VIX            : {snapshot.vix_level:.1f}  (P{snapshot.vix_percentile:.0f}, {snapshot.vix_regime})")
-        print()
-        print("  Risk Contributions:")
-        for rc in snapshot.risk_contributions:
-            print(f"    {rc.symbol:>8}  weight {rc.weight:>5.0%}  risk {rc.marginal_contribution:>5.0%}  standalone {rc.standalone_vol:>5.1%}")
-        if snapshot.alerts:
-            print()
-            print("  Alerts:")
-            for a in snapshot.alerts:
-                print(f"    [{a.severity.upper():>7}] {a.message}")
-    return 0
 
 
 def _print_user_profile(store, client_id: str) -> None:
@@ -515,129 +273,15 @@ def _run_companion_chat(args: argparse.Namespace) -> int:
         handle_turn(user_text)
 
 
-def _run_rag(args: argparse.Namespace) -> int:
-    from analyst.macro_data.cli import main as macro_data_main
-
-    return macro_data_main(["rag", args.rag_command])
-
-
-
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "ask":
-        app = build_demo_app()
-        print(app.ask(args.question).markdown)
-        return 0
-    if args.command == "draft":
-        app = build_demo_app()
-        print(app.draft(args.request).markdown)
-        return 0
-    if args.command == "meeting-prep":
-        app = build_demo_app()
-        print(app.meeting_prep(args.request).markdown)
-        return 0
-    if args.command == "route":
-        app = build_demo_app()
-        print(app.route(args.message).markdown)
-        return 0
-    if args.command == "regime":
-        app = build_demo_app()
-        print(app.regime(focus=args.focus).markdown)
-        return 0
-    if args.command == "calendar":
-        app = build_demo_app()
-        print(app.calendar(limit=args.limit).markdown)
-        return 0
-    if args.command == "premarket":
-        app = build_demo_app()
-        print(app.premarket(focus=args.focus).body_markdown)
-        return 0
-    if args.command == "live-calendar":
-        app = build_live_engine_app()
-        events = app.live_calendar(
-            scope=args.scope,
-            country=args.country,
-            category=args.category,
-            importance=args.importance,
-            limit=args.limit,
-        )
-        if not events:
-            print("No events found.")
-        else:
-            for event in events:
-                print(format_calendar_event(event))
-        return 0
-    if args.command == "refresh":
-        if not args.once:
-            parser.error("refresh requires --once; use schedule for continuous refresh")
-        app = build_live_engine_app()
-        print(json.dumps(app.refresh(), ensure_ascii=False, sort_keys=True))
-        return 0
-    if args.command == "schedule":
-        app = build_live_engine_app()
-        app.schedule()
-        return 0
-    if args.command == "flash":
-        app = build_live_engine_app()
-        print(app.flash(indicator_keyword=args.indicator).body_markdown)
-        return 0
-    if args.command == "briefing":
-        app = build_live_engine_app()
-        print(app.briefing().body_markdown)
-        return 0
-    if args.command == "wrap":
-        app = build_live_engine_app()
-        print(app.wrap().body_markdown)
-        return 0
-    if args.command == "regime-refresh":
-        app = build_live_engine_app()
-        state = app.regime_refresh()
-        print(state.summary)
-        for score in state.scores:
-            print(f"- {score.axis}: {score.label} ({score.score:.0f})")
-        return 0
-    if args.command == "news-refresh":
-        app = build_live_engine_app()
-        result = app.refresh_news(category=args.category)
-        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-        return 0
-    if args.command == "news-latest":
-        app = build_live_engine_app()
-        articles = app.latest_news(
-            limit=args.limit,
-            impact_level=args.impact,
-            feed_category=args.category,
-        )
-        if not articles:
-            print("No news articles found.")
-        else:
-            for article in articles:
-                print(format_news_headline(article))
-        return 0
-    if args.command == "news-search":
-        app = build_live_engine_app()
-        articles = app.search_news(args.query, limit=args.limit)
-        if not articles:
-            print("No matching news articles found.")
-        else:
-            for article in articles:
-                print(format_news_headline(article))
-        return 0
-    if args.command == "portfolio-sync":
-        return _run_portfolio_sync(args)
-    if args.command == "portfolio-import":
-        return _run_portfolio_import(args)
-    if args.command == "portfolio-risk":
-        return _run_portfolio_risk(args)
     if args.command == "companion-chat":
         return _run_companion_chat(args)
     if args.command == "media-gen":
         return _run_media_gen(args)
-    if args.command == "rag":
-        return _run_rag(args)
 
     parser.error("unknown command")
     return 2

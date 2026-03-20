@@ -23,7 +23,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst import build_demo_app
 from analyst.contracts import (
     DraftResponse,
     InteractionMode,
@@ -296,27 +295,6 @@ class TestTelegramFormatter(unittest.TestCase):
     def test_format_research_note_includes_compliance(self) -> None:
         msg = self.formatter.format_research_note(self._make_research_note())
         self.assertIn("合规提示", msg.markdown)
-
-    def test_format_calendar_channel_is_telegram(self) -> None:
-        app = build_demo_app()
-        items = app.engine.get_calendar(limit=2)
-        msg = self.formatter.format_calendar(items)
-        self.assertEqual(msg.channel, "telegram")
-        self.assertEqual(msg.mode, InteractionMode.CALENDAR)
-        self.assertIn("合规提示", msg.markdown)
-
-    def test_format_calendar_metadata_has_count(self) -> None:
-        app = build_demo_app()
-        items = app.engine.get_calendar(limit=3)
-        msg = self.formatter.format_calendar(items)
-        self.assertEqual(msg.metadata["items"], str(len(items)))
-
-    def test_format_calendar_plain_text_includes_compliance(self) -> None:
-        """Finding 3: calendar plain_text must include the disclaimer."""
-        app = build_demo_app()
-        items = app.engine.get_calendar(limit=2)
-        msg = self.formatter.format_calendar(items)
-        self.assertIn("合规提示", msg.plain_text)
 
     def test_format_research_note_plain_text_includes_body(self) -> None:
         """Finding 2: plain_text must include the full body, not just summary."""

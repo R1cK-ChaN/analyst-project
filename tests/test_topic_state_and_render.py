@@ -10,7 +10,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.memory.render import RenderBudget, render_context_sections, sub_agent_budget, trim_text
+from analyst.memory.render import RenderBudget, render_context_sections, trim_text
 from analyst.memory.topic_state import (
     ConversationTopicMessage,
     TopicStateEntry,
@@ -69,14 +69,6 @@ class TestRenderBudget(unittest.TestCase):
         self.assertEqual(b.max_trading_items, 4)
         self.assertEqual(b.max_delivery_items, 4)
 
-    def test_sub_agent_budget_values(self):
-        b = sub_agent_budget()
-        self.assertEqual(b.total_chars, 2500)
-        self.assertEqual(b.max_item_chars, 200)
-        self.assertEqual(b.max_recent_messages, 0)
-        self.assertEqual(b.max_research_items, 2)
-        self.assertEqual(b.max_trading_items, 2)
-        self.assertEqual(b.max_delivery_items, 0)
 
     def test_frozen(self):
         b = RenderBudget()

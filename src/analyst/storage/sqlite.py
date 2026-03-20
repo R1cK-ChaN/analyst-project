@@ -49,7 +49,6 @@ from .sqlite_market_macro import SQLiteMarketMacroMixin
 from .sqlite_memory import SQLiteMemoryMixin
 from .sqlite_news import SQLiteNewsMixin
 from .sqlite_observation_families import SQLiteObservationFamilyMixin
-from .sqlite_portfolio import SQLitePortfolioMixin
 from .sqlite_research import SQLiteResearchMixin
 from .sqlite_schema import SQLiteSchemaMixin
 
@@ -60,7 +59,6 @@ class SQLiteEngineStore(
     SQLiteMarketMacroMixin,
     SQLiteNewsMixin,
     SQLiteMemoryMixin,
-    SQLitePortfolioMixin,
     SQLiteGroupMixin,
     SQLiteDocumentMixin,
     SQLiteObservationFamilyMixin,
