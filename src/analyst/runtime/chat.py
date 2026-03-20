@@ -1681,7 +1681,23 @@ def _looks_like_live_research_request(user_text: str) -> bool:
             "收益率",
         )
     )
-    return has_market and (has_temporal or has_news)
+    if has_market and (has_temporal or has_news):
+        return True
+    # Factual queries that likely need web search
+    has_factual_query = any(
+        token in lowered
+        for token in (
+            "天气", "weather", "气温", "temperature", "下雨", "rain",
+            "比分", "score", "结果", "result",
+            "汇率", "exchange rate",
+        )
+    )
+    if has_factual_query:
+        return True
+    # "What is X" / "X是什么" patterns
+    if re.search(r"(?:what is|who is|when is|where is|是什么|是谁|在哪)", lowered):
+        return True
+    return False
 
 
 def _looks_like_reminder_request(user_text: str) -> bool:
