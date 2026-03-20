@@ -38,10 +38,10 @@ analyst-relay-eval = "analyst.delivery.relay_eval:main"
 analyst-telegram = "analyst.delivery.bot:main"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = {"" = "."}
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
 
 [tool.pytest.ini_options]
 markers = [

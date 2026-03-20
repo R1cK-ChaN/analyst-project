@@ -25,7 +25,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from analyst.engine.live_types import AgentLoopResult, ConversationMessage
 from analyst.delivery.bot_constants import MAX_DOCUMENT_TEXT_CHARS, MAX_DOCUMENT_FILE_SIZE

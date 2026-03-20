@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from analyst.engine.live_provider import ClaudeCodeConfig, ClaudeCodeProvider
 from analyst.runtime.capabilities import build_capability_tools, get_capability_surface

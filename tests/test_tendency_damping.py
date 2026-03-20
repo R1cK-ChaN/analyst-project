@@ -7,7 +7,7 @@ from pathlib import Path
 import unittest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from analyst.memory.relationship import (
     apply_tendency_damping,

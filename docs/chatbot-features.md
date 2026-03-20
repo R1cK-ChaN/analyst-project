@@ -6,7 +6,7 @@ This document catalogues all features the chatbot system supports, split into **
 
 ## Core Agent Capabilities
 
-These work regardless of messaging platform. They live outside `delivery/` and depend only on the engine, runtime, memory, tools, and analysis packages.
+These work regardless of messaging platform. They live outside `delivery/` and depend only on the engine, runtime, memory, and tools packages.
 
 ### Persona & Identity
 
@@ -89,68 +89,6 @@ The companion agent is self-contained with these tools:
 
 The model decides when to use `web_search` — no rule-based trigger. Prompt guidance: search for facts you're uncertain about, don't search for casual chat, reply in casual texting voice after search, don't show URLs.
 
-### Other Tools (platform toolkit, not companion)
-
-#### Research & Data
-| Tool | Description |
-|------|-------------|
-| `web_search` | Internet search via OpenRouter |
-| `web_fetch` | Fetch and extract content from URLs |
-| `live_news` | Recent news from macro-data-service |
-| `live_markets` | Real-time market data |
-| `live_calendar` | Upcoming economic events |
-| `country_indicators` | Macro indicators by country |
-| `reference_rates` | Central bank rates |
-| `rate_expectations` | Market-implied rate expectations |
-| `article` | Fetch and parse a specific article |
-
-#### Portfolio
-| Tool | Description |
-|------|-------------|
-| `portfolio_risk` | Portfolio risk metrics and analysis |
-| `portfolio_holdings` | Current position data |
-| `portfolio_sync` | Sync from brokers (IBKR, Tiger, Longbridge) |
-| `vix_regime` | VIX-based market regime scoring |
-
-#### Stored Data
-| Tool | Description |
-|------|-------------|
-| `stored_news` | Search archived news in SQLite |
-| `stored_research` | Search stored research notes |
-| `indicator_history` | Historical indicator time series |
-| `fed_comms` | Fed communications archive |
-| `rag_search` | Vector search over documents (Milvus + BM25) |
-
-#### Computation
-| Tool | Description |
-|------|-------------|
-| `python_analysis` | Execute Python code in Docker sandbox |
-| `analysis_operator` | Run typed analysis operators (13 operators) |
-| `artifact_lookup` / `artifact_store` | Cache and retrieve analysis results |
-
-#### Content Generation
-| Tool | Description |
-|------|-------------|
-| `generate_image` | AI image generation (Volcengine/Doubao) |
-| `generate_live_photo` | Short animated selfie-style videos |
-
-### Analysis Operators (13)
-
-Typed algebra with input/output validation (Series / Dataset / Metric / Signal):
-
-- **Fetch**: `fetch_series`, `fetch_dataset`
-- **Transform**: `resample`, `rolling`, `pct_change`, `threshold`
-- **Relation**: `difference`, `correlation`, `align`, `combine`
-- **Signal**: `trend`, `regression`, `compare`
-
-Artifacts are SHA-256 identified and cached in SQLite with TTL per operator type.
-
-### Sandbox Execution
-
-- **Policy validation**: AST-based — blocks file I/O, subprocess, network, imports of dangerous modules
-- **Docker runner**: Resource-limited container execution
-- **Output**: status, result, stdout, error, timed_out
-
 ### Injection Detection
 
 - Pattern-based scanner detects prompt injection in user input
@@ -160,7 +98,7 @@ Artifacts are SHA-256 identified and cached in SQLite with TTL per operator type
 
 ## Telegram Platform Features
 
-These are specific to the Telegram delivery layer (`src/analyst/delivery/`). A new platform (e.g., WeChat, Discord, WhatsApp) would need equivalent implementations.
+These are specific to the Telegram delivery layer (`analyst/delivery/`). A new platform (e.g., WeChat, Discord, WhatsApp) would need equivalent implementations.
 
 ### Message Handling
 
@@ -266,4 +204,4 @@ When adding a new platform, implement these adapter components:
 | **Typing indicator** | Platform's "typing..." signal | `ChatAction.TYPING` |
 | **History adapter** | Map platform thread/channel IDs to conversation threading model | `bot_history.py` |
 
-The core layer (`engine/`, `runtime/`, `memory/`, `tools/`, `analysis/`, `sandbox/`) requires **zero changes** for a new platform.
+The core layer (`engine/`, `runtime/`, `memory/`, `tools/`) requires **zero changes** for a new platform.

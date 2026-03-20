@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from analyst.delivery.user_chat import system_prompt_with_memory, build_chat_tools, resolve_chat_persona_mode
 from analyst.delivery.soul import (
