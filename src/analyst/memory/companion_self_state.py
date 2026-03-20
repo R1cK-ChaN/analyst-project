@@ -77,6 +77,140 @@ class CompanionEngagementPolicy:
     reasons: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class RelationshipStagePolicy:
+    callback_budget: int          # 0, 1, 2, 3
+    teasing: str                  # "avoid" | "light" | "encouraged"
+    question_budget_per_10: str   # "0-1" | "1-2" | "2-3" | "2-3_action"
+    self_disclosure: str          # "surface" | "moderate" | "moderate-personal" | "personal"
+    comfort_mode: str             # "none" | "action_only"
+    disagreement_ceiling: str     # "low" | "soft" | "medium" | "high"
+
+
+_STAGE_POLICIES = {
+    "stranger": RelationshipStagePolicy(0, "avoid", "0-1", "surface", "none", "low"),
+    "acquaintance": RelationshipStagePolicy(1, "avoid", "1-2", "moderate", "none", "soft"),
+    "familiar": RelationshipStagePolicy(2, "light", "2-3", "moderate-personal", "action_only", "medium"),
+    "close": RelationshipStagePolicy(3, "encouraged", "2-3_action", "personal", "action_only", "high"),
+}
+
+
+def resolve_stage_policy(stage: str) -> RelationshipStagePolicy:
+    return _STAGE_POLICIES.get(stage, _STAGE_POLICIES["stranger"])
+
+
+def apply_tendency_modifier(
+    policy: RelationshipStagePolicy, dominant_tendency: str
+) -> RelationshipStagePolicy:
+    """Adjust stage policy based on dominant tendency. Only affects familiar/close."""
+    if dominant_tendency == "romantic":
+        return RelationshipStagePolicy(
+            callback_budget=policy.callback_budget,
+            teasing=policy.teasing,
+            question_budget_per_10=policy.question_budget_per_10,
+            self_disclosure=policy.self_disclosure,
+            comfort_mode="action_proximity" if policy.comfort_mode == "action_only" else policy.comfort_mode,
+            disagreement_ceiling=policy.disagreement_ceiling,
+        )
+    elif dominant_tendency == "confidant":
+        budget = "2-3" if policy.question_budget_per_10 in ("1-2", "2-3") else policy.question_budget_per_10
+        return RelationshipStagePolicy(
+            callback_budget=policy.callback_budget,
+            teasing=policy.teasing,
+            question_budget_per_10=budget,
+            self_disclosure=policy.self_disclosure,
+            comfort_mode=policy.comfort_mode,
+            disagreement_ceiling=policy.disagreement_ceiling,
+        )
+    return policy
+
+
+_DISAGREEMENT_LEVELS = ("avoid", "low", "soft", "medium", "high")
+
+
+def _clamp_disagreement(engagement_val: str, ceiling: str) -> str:
+    eng_idx = _DISAGREEMENT_LEVELS.index(engagement_val) if engagement_val in _DISAGREEMENT_LEVELS else 1
+    ceil_idx = _DISAGREEMENT_LEVELS.index(ceiling) if ceiling in _DISAGREEMENT_LEVELS else 1
+    return _DISAGREEMENT_LEVELS[min(eng_idx, ceil_idx)]
+
+
+def _apply_stage_ceiling(
+    policy: CompanionEngagementPolicy,
+    stage_policy: RelationshipStagePolicy,
+) -> CompanionEngagementPolicy:
+    clamped_disagreement = _clamp_disagreement(policy.disagreement_style, stage_policy.disagreement_ceiling)
+    clamped_callback = "none" if stage_policy.callback_budget == 0 else policy.callback_style
+    return CompanionEngagementPolicy(
+        mode=policy.mode,
+        target_reply_length=policy.target_reply_length,
+        follow_up_style=policy.follow_up_style,
+        self_topic_style=policy.self_topic_style,
+        disagreement_style=clamped_disagreement,
+        callback_style=clamped_callback,
+        inference_scope=policy.inference_scope,
+        allow_low_energy=policy.allow_low_energy,
+        reasons=policy.reasons,
+    )
+
+
+_LOW_ENGAGEMENT_TOKENS = frozenset({
+    "好的", "ok", "嗯", "哦", "行", "嗯嗯", "俄呐", "噢", "知道了",
+    "好", "好吧", "收到", "了解", "sure", "yeah", "yep", "alright",
+    "got it", "right", "cool", "nice", "k",
+})
+
+
+def _is_low_engagement(text: str) -> bool:
+    stripped = text.strip()
+    if len(stripped) < 5:
+        return True
+    return stripped.lower() in _LOW_ENGAGEMENT_TOKENS
+
+
+def _detect_user_disengagement(history: list[dict[str, str]]) -> bool:
+    user_msgs = [
+        msg.get("content", "")
+        for msg in history[-6:]
+        if str(msg.get("role", "")).strip() == "user"
+    ]
+    last_three = user_msgs[-3:] if len(user_msgs) >= 3 else user_msgs
+    if len(last_three) < 2:
+        return False
+    low_count = sum(1 for msg in last_three if _is_low_engagement(msg))
+    return low_count >= 2
+
+
+def _detect_self_focus_drift(history: list[dict[str, str]]) -> bool:
+    assistant_msgs = [
+        msg.get("content", "")
+        for msg in history[-6:]
+        if str(msg.get("role", "")).strip() == "assistant"
+    ]
+    if not assistant_msgs:
+        return False
+
+    def _is_self_focused(text: str) -> bool:
+        return "我" in text and "你" not in text and "你们" not in text
+
+    # Case 1: last 2 assistant messages both self-focused
+    if len(assistant_msgs) >= 2 and all(_is_self_focused(m) for m in assistant_msgs[-2:]):
+        return True
+    # Case 2: last 1 assistant message self-focused AND last user reply is low_engagement
+    user_msgs = [
+        msg.get("content", "")
+        for msg in history[-4:]
+        if str(msg.get("role", "")).strip() == "user"
+    ]
+    if assistant_msgs and _is_self_focused(assistant_msgs[-1]) and user_msgs and _is_low_engagement(user_msgs[-1]):
+        return True
+    return False
+
+
+def _extract_dominant_tendency(memory_context: str) -> str:
+    match = re.search(r"tendency_dominant:\s*(\w+)", memory_context)
+    return match.group(1) if match else ""
+
+
 _OPINION_SEEDS: tuple[OpinionSeed, ...] = (
     OpinionSeed("bubble_tea", "奶茶大多就是糖水 不太懂排队的意义", ("奶茶", "bubble tea", "甜", "糖")),
     OpinionSeed("overtime", "九点后的加班通常只是在表演努力", ("加班", "overtime", "老板", "work")),
@@ -250,7 +384,7 @@ def build_companion_turn_context_enrichment(
     memory_context: str,
     now: datetime | None = None,
     routine_state: str = "",
-) -> tuple[str, CompanionSelfStateRecord, CompanionEngagementPolicy, tuple[str, ...]]:
+) -> tuple[str, CompanionSelfStateRecord, CompanionEngagementPolicy, tuple[str, ...], RelationshipStagePolicy]:
     local_now = companion_self_local_now(now)
     relationship_stage = _extract_relationship_stage(memory_context)
     shared_history_gate = "open" if relationship_stage in _SHARED_HISTORY_STAGES else "locked"
@@ -297,6 +431,12 @@ def build_companion_turn_context_enrichment(
         last_engagement_reason="; ".join(policy.reasons[:2]),
         routine_state_snapshot=routine_state or self_state.routine_state_snapshot,
     )
+    # Resolve stage policy with tendency modifier
+    stage_policy = resolve_stage_policy(relationship_stage)
+    dominant_tendency = _extract_dominant_tendency(memory_context)
+    if dominant_tendency:
+        stage_policy = apply_tendency_modifier(stage_policy, dominant_tendency)
+
     lines = [
         "[COMPANION TURN POLICY]",
         "policy_priority: user_emotion > engagement > relationship_stage",
@@ -311,15 +451,24 @@ def build_companion_turn_context_enrichment(
         f"engagement_callback_style: {policy.callback_style}",
         f"engagement_inference_scope: {policy.inference_scope}",
         f"engagement_reasons: {'; '.join(policy.reasons) if policy.reasons else 'none'}",
+        f"stage_callback_budget: {stage_policy.callback_budget}",
+        f"stage_teasing: {stage_policy.teasing}",
+        f"stage_question_budget: {stage_policy.question_budget_per_10}",
+        f"stage_self_disclosure: {stage_policy.self_disclosure}",
+        f"stage_comfort_mode: {stage_policy.comfort_mode}",
+        f"stage_disagreement_ceiling: {stage_policy.disagreement_ceiling}",
         f"callback_same_fact_limit: once",
-        f"callback_session_limit: {CALLBACK_MAX_PER_SESSION}",
+        f"callback_session_limit: {stage_policy.callback_budget}",
         f"callback_min_turn_gap: {CALLBACK_MIN_TURN_GAP}",
     ]
     for item in callbacks:
         lines.append(f"callback_candidate: {item}")
     if self_state.last_callback_fact:
         lines.append(f"last_callback_fact: {self_state.last_callback_fact}")
-    return "\n".join(lines), self_state, policy, callbacks
+    # Generation hint for topic_invite
+    if policy.follow_up_style == "topic_invite":
+        lines.append("[GENERATION HINT] 这一轮你应该停止聊自己的事，把话题引向对方。问一个轻量的peer式问题。")
+    return "\n".join(lines), self_state, policy, callbacks, stage_policy
 
 
 def build_proactive_companion_context_enrichment(
@@ -498,19 +647,32 @@ def _derive_engagement_policy(
 ) -> CompanionEngagementPolicy:
     reasons: list[str] = []
     inference_scope = "own_or_stated_only" if relationship_stage in {"stranger", "acquaintance"} else "light"
+    stage_policy = resolve_stage_policy(relationship_stage)
+
     if _needs_emotional_priority(user_text=user_text, memory_context=memory_context):
         reasons.append("user_emotion_priority")
-        return CompanionEngagementPolicy(
-            mode="attentive",
-            target_reply_length="short",
-            follow_up_style="avoid",
-            self_topic_style="none",
-            disagreement_style="avoid",
-            callback_style="soft" if callbacks else "none",
-            inference_scope=inference_scope,
-            allow_low_energy=False,
-            reasons=tuple(reasons),
+        return _apply_stage_ceiling(
+            CompanionEngagementPolicy(
+                mode="attentive",
+                target_reply_length="short",
+                follow_up_style="avoid",
+                self_topic_style="none",
+                disagreement_style="avoid",
+                callback_style="soft" if callbacks else "none",
+                inference_scope=inference_scope,
+                allow_low_energy=False,
+                reasons=tuple(reasons),
+            ),
+            stage_policy,
         )
+
+    # User disengagement detection (high priority, after emotion)
+    user_disengaging = _detect_user_disengagement(history)
+    self_focus_drift = _detect_self_focus_drift(history)
+    if user_disengaging:
+        reasons.append("user_disengaging")
+    if self_focus_drift and relationship_stage in ("familiar", "close"):
+        reasons.append("reciprocity_redirect")
 
     if _is_repetitive_turn(user_text, history):
         reasons.append("repetition")
@@ -522,52 +684,81 @@ def _derive_engagement_policy(
     if len(history) >= 10:
         reasons.append("long_thread")
 
+    # User disengagement or reciprocity redirect → topic_invite
+    if "user_disengaging" in reasons or "reciprocity_redirect" in reasons:
+        return _apply_stage_ceiling(
+            CompanionEngagementPolicy(
+                mode="normal",
+                target_reply_length="short",
+                follow_up_style="topic_invite",
+                self_topic_style="none",
+                disagreement_style="soft",
+                callback_style="soft" if callbacks else "none",
+                inference_scope=inference_scope,
+                allow_low_energy=False,
+                reasons=tuple(reasons),
+            ),
+            stage_policy,
+        )
+
     if "repetition" in reasons and "shared_interest" not in reasons:
-        return CompanionEngagementPolicy(
-            mode="low_energy",
-            target_reply_length="terse",
-            follow_up_style="avoid",
-            self_topic_style="none",
-            disagreement_style="soft",
-            callback_style="none",
-            inference_scope=inference_scope,
-            allow_low_energy=True,
-            reasons=tuple(reasons),
+        return _apply_stage_ceiling(
+            CompanionEngagementPolicy(
+                mode="low_energy",
+                target_reply_length="terse",
+                follow_up_style="avoid",
+                self_topic_style="none",
+                disagreement_style="soft",
+                callback_style="none",
+                inference_scope=inference_scope,
+                allow_low_energy=True,
+                reasons=tuple(reasons),
+            ),
+            stage_policy,
         )
     if "late_night" in reasons and "shared_interest" not in reasons:
-        return CompanionEngagementPolicy(
-            mode="low_energy",
-            target_reply_length="terse",
-            follow_up_style="avoid",
-            self_topic_style="none",
-            disagreement_style="soft",
-            callback_style="none",
-            inference_scope=inference_scope,
-            allow_low_energy=True,
-            reasons=tuple(reasons),
+        return _apply_stage_ceiling(
+            CompanionEngagementPolicy(
+                mode="low_energy",
+                target_reply_length="terse",
+                follow_up_style="avoid",
+                self_topic_style="none",
+                disagreement_style="soft",
+                callback_style="none",
+                inference_scope=inference_scope,
+                allow_low_energy=True,
+                reasons=tuple(reasons),
+            ),
+            stage_policy,
         )
     if "shared_interest" in reasons:
-        return CompanionEngagementPolicy(
-            mode="engaged",
-            target_reply_length="medium",
-            follow_up_style="optional",
+        return _apply_stage_ceiling(
+            CompanionEngagementPolicy(
+                mode="engaged",
+                target_reply_length="medium",
+                follow_up_style="optional",
+                self_topic_style="soft",
+                disagreement_style="medium",
+                callback_style="soft" if callbacks else "none",
+                inference_scope=inference_scope,
+                allow_low_energy=False,
+                reasons=tuple(reasons),
+            ),
+            stage_policy,
+        )
+    return _apply_stage_ceiling(
+        CompanionEngagementPolicy(
+            mode="normal",
+            target_reply_length="short",
+            follow_up_style="avoid",
             self_topic_style="soft",
-            disagreement_style="medium",
+            disagreement_style="soft",
             callback_style="soft" if callbacks else "none",
             inference_scope=inference_scope,
             allow_low_energy=False,
-            reasons=tuple(reasons),
-        )
-    return CompanionEngagementPolicy(
-        mode="normal",
-        target_reply_length="short",
-        follow_up_style="avoid",
-        self_topic_style="soft",
-        disagreement_style="soft",
-        callback_style="soft" if callbacks else "none",
-        inference_scope=inference_scope,
-        allow_low_energy=False,
-        reasons=tuple(reasons or ["default"]),
+            reasons=tuple(reasons or ["default"]),
+        ),
+        stage_policy,
     )
 
 

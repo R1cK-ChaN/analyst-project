@@ -912,17 +912,13 @@ def _render_companion_profile(
         relationship is not None
         and isinstance(relationship, CompanionRelationshipStateRecord)
     )
-    if rel_valid and relationship.relationship_stage != "stranger":
-        stage_text = _STAGE_INSTRUCTIONS.get(
-            relationship.relationship_stage,
-            _STAGE_INSTRUCTIONS["stranger"],
-        )
+    if rel_valid:
+        stage = relationship.relationship_stage
+        label = _STAGE_LABELS.get(stage, _STAGE_LABELS["stranger"])
+        lines.append(f"- relationship_stage: {stage} ({label})")
         dominant = _dominant_tendency(relationship)
-        if dominant and relationship.relationship_stage in ("familiar", "close"):
-            stage_text += _TENDENCY_NUANCE.get(dominant, "")
-        lines.append(f"- 关系阶段: {relationship.relationship_stage} — {stage_text}")
-    elif rel_valid:
-        lines.append(f"- 关系阶段: stranger — {_STAGE_INSTRUCTIONS['stranger']}")
+        if dominant and stage in ("familiar", "close"):
+            lines.append(f"- tendency_dominant: {dominant}")
 
     # -- Soft regression note --
     if rel_valid and _is_soft_regression(relationship):
@@ -1011,18 +1007,11 @@ def _render_companion_profile(
     return lines
 
 
-_STAGE_INSTRUCTIONS: dict[str, str] = {
-    "stranger": "初识，保持礼貌和温暖，不要太过热情",
-    "acquaintance": "认识不久，友好自然，逐渐了解对方",
-    "familiar": "你们已经很熟了，可以撒娇、开小玩笑、偶尔任性一点",
-    "close": "非常亲密，可以耍赖、吃醋、分享脆弱的一面",
-}
-
-_TENDENCY_NUANCE: dict[str, str] = {
-    "romantic": "，跟随对方节奏",
-    "confidant": "，多倾听少建议",
-    "mentor": "，可以适度引导",
-    "friend": "",
+_STAGE_LABELS: dict[str, str] = {
+    "stranger": "初识",
+    "acquaintance": "认识不久",
+    "familiar": "熟悉",
+    "close": "亲密",
 }
 
 _STAGE_ORDER = {"stranger": 0, "acquaintance": 1, "familiar": 2, "close": 3}

@@ -272,7 +272,7 @@ class TestTendencyUpdates(unittest.TestCase):
         profile = _default_profile()
         lines = _render_companion_profile(profile, relationship=rel)
         rendered = "\n".join(lines)
-        self.assertIn("倾听", rendered)  # confidant nuance: "多倾听少建议"
+        self.assertIn("tendency_dominant: confidant", rendered)
 
 
 # ---- #3: Nickname Frequency ----
@@ -468,7 +468,7 @@ class TestNarrativeRendering(unittest.TestCase):
         lines = _render_companion_profile(profile, relationship=rel)
         rendered = "\n".join(lines)
         self.assertIn("familiar", rendered)
-        self.assertIn("撒娇", rendered)
+        self.assertIn("熟悉", rendered)
         self.assertIn("87轮", rendered)
 
     def test_no_relationship_fallback(self):

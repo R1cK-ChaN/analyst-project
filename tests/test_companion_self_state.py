@@ -17,6 +17,9 @@ from analyst.memory.companion_self_state import (
     detect_used_callback,
     ensure_companion_self_state,
     mark_callback_used,
+    resolve_stage_policy,
+    apply_tendency_modifier,
+    _clamp_disagreement,
 )
 from analyst.runtime.chat import generate_chat_reply
 from analyst.storage import SQLiteEngineStore
@@ -78,7 +81,7 @@ class CompanionSelfStateTest(unittest.TestCase):
     def test_emotion_priority_overrides_low_energy_engagement(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
-            context, _, policy, _ = build_companion_turn_context_enrichment(
+            context, _, policy, _, _ = build_companion_turn_context_enrichment(
                 store,
                 client_id="u1",
                 channel_id="telegram:1",
@@ -102,7 +105,7 @@ class CompanionSelfStateTest(unittest.TestCase):
                 personal_facts=["interview on Friday", "cat named Mochi"],
                 interaction_increment=1,
             )
-            _, self_state, _, callbacks = build_companion_turn_context_enrichment(
+            _, self_state, _, callbacks, _ = build_companion_turn_context_enrichment(
                 store,
                 client_id="u1",
                 channel_id="telegram:1",
@@ -130,7 +133,7 @@ class CompanionSelfStateTest(unittest.TestCase):
                 last_callback_fact="",
                 last_callback_at="",
             )
-            _, _, _, callbacks_after = build_companion_turn_context_enrichment(
+            _, _, _, callbacks_after, _ = build_companion_turn_context_enrichment(
                 store,
                 client_id="u1",
                 channel_id="telegram:1",
@@ -152,7 +155,7 @@ class CompanionSelfStateTest(unittest.TestCase):
                 personal_facts=["interview on Friday", "cat named Mochi"],
                 interaction_increment=1,
             )
-            context, _, _, callbacks = build_companion_turn_context_enrichment(
+            context, _, _, callbacks, _ = build_companion_turn_context_enrichment(
                 store,
                 client_id="u1",
                 channel_id="telegram:1",
@@ -167,6 +170,180 @@ class CompanionSelfStateTest(unittest.TestCase):
         self.assertEqual(callbacks, ())
         self.assertIn("shared_history_gate: locked", context)
         self.assertIn("engagement_inference_scope: own_or_stated_only", context)
+
+
+class UserDisengagementTest(unittest.TestCase):
+    def test_user_disengagement_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            history = [
+                {"role": "assistant", "content": "我今天看了一部电影"},
+                {"role": "user", "content": "好的"},
+                {"role": "assistant", "content": "是一个关于机器人的故事"},
+                {"role": "user", "content": "嗯"},
+                {"role": "assistant", "content": "里面有个角色特别有意思"},
+                {"role": "user", "content": "ok"},
+            ]
+            _, _, policy, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="ok",
+                history=history,
+                memory_context="relationship_stage: familiar\nactive_topic: general",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        self.assertIn("user_disengaging", policy.reasons)
+        self.assertEqual(policy.follow_up_style, "topic_invite")
+
+    def test_single_self_focus_plus_low_engagement_triggers(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            history = [
+                {"role": "assistant", "content": "我今天在公司开了三个会"},
+                {"role": "user", "content": "ok"},
+            ]
+            _, _, policy, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="ok",
+                history=history,
+                memory_context="relationship_stage: familiar\nactive_topic: general",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        self.assertIn("reciprocity_redirect", policy.reasons)
+
+    def test_consecutive_self_focus_triggers_redirect(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            history = [
+                {"role": "assistant", "content": "我今天在公司开了三个会"},
+                {"role": "user", "content": "哦 那挺累的"},
+                {"role": "assistant", "content": "我还得加班到九点"},
+                {"role": "user", "content": "那你辛苦了"},
+            ]
+            _, _, policy, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="那你辛苦了",
+                history=history,
+                memory_context="relationship_stage: familiar\nactive_topic: general",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        self.assertIn("reciprocity_redirect", policy.reasons)
+
+    def test_stage_policy_rendered(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            context, _, _, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="hello",
+                history=[],
+                memory_context="relationship_stage: stranger",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        self.assertIn("stage_teasing: avoid", context)
+        self.assertIn("stage_self_disclosure: surface", context)
+
+    def test_stage_policy_close(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            context, _, _, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="hello",
+                history=[],
+                memory_context="relationship_stage: close",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        self.assertIn("stage_teasing: encouraged", context)
+        self.assertIn("stage_self_disclosure: personal", context)
+
+    def test_disagreement_clamped_by_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            # shared_interest would normally set disagreement to medium
+            # but stranger ceiling should clamp it to low
+            _, _, policy, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="奶茶大多就是糖水",
+                history=[],
+                memory_context="relationship_stage: stranger\nactive_topic: meal / food",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        self.assertEqual(policy.disagreement_style, "low")
+
+    def test_callback_budget_zero_for_stranger(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            store.upsert_client_profile(
+                "u1",
+                personal_facts=["interview on Friday", "cat named Mochi"],
+                interaction_increment=1,
+            )
+            _, _, policy, callbacks, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="hello",
+                history=[],
+                memory_context="relationship_stage: stranger",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        self.assertEqual(callbacks, ())
+        self.assertEqual(policy.callback_style, "none")
+
+    def test_tendency_modifier_romantic(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            _, _, _, _, stage_policy = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="hello",
+                history=[],
+                memory_context="relationship_stage: close\ntendency_dominant: romantic",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        self.assertEqual(stage_policy.comfort_mode, "action_proximity")
+
+    def test_generation_hint_appended_for_topic_invite(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            history = [
+                {"role": "assistant", "content": "我今天看了一部电影"},
+                {"role": "user", "content": "好的"},
+                {"role": "assistant", "content": "是一个关于机器人的故事"},
+                {"role": "user", "content": "嗯"},
+                {"role": "assistant", "content": "里面有个角色特别有意思"},
+                {"role": "user", "content": "ok"},
+            ]
+            context, _, _, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="ok",
+                history=history,
+                memory_context="relationship_stage: familiar\nactive_topic: general",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        self.assertIn("[GENERATION HINT]", context)
 
 
 class CandidateSelectionTest(unittest.TestCase):
@@ -348,6 +525,279 @@ class CandidateSelectionTest(unittest.TestCase):
 
         self.assertIn("Treasury yields rose", reply.text)
         self.assertEqual(len(executor.calls), 1)
+
+    def test_topic_invite_rewarded_when_disengaging(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "嗯<profile_update>{}</profile_update>",
+                "B": "你最近在玩什么游戏<profile_update>{}</profile_update>",
+                "C": "我今天还看了另一集<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "嗯",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: familiar",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: topic_invite\n"
+                "engagement_self_topic: none\n"
+                "engagement_disagreement: soft\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: light\n"
+                "stage_self_disclosure: moderate-personal\n"
+                "stage_comfort_mode: action_only\n"
+                "stage_disagreement_ceiling: medium"
+            ),
+        )
+
+        self.assertEqual(reply.text, "你最近在玩什么游戏")
+
+    def test_emotional_probe_always_penalized(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "你还好吗<profile_update>{}</profile_update>",
+                "B": "你最近在忙什么<profile_update>{}</profile_update>",
+                "C": "嗯<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "ok",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: familiar",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: topic_invite\n"
+                "engagement_self_topic: none\n"
+                "engagement_disagreement: soft\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: light\n"
+                "stage_self_disclosure: moderate-personal\n"
+                "stage_comfort_mode: action_only\n"
+                "stage_disagreement_ceiling: medium"
+            ),
+        )
+
+        self.assertNotEqual(reply.text, "你还好吗")
+
+    def test_teasing_penalized_at_stranger(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "你居然还在加班<profile_update>{}</profile_update>",
+                "B": "这么晚<profile_update>{}</profile_update>",
+                "C": "嗯<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "今天加班到11点",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: stranger",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: soft\n"
+                "engagement_disagreement: soft\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: avoid\n"
+                "stage_self_disclosure: surface\n"
+                "stage_comfort_mode: none\n"
+                "stage_disagreement_ceiling: low"
+            ),
+        )
+
+        self.assertNotEqual(reply.text, "你居然还在加班")
+
+    def test_teasing_rewarded_at_close(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "嗯<profile_update>{}</profile_update>",
+                "B": "你居然还在加班 学不会是吧<profile_update>{}</profile_update>",
+                "C": "又加班了<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "今天加班到11点",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: close",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: soft\n"
+                "engagement_disagreement: medium\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: encouraged\n"
+                "stage_self_disclosure: personal\n"
+                "stage_comfort_mode: action_only\n"
+                "stage_disagreement_ceiling: high"
+            ),
+        )
+
+        self.assertEqual(reply.text, "你居然还在加班 学不会是吧")
+
+    def test_comfort_penalized_when_none(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "辛苦了<profile_update>{}</profile_update>",
+                "B": "这么晚<profile_update>{}</profile_update>",
+                "C": "嗯<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "今天加班到11点",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: stranger",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: soft\n"
+                "engagement_disagreement: soft\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: avoid\n"
+                "stage_self_disclosure: surface\n"
+                "stage_comfort_mode: none\n"
+                "stage_disagreement_ceiling: low"
+            ),
+        )
+
+        self.assertNotEqual(reply.text, "辛苦了")
+
+    def test_life_care_invite_penalized_at_stranger(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "吃了没？<profile_update>{}</profile_update>",
+                "B": "这样啊<profile_update>{}</profile_update>",
+                "C": "哦 好的<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "嗯",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: stranger",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: topic_invite\n"
+                "engagement_self_topic: none\n"
+                "engagement_disagreement: soft\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: avoid\n"
+                "stage_self_disclosure: surface\n"
+                "stage_comfort_mode: none\n"
+                "stage_disagreement_ceiling: low"
+            ),
+        )
+
+        # Life care invite not rewarded at stranger — "吃了没？" should not be selected
+        self.assertNotEqual(reply.text, "吃了没？")
+
+    def test_life_care_invite_rewarded_at_close(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "嗯<profile_update>{}</profile_update>",
+                "B": "吃了没？<profile_update>{}</profile_update>",
+                "C": "哦<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "嗯",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: close",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: topic_invite\n"
+                "engagement_self_topic: none\n"
+                "engagement_disagreement: soft\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: encouraged\n"
+                "stage_self_disclosure: personal\n"
+                "stage_comfort_mode: action_only\n"
+                "stage_disagreement_ceiling: high"
+            ),
+        )
+
+        self.assertEqual(reply.text, "吃了没？")
+
+    def test_user_question_ignored_penalized(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "我今天吃了海南鸡饭<profile_update>{}</profile_update>",
+                "B": "记得啊 你是我爸爸<profile_update>{}</profile_update>",
+                "C": "嗯<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "你还记得我是你谁吗",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: close",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: soft\n"
+                "engagement_disagreement: medium\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: encouraged\n"
+                "stage_self_disclosure: personal\n"
+                "stage_comfort_mode: action_only\n"
+                "stage_disagreement_ceiling: high"
+            ),
+        )
+
+        self.assertEqual(reply.text, "记得啊 你是我爸爸")
+
+    def test_disengagement_plus_user_question(self) -> None:
+        """User gave short replies then asks a direct question → bot must answer the question."""
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "你最近在玩什么<profile_update>{}</profile_update>",
+                "B": "记得 你是爸爸<profile_update>{}</profile_update>",
+                "C": "嗯嗯<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "你还记得我是你谁吗",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: close",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: topic_invite\n"
+                "engagement_self_topic: none\n"
+                "engagement_disagreement: soft\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: encouraged\n"
+                "stage_self_disclosure: personal\n"
+                "stage_comfort_mode: action_only\n"
+                "stage_disagreement_ceiling: high"
+            ),
+        )
+
+        # Must answer the user's question, not fire topic_invite mechanically
+        self.assertEqual(reply.text, "记得 你是爸爸")
 
 
 if __name__ == "__main__":

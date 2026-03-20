@@ -1230,6 +1230,81 @@ def _repair_missing_image_media(
     return media, [audit_entry]
 
 
+_EMOTIONAL_PROBE_MARKERS = (
+    "你还好吗", "心情怎么样", "你没事吧", "怎么了",
+    "发生什么了", "后来怎么样", "你在想什么",
+    "are you okay", "how are you feeling", "what happened",
+    "what's wrong", "are you alright",
+)
+
+_TOPIC_INVITE_MARKERS = (
+    "你玩过", "你试过", "你看过", "你去过", "你觉得",
+    "你喜欢", "你听过", "你那边", "你平时", "你一般",
+    "你呢", "你最近",
+    "have you", "do you", "what about you", "you too",
+)
+
+_LIFE_CARE_INVITE_MARKERS = (
+    "吃了没", "吃了吗", "回家了", "下班了", "忙不忙",
+    "睡了没", "到家了吗",
+)
+
+_TEASING_MARKERS = ("你居然", "就你", "三分钟热度", "你每次", "又来了", "学不会", "服了", "你不是也")
+_DEEP_DISCLOSURE_MARKERS = ("我其实", "说实话我", "我有点焦虑", "我有点怕", "我一直没说")
+_COMFORT_MARKERS = ("会好的", "辛苦了", "抱抱", "慢慢来", "别想太多", "没事的")
+
+_QUESTION_WORDS = ("吗", "么", "谁", "哪", "什么", "怎么", "几", "多少", "why", "what", "how", "who", "where", "when", "which")
+_DIRECT_RESPONSE_STARTERS = ("是", "对", "不", "没", "有", "记得", "当然", "知道", "yes", "no", "of course")
+
+
+def _is_emotional_probe(text: str) -> bool:
+    lowered = text.lower()
+    return any(m in lowered for m in _EMOTIONAL_PROBE_MARKERS)
+
+
+def _is_topic_invitation(text: str, *, allow_life_care: bool = False) -> bool:
+    lowered = text.lower()
+    if any(m in lowered for m in _TOPIC_INVITE_MARKERS):
+        return True
+    if allow_life_care and any(m in lowered for m in _LIFE_CARE_INVITE_MARKERS):
+        return True
+    return False
+
+
+def _has_teasing_tone(text: str) -> bool:
+    return any(m in text for m in _TEASING_MARKERS)
+
+
+def _has_deep_self_disclosure(text: str) -> bool:
+    return any(m in text for m in _DEEP_DISCLOSURE_MARKERS)
+
+
+def _has_comfort_language(text: str) -> bool:
+    return any(m in text for m in _COMFORT_MARKERS)
+
+
+def _user_asked_direct_question(user_text: str) -> bool:
+    stripped = user_text.rstrip()
+    if stripped.endswith("？") or stripped.endswith("?"):
+        return True
+    lowered = user_text.lower()
+    return any(w in lowered for w in _QUESTION_WORDS)
+
+
+def _reply_addresses_question(text: str, user_text: str) -> bool:
+    lowered = text.lower().lstrip()
+    # Check if candidate mentions keywords from user's question
+    user_keywords = [w for w in re.findall(r'[\w\u4e00-\u9fff]+', user_text.lower()) if len(w) >= 2]
+    if user_keywords:
+        matches = sum(1 for w in user_keywords if w in lowered)
+        if matches >= max(1, len(user_keywords) // 3):
+            return True
+    # Direct response starters (conservative list)
+    if any(lowered.startswith(s) for s in _DIRECT_RESPONSE_STARTERS):
+        return True
+    return False
+
+
 def _ends_with_question(text: str) -> bool:
     """Check if text ends with a question mark (Chinese or English)."""
     stripped = text.rstrip()
@@ -1627,9 +1702,56 @@ def _score_candidate_reply(
     if _has_steering_tone(text):
         score -= 2.0
         reasons.append("steering")
-    if follow_up_style == "avoid" and _ends_with_question(text):
-        score -= 1.5
-        reasons.append("question_end")
+    # Stage-aware context values
+    stage_teasing = _extract_context_value(companion_local_context, "stage_teasing")
+    stage_self_disclosure = _extract_context_value(companion_local_context, "stage_self_disclosure")
+    stage_comfort_mode = _extract_context_value(companion_local_context, "stage_comfort_mode")
+    stage_disagreement_ceiling = _extract_context_value(companion_local_context, "stage_disagreement_ceiling")
+    allow_life_care = relationship_stage in ("familiar", "close")
+
+    # Question taxonomy scoring
+    if _ends_with_question(text):
+        if _is_emotional_probe(text):
+            score -= 3.0
+            reasons.append("emotional_probe")
+        elif follow_up_style == "topic_invite":
+            if _is_topic_invitation(text, allow_life_care=allow_life_care):
+                score += 2.0
+                reasons.append("topic_invite_fit")
+            else:
+                score -= 0.5
+                reasons.append("question_end")
+        elif follow_up_style == "avoid":
+            score -= 1.5
+            reasons.append("question_end")
+        # follow_up_style == "optional": no penalty or reward
+
+    # User direct question override
+    if _user_asked_direct_question(user_text):
+        if not _reply_addresses_question(text, user_text):
+            score -= 4.0
+            reasons.append("ignores_user_question")
+
+    # Stage-aware scoring
+    if stage_teasing == "avoid" and _has_teasing_tone(text):
+        score -= 3.0
+        reasons.append("teasing_blocked")
+    elif stage_teasing == "encouraged" and _has_teasing_tone(text):
+        score += 1.0
+        reasons.append("teasing_fit")
+
+    if stage_self_disclosure == "surface" and _has_deep_self_disclosure(text):
+        score -= 2.0
+        reasons.append("disclosure_over_ceiling")
+
+    if stage_comfort_mode == "none" and _has_comfort_language(text):
+        score -= 2.5
+        reasons.append("comfort_blocked")
+
+    if stage_disagreement_ceiling == "low" and _has_personal_stance(text):
+        score -= 2.0
+        reasons.append("disagreement_over_ceiling")
+
     if (
         shared_history_gate == "locked"
         or callback_style == "none"

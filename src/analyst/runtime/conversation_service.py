@@ -161,7 +161,7 @@ def run_companion_turn_for_input(
     filtered_tools = list(tools)
     companion_local_context = conversation.companion_local_context
     try:
-        enrichment, self_state, _, callback_candidates = build_companion_turn_context_enrichment(
+        enrichment, self_state, _, callback_candidates, _ = build_companion_turn_context_enrichment(
             store,
             client_id=conversation.user_id,
             channel_id=conversation.channel_id,

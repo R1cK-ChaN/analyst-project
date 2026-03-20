@@ -508,7 +508,7 @@ class CompanionStyleContentTest(unittest.TestCase):
         self.assertIn("少用\"那\"\"那种\"\"那会儿\"", COMPANION_SYSTEM_PROMPT)
 
     def test_no_follow_up_question_rule_present(self) -> None:
-        self.assertIn("默认不要追问", COMPANION_SYSTEM_PROMPT)
+        self.assertIn("不要追问对方的情绪或状态", COMPANION_SYSTEM_PROMPT)
 
     def test_human_feel_priority_rule_present(self) -> None:
         self.assertIn("human feeling > 好听 > 聪明 > 讨喜", COMPANION_SYSTEM_PROMPT)
