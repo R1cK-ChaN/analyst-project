@@ -50,7 +50,7 @@ analyst-telegram
 
 - **3 tools**: `generate_image` (Volcengine/Doubao), `generate_live_photo` (Seedance, optional), `web_search` (OpenRouter `:online`)
 - **6-turn agent loop**: Model decides when to use tools — no rule-based gating
-- **LLM**: OpenRouter (default `google/gemini-3-flash-preview`), configurable
+- **LLM**: OpenRouter (default `x-ai/grok-4.1-fast`), configurable
 - **Memory**: Conversation history (20 turns) + client profile (20+ dimensions) + relationship state (intimacy, stages, tendencies)
 - **Social awareness**: Disengagement detection, self-focus drift, question taxonomy, reciprocity enforcement
 

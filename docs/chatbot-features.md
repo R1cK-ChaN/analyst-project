@@ -19,7 +19,7 @@ These work regardless of messaging platform. They live outside `delivery/` and d
 ### Agent Loop & LLM
 
 - **6-turn tool-use loop**: Agent can call up to 6 tools per conversation turn before generating final response
-- **Backend**: OpenRouter (default: `google/gemini-3-flash-preview`), configurable
+- **Backend**: OpenRouter (default: `x-ai/grok-4.1-fast`), configurable
 - **Self-contained companion**: 3 tools (image gen, live photo, web search) — no external service dependencies
 - **Single-pass execution**: Model always has tool access and decides when to use tools — no rule-based gating
 

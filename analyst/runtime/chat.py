@@ -46,7 +46,7 @@ COMPANION_MODEL_KEYS = (
     "ANALYST_OPENROUTER_MODEL",
     "LLM_MODEL",
 )
-COMPANION_DEFAULT_MODEL = "google/gemini-3-flash-preview"
+COMPANION_DEFAULT_MODEL = "x-ai/grok-4.1-fast"
 class ChatPersonaMode(str, Enum):
     COMPANION = "companion"
 
