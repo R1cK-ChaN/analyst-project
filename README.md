@@ -24,11 +24,14 @@ Current status on March 20, 2026:
 - an artifact cache (`src/analyst/analysis/`) provides deterministic identity (SHA-256), SQLite-backed storage with TTL
 - a Docker-based sandbox module (`src/analyst/sandbox/`) provides isolated Python code execution for agent-driven data analysis with AST policy validation and ephemeral containers
 
-### Research Service Split
-- the research agent (20 tools, PLAN→ACQUIRE→COMPUTE→INTERPRET pipeline) has been fully extracted to a standalone sibling service at `/home/rick/Desktop/analyst/research-service` (GitHub: `R1cK-ChaN/research-service`)
-- the companion agent calls research via HTTP delegate (`src/analyst/research/delegate.py`) when `ANALYST_RESEARCH_BASE_URL` is set; without it the companion runs with image/photo tools only
-- the research service runs its own `PythonAgentLoop` (4 turns, 1400 tokens) with all 20 research tools, 13 analysis operators, and Docker sandbox
-- same tool name (`research_agent`), same parameters, same return shape — companion behavior is unchanged
+### Companion Agent Architecture
+- the companion agent is fully self-contained with 3 tools: `generate_image`, `generate_live_photo` (optional), and `web_search`
+- `web_search` uses OpenRouter's `:online` model (default `anthropic/claude-sonnet-4:online`) via plugins API — the model decides when to search for factual queries (stock prices, weather, news)
+- single-pass LLM execution with full tool access on every turn — no rule-based gating
+- social awareness: user disengagement detection (short/ack replies), self-focus drift detection, question taxonomy (emotional probes vs topic invitations vs life-care), reciprocity enforcement
+- stage-as-interaction-freedom: `RelationshipStagePolicy` with per-stage constraints (teasing, disclosure, comfort, disagreement ceiling), per-stage example prompt modules, tendency modifiers, ceiling mechanism clamping engagement policy
+- user timezone support: reads `timezone_name` from user profile, shows both bot time (Singapore) and user local time
+- text quality: sentence completeness scoring (penalizes formal connectors, compound clauses, comma-dense messages), tool artifact sanitization (strips hallucinated XML/JSON tool blocks)
 
 ### Runtime & Execution
 - the execution layer is split between product-owned host-loop orchestration and provider-native execution: OpenRouter/Anthropic models run through the Python tool-calling loop, while Claude Code can run as a native agent via the local MCP bridge
@@ -38,8 +41,8 @@ Current status on March 20, 2026:
 
 ### Delivery (Telegram Bot — 陈襄/Shawn Chan)
 - deployed to a Contabo VPS with two persona modes: SALES and COMPANION
-- LLM: OpenRouter (default google/gemini-3.1-flash-lite-preview), 6-turn agent loop
-- **private chat**: full tool access, time-of-day awareness, absence awareness, typing simulation between multi-bubble messages, inbound user-image understanding
+- LLM: OpenRouter (default google/gemini-3-flash-preview), 6-turn agent loop
+- **private chat**: full tool access (image gen + web search), time-of-day awareness, user timezone awareness, absence awareness, typing simulation between multi-bubble messages, inbound user-image understanding
 - **group chat**: observe silently, reply on @mention/reply, plus autonomous intervention system — score-based trigger engine (name mention 0.7, interest match 0.4, unanswered question 0.4, emotional gap 0.4) with 6 suppression penalties (bot recency, message rate, private conversation detection, tension markers, send window), 0.6 threshold, 30–180s delayed send with re-evaluation before delivery
 - **image generation**: static images via Volcengine Seedream with AI watermark disabled, optional motion-selfie/live-photo via Seedance with Telegram video delivery, image decision layer controlling when to proactively attach images
 - **proactive outreach**: relationship-aware check-ins (follow_up, inactivity, morning/evening/weekend routine pings), outreach response rate tracking with pause/throttle, cold outreach strategy, outreach dedup, and relationship-aware send windows based on intimacy stage and late-night activity patterns
@@ -48,8 +51,8 @@ Current status on March 20, 2026:
 
 ### Infrastructure
 - the `ingestion/` package has been fully removed — all scraper code lives in `macro-data-service`; utility functions extracted to `src/analyst/utils.py`
-- the research agent has been fully removed — all research code lives in `research-service`; companion connects via `HttpResearchClient` in `src/analyst/research/`
-- the standalone HTTP communication paths to `macro-data-service` and `research-service` are covered by integration tests
+- the companion agent is self-contained — no external research-service dependency; `src/analyst/research/` contains unused delegate code preserved for reference
+- the standalone HTTP communication path to `macro-data-service` is covered by integration tests
 - oversized production modules reconstructed into feature-specific modules behind compatibility facades
 
 ### Test Coverage
@@ -252,8 +255,8 @@ This validates the current standalone implementation:
 - Docker-based sandbox: AST policy validation + ephemeral container execution for agent-driven Python analysis
 - analysis operator algebra: 13 deterministic operators with typed I/O, composability validation, auto-caching
 - portfolio risk pipeline: CSV import, broker sync (IBKR/Longbridge/Tiger), EWMA covariance, VIX regime signals
-- Telegram agent bot (陈襄/Shawn Chan) with dual persona modes, group chat + autonomous intervention, 13 host-loop tools, image generation/delivery, proactive outreach with response rate tracking, relationship state machine, injection defense
-- companion relationship system: intimacy scoring, 5-stage progression, tendency distribution, nickname extraction, emotional trend tracking, schedule consistency, reminder system
+- Telegram agent bot (陈襄/Shawn Chan) with dual persona modes, group chat + autonomous intervention, 3 companion tools (image gen + live photo + web search), proactive outreach with response rate tracking, relationship state machine, social awareness, injection defense
+- companion relationship system: intimacy scoring, 4-stage progression, tendency distribution, stage-as-interaction-freedom policy, nickname extraction, emotional trend tracking, schedule consistency, reminder system
 - user chat runtime layered across `runtime/chat.py`, `conversation_service.py`, `environment_adapter.py`, `platform/telegram.py`, and `capabilities.py`
 - WeCom and Telegram formatters, integration router
 

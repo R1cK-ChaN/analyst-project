@@ -19,9 +19,9 @@ These work regardless of messaging platform. They live outside `delivery/` and d
 ### Agent Loop & LLM
 
 - **6-turn tool-use loop**: Agent can call up to 6 tools per conversation turn before generating final response
-- **Backend**: OpenRouter (default: `google/gemini-3.1-flash-lite-preview`), configurable
-- **Sub-agent delegation**: Companion agent can spawn a Research sub-agent (4-turn loop) for deep investigation
-- **Interaction modes**: QA, DRAFT, FOLLOW_UP, MEETING_PREP, REGIME, CALENDAR, PREMARKET — auto-detected from user message patterns
+- **Backend**: OpenRouter (default: `google/gemini-3-flash-preview`), configurable
+- **Self-contained companion**: 3 tools (image gen, live photo, web search) — no external service dependencies
+- **Single-pass execution**: Model always has tool access and decides when to use tools — no rule-based gating
 
 ### Memory (Three-Layer System)
 
@@ -40,10 +40,27 @@ These work regardless of messaging platform. They live outside `delivery/` and d
 - **Intimacy score** (0.0–1.0): Increases with interaction, decays 0.01/day after 1-day grace
 - **Stages**: stranger → acquaintance (0.15) → familiar (0.40) → close (0.70)
   - 48-hour cooldown between stage transitions to prevent oscillation
-- **Tendency distribution**: confidant / friend / mentor / romantic — nudged by mood and interaction timing
+- **Stage-as-interaction-freedom**: `RelationshipStagePolicy` per stage with constraints on teasing, self-disclosure, comfort language, disagreement ceiling, question budget, and callback budget — stage increases freedom, not warmth
+- **Stage example modules**: 4 per-stage prompt modules (stranger/acquaintance/familiar/close) showing same dry personality at different freedom levels
+- **Tendency distribution**: confidant / friend / mentor / romantic — nudged by mood and interaction timing; tendency modifiers adjust stage policy (romantic → action_proximity comfort, confidant → more questions)
 - **Streak tracking**: Consecutive days interacted
 - **Mood history**: Last 10 moods with valence scoring; emotional trend computed (improving / declining / stable)
 - **Nicknames**: Bidirectional (user→AI, AI→user); extracted from conversation and stored
+
+### Social Awareness
+
+- **User disengagement detection**: Monitors last 3 user messages for short/ack replies (好的, ok, 嗯, etc.); triggers topic_invite redirect when 2+ are low-engagement
+- **Self-focus drift detection**: Detects when bot monologues (2 consecutive self-focused messages, or 1 self-focused + low-engagement user reply); triggers reciprocity redirect at familiar/close stages
+- **Question taxonomy**: Classifies questions as emotional probes (always penalized), topic invitations (rewarded when user disengaging), or life-care invitations (gated by stage — only at familiar/close)
+- **User direct question override**: When user asks a direct question, candidates that ignore it get heavy penalty (-4.0)
+- **Generation hints**: When topic_invite triggers, explicit `[GENERATION HINT]` appended to guide all candidate slots
+- **Engagement ceiling mechanism**: Stage policy clamps engagement-derived values (disagreement clamped by stage ceiling, callbacks blocked at stranger)
+
+### Text Quality Scoring
+
+- **Sentence completeness penalty**: Detects formal connectors (本来就是, 之所以, 虽然…但是), compound clause patterns, explanatory framing, and comma-dense multi-clause messages — penalizes over-polished text that sounds written, not texted
+- **Tool artifact sanitization**: Strips hallucinated XML tool blocks (`<research_agent>`, `<tool_use>`, any `<word>{JSON}</word>` pattern) and raw JSON tool calls from model output before reaching the user
+- **Style correction hints**: Analyzes recent assistant messages and injects dynamic corrections (question suppression, 确实 suppression, anti-sycophancy, length control, anti-literary style, fragment encouragement)
 
 ### Proactive Outreach Logic
 
@@ -60,7 +77,19 @@ The decision logic for when and why to reach out is platform-agnostic:
 - **Companion schedule**: Daily plan slots (morning, lunch, afternoon, dinner, evening) — AI maintains its own "routine" for narrative consistency
 - **Routine state machine**: wake → active → dinner → leisure → sleep
 
-### Tools (26 total)
+### Companion Tools (3)
+
+The companion agent is self-contained with these tools:
+
+| Tool | Description |
+|------|-------------|
+| `web_search` | Factual queries via OpenRouter `:online` model (stock prices, weather, news, facts) |
+| `generate_image` | AI image generation — selfie mode + back_camera POV (Volcengine/Doubao) |
+| `generate_live_photo` | Short animated selfie-style videos (Seedance, optional) |
+
+The model decides when to use `web_search` — no rule-based trigger. Prompt guidance: search for facts you're uncertain about, don't search for casual chat, reply in casual texting voice after search, don't show URLs.
+
+### Other Tools (platform toolkit, not companion)
 
 #### Research & Data
 | Tool | Description |
@@ -74,7 +103,6 @@ The decision logic for when and why to reach out is platform-agnostic:
 | `reference_rates` | Central bank rates |
 | `rate_expectations` | Market-implied rate expectations |
 | `article` | Fetch and parse a specific article |
-| `research_agent` | Delegate to 4-turn research sub-agent |
 
 #### Portfolio
 | Tool | Description |
@@ -126,7 +154,7 @@ Artifacts are SHA-256 identified and cached in SQLite with TTL per operator type
 ### Injection Detection
 
 - Pattern-based scanner detects prompt injection in user input
-- When triggered: masks `generate_image` and `research_agent` tools to limit attack surface
+- When triggered: masks `generate_image` tool to limit attack surface
 
 ---
 
