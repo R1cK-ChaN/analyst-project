@@ -800,5 +800,111 @@ class CandidateSelectionTest(unittest.TestCase):
         self.assertEqual(reply.text, "记得 你是爸爸")
 
 
+    def test_formal_connector_penalized(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "sales又不是不用开会<profile_update>{}</profile_update>",
+                "B": "客户会议和内部协调本来就是工作的一部分<profile_update>{}</profile_update>",
+                "C": "开会也是工作啊<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "你不是snt的吗 怎么也要开会",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: familiar",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: soft\n"
+                "engagement_disagreement: medium\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: light\n"
+                "stage_self_disclosure: moderate-personal\n"
+                "stage_comfort_mode: action_only\n"
+                "stage_disagreement_ceiling: medium"
+            ),
+        )
+
+        # "本来就是……的一部分" should be penalized as formal/explanatory
+        self.assertNotEqual(reply.text, "客户会议和内部协调本来就是工作的一部分")
+
+    def test_compound_clause_penalized(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "排得上的话我现在在白宫了<profile_update>{}</profile_update>",
+                "B": "要是真能排上这号人物的见面，我这会儿大概就在白宫门口了<profile_update>{}</profile_update>",
+                "C": "那也太夸张了<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "你能不能帮我约到trump",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: familiar",
+            companion_local_context=(
+                "engagement_reply_length: medium\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: soft\n"
+                "engagement_disagreement: medium\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: light\n"
+                "stage_self_disclosure: moderate-personal\n"
+                "stage_comfort_mode: action_only\n"
+                "stage_disagreement_ceiling: medium"
+            ),
+        )
+
+        # Over-polished "要是真能……大概就" should be penalized
+        self.assertNotEqual(reply.text, "要是真能排上这号人物的见面，我这会儿大概就在白宫门口了")
+
+    def test_comma_dense_penalized(self) -> None:
+        executor = _MappedDummyExecutor(
+            slot_texts={
+                "A": "几个人在吵排期 吵死了<profile_update>{}</profile_update>",
+                "B": "这几个同事在讨论下周的排期，声音大得像在吵架，听得我头疼<profile_update>{}</profile_update>",
+                "C": "办公室现在有点吵<profile_update>{}</profile_update>",
+            }
+        )
+
+        reply = generate_chat_reply(
+            "你那边怎么样",
+            history=[],
+            agent_loop=executor,
+            tools=[],
+            memory_context="relationship_stage: familiar",
+            companion_local_context=(
+                "engagement_reply_length: short\n"
+                "engagement_follow_up: avoid\n"
+                "engagement_self_topic: soft\n"
+                "engagement_disagreement: soft\n"
+                "engagement_low_energy: avoid\n"
+                "stage_teasing: light\n"
+                "stage_self_disclosure: moderate-personal\n"
+                "stage_comfort_mode: action_only\n"
+                "stage_disagreement_ceiling: medium"
+            ),
+        )
+
+        # 3-comma sentence should be penalized for being too dense
+        self.assertNotEqual(reply.text, "这几个同事在讨论下周的排期，声音大得像在吵架，听得我头疼")
+
+    def test_fragment_style_not_penalized(self) -> None:
+        """Short fragments should never trigger completeness penalty."""
+        from analyst.runtime.chat import _sentence_completeness_penalty
+        # Fragments
+        self.assertEqual(_sentence_completeness_penalty("嗯")[0], 0.0)
+        self.assertEqual(_sentence_completeness_penalty("那也太亏了")[0], 0.0)
+        self.assertEqual(_sentence_completeness_penalty("sales又不是不用开会")[0], 0.0)
+        # Formal connectors
+        penalty, reasons = _sentence_completeness_penalty("客户会议和内部协调本来就是工作的一部分")
+        self.assertLess(penalty, 0)
+        self.assertTrue(any("formal" in r or "explanatory" in r for r in reasons))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1401,6 +1401,10 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
     if any(("还是" in text and _ends_with_question(text)) or text.count("？") + text.count("?") >= 2 for text in recent_assistant[:2]):
         hints.append("这轮别连问 也别用二选一问题。")
 
+    # Over-complete sentence detection
+    if any(_sentence_completeness_penalty(text)[0] < -0.5 for text in recent_assistant[:2]):
+        hints.append("这轮像发消息不像写文章 可以省主语 说半句话 不用每句都语法完整。")
+
     if not hints:
         return ""
     return "[STYLE CORRECTION] " + " ".join(hints)
@@ -1409,17 +1413,106 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
 _CANDIDATE_SLOT_HINTS: tuple[tuple[str, str], ...] = (
     (
         "A",
-        "这条候选是低能量位：用最少的字回应，可以只回一个语气词、半句话或很短的观察。不追问、不总结、不展开自己的事。",
+        "这条候选是低能量位：用最少的字回应，可以只回一个语气词、半句话或很短的观察。不追问、不总结、不展开自己的事。像发消息不像写句子。",
     ),
     (
         "B",
-        "这条候选允许带一点你自己的事或态度进去 但保持 medium edge 不要凶。",
+        "这条候选允许带一点你自己的事或态度进去 但保持 medium edge 不要凶。像发消息一样写 可以省主语 说半句话 不用语法完整。",
     ),
     (
         "C",
-        "这条候选按正常模式回 自然 低压 不讨好 也不刻意表演个性。",
+        "这条候选按正常模式回 自然 低压 不讨好 也不刻意表演个性。不要写完整句子 像打字一样随手发出来。",
     ),
 )
+
+# Formal connectors and compound clause patterns that make text sound written, not texted
+_FORMAL_CONNECTORS = (
+    "本来就是",
+    "之所以",
+    "因此",
+    "然而",
+    "由于",
+    "尽管",
+    "不仅",
+    "以至于",
+    "与此同时",
+    "换言之",
+    "事实上",
+    "的一部分",
+    "一方面",
+    "另一方面",
+    "总而言之",
+    "归根结底",
+    "某种程度上",
+)
+
+# Patterns that signal "polished clause" rather than casual fragment
+_COMPOUND_CLAUSE_PATTERNS = (
+    r"虽然.{2,}但是",        # 虽然……但是
+    r"虽然.{2,}但",          # 虽然……但
+    r"不仅.{2,}而且",        # 不仅……而且
+    r"因为.{2,}所以",        # 因为……所以
+    r"如果.{2,}那么",        # 如果……那么
+    r"要是真能.{2,}大概就",  # 要是真能……大概就
+    r"即使.{2,}也",          # 即使……也
+)
+
+# Explanatory framing that sounds like a definition, not chatting
+_EXPLANATORY_PATTERNS = (
+    r"本来就是.{2,}的一部分",  # X本来就是Y的一部分
+    r"说白了就是",
+    r"简单来说",
+    r"其实就是",
+    r"无非就是",
+)
+
+
+def _sentence_completeness_penalty(text: str) -> tuple[float, list[str]]:
+    """Score how 'over-complete' a message sounds for casual texting.
+
+    Returns (penalty, reasons) where penalty is 0 or negative.
+    Real texting uses fragments, dropped subjects, half-sentences.
+    """
+    penalty = 0.0
+    reasons: list[str] = []
+
+    # Skip short messages — fragments are naturally short
+    if len(text) <= 16:
+        return 0.0, []
+
+    # Formal connectors
+    connector_count = sum(1 for c in _FORMAL_CONNECTORS if c in text)
+    if connector_count >= 2:
+        penalty -= 1.5
+        reasons.append("formal_connectors")
+    elif connector_count == 1:
+        penalty -= 0.8
+        reasons.append("formal_connector")
+
+    # Compound clause patterns (regex)
+    compound_hits = sum(1 for p in _COMPOUND_CLAUSE_PATTERNS if re.search(p, text))
+    if compound_hits:
+        penalty -= 1.2
+        reasons.append("compound_clause")
+
+    # Explanatory framing
+    if any(re.search(p, text) for p in _EXPLANATORY_PATTERNS):
+        penalty -= 1.0
+        reasons.append("explanatory_frame")
+
+    # Chinese comma density: too many clauses joined by commas in one message
+    # "这几个同事在讨论下周的排期，声音大得像在吵架，听得我头疼" = 2 commas = 3 clauses
+    # Real texting breaks this into "几个人在吵排期" + "吵死了"
+    comma_count = text.count("，") + text.count(",")
+    if comma_count >= 3:
+        penalty -= 1.5
+        reasons.append("comma_dense")
+    elif comma_count >= 2 and len(text) >= 18:
+        penalty -= 1.2
+        reasons.append("comma_dense")
+
+    return penalty, reasons
+
 
 _CANDIDATE_ASSISTANTY_MARKERS = (
     "听起来",
@@ -1827,6 +1920,12 @@ def _score_candidate_reply(
     ):
         score -= 1.2
         reasons.append("projection")
+
+    # Sentence completeness penalty — penalize over-polished, grammatically complete replies
+    completeness_penalty, completeness_reasons = _sentence_completeness_penalty(text)
+    if completeness_penalty < 0:
+        score += completeness_penalty
+        reasons.extend(completeness_reasons)
 
     return score, tuple(reasons)
 
