@@ -356,6 +356,7 @@ def record_chat_interaction(
             "confidence": update.confidence,
             "notes": update.notes,
             "personal_facts": update.personal_facts,
+            "timezone_name": update.timezone_name,
         },
     )
 
@@ -995,12 +996,14 @@ def _render_companion_profile(
             hint_fact = facts[turns % len(facts)]
             lines.append(f"- 💡 可以自然提起一条旧记忆，比如聊聊: {hint_fact}")
 
-    # -- Language / style (compact) --
+    # -- Language / style / timezone (compact) --
     meta: list[str] = []
     if profile.preferred_language:
         meta.append(f"lang:{profile.preferred_language}")
     if profile.response_style:
         meta.append(f"style:{profile.response_style}")
+    if profile.timezone_name:
+        meta.append(f"timezone_name:{profile.timezone_name}")
     if meta:
         lines.append(f"- {', '.join(meta)}")
 
@@ -1123,6 +1126,7 @@ def _companion_only_update(update: ClientProfileUpdate) -> ClientProfileUpdate:
         confidence=update.confidence,
         notes=update.notes,
         personal_facts=update.personal_facts,
+        timezone_name=update.timezone_name,
     )
 
 

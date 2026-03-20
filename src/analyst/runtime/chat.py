@@ -802,8 +802,25 @@ def _strip_trailing_punctuation(text: str) -> str:
     return stripped
 
 
+def _strip_tool_artifacts(text: str) -> str:
+    """Remove tool call artifacts that might leak into user-visible text."""
+    # Remove <tool_use>...</tool_use> XML blocks
+    cleaned = re.sub(r"<tool_use>.*?</tool_use>", "", text, flags=re.DOTALL)
+    # Remove <tool_result>...</tool_result> blocks
+    cleaned = re.sub(r"<tool_result>.*?</tool_result>", "", cleaned, flags=re.DOTALL)
+    # Remove <function_call>...</function_call> blocks
+    cleaned = re.sub(r"<function_call>.*?</function_call>", "", cleaned, flags=re.DOTALL)
+    # Remove [tool_call: ...] markers
+    cleaned = re.sub(r"\[tool_call:[^\]]*\]", "", cleaned)
+    # Remove lines that look like raw tool invocations: tool_name({"key": ...})
+    cleaned = re.sub(r"^\w+\(\{.*?\}\)\s*$", "", cleaned, flags=re.MULTILINE | re.DOTALL)
+    # Remove stray {"type": "tool_use", ...} JSON blocks
+    cleaned = re.sub(r'\{"type":\s*"tool_use"[^}]*\}', "", cleaned)
+    return cleaned.strip()
+
+
 def normalize_user_reply(text: str) -> str:
-    cleaned = (
+    cleaned = _strip_tool_artifacts(
         text.replace("**", "")
         .replace("__", "")
         .replace("`", "")
