@@ -1719,17 +1719,11 @@ def _should_use_candidate_selection(
     group_context: str,
     group_autonomous: bool,
 ) -> bool:
-    if isinstance(executor, LegacyLoopExecutor):
-        return False
-    if group_context or group_autonomous:
-        return False
-    if _has_attached_image(user_content):
-        return False
-    if _requires_image_tool_path(user_text) or _looks_like_live_research_request(user_text):
-        return False
-    if _looks_like_reminder_request(user_text):
-        return False
-    return True
+    # Candidate selection disabled — the model needs tool access (web_search,
+    # generate_image) on every turn, and the decision of whether to use a tool
+    # must be the model's, not a rule-based function.  Quality scoring (style
+    # hints, stage modules, sentence completeness) is applied in-prompt instead.
+    return False
 
 
 def _result_to_chat_reply(

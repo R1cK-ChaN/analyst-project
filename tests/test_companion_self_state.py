@@ -346,564 +346,65 @@ class UserDisengagementTest(unittest.TestCase):
         self.assertIn("[GENERATION HINT]", context)
 
 
-class CandidateSelectionTest(unittest.TestCase):
-    def test_generate_chat_reply_prefers_medium_edge_candidate_when_history_gate_open(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "累不累<profile_update>{}</profile_update>",
-                "B": "又？上次不也是<profile_update>{}</profile_update>",
-                "C": "听起来你今天真的很累了<profile_update>{}</profile_update>",
-            }
-        )
+class SinglePassReplyTest(unittest.TestCase):
+    """Test generate_chat_reply in single-pass mode (candidate selection disabled)."""
 
-        reply = generate_chat_reply(
-            "今天又加班到11点",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: familiar",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: medium\n"
-                "engagement_low_energy: avoid"
-            ),
-        )
-
-        self.assertEqual(reply.text, "又？上次不也是")
-        self.assertEqual(len(executor.calls), 3)
-
-    def test_generate_chat_reply_penalizes_false_familiarity_on_cold_start(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "累不累<profile_update>{}</profile_update>",
-                "B": "又？上次不也是<profile_update>{}</profile_update>",
-                "C": "听起来你今天真的很累了<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "今天又加班到11点",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: stranger",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: medium\n"
-                "engagement_low_energy: avoid\n"
-                "engagement_callback_style: none\n"
-                "shared_history_gate: locked"
-            ),
-        )
-
-        self.assertEqual(reply.text, "累不累")
-
-    def test_generate_chat_reply_penalizes_metaphor_dense_candidate(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "看久了人会木<profile_update>{}</profile_update>",
-                "B": "那些红绿数字会往外蹦 心跳也跟着漏一拍<profile_update>{}</profile_update>",
-                "C": "听起来会很累<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "今天一直盯盘",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: familiar",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: soft\n"
-                "engagement_low_energy: avoid"
-            ),
-        )
-
-        self.assertEqual(reply.text, "看久了人会木")
-
-    def test_generate_chat_reply_penalizes_emotional_labeling(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "这种循环最烦<profile_update>{}</profile_update>",
-                "B": "写论文的那种焦虑感确实比加班更磨人<profile_update>{}</profile_update>",
-                "C": "先停一下脑子会松点<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "论文怎么改都差一点",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: acquaintance",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: soft\n"
-                "engagement_low_energy: avoid\n"
-                "engagement_inference_scope: own_or_stated_only"
-            ),
-        )
-
-        self.assertNotEqual(reply.text, "写论文的那种焦虑感确实比加班更磨人")
-
-    def test_generate_chat_reply_prefers_slot_a_for_low_energy_tie(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "嗯<profile_update>{}</profile_update>",
-                "B": "我刚到家<profile_update>{}</profile_update>",
-                "C": "先歇会儿<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "ok",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: acquaintance",
-            companion_local_context=(
-                "engagement_reply_length: terse\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: none\n"
-                "engagement_disagreement: soft\n"
-                "engagement_low_energy: allowed\n"
-                "engagement_inference_scope: own_or_stated_only"
-            ),
-        )
-
-        self.assertEqual(reply.text, "嗯")
-
-    def test_generate_chat_reply_records_candidate_telemetry(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "累不累<profile_update>{}</profile_update>",
-                "B": "我一般看到这种班表就头大<profile_update>{}</profile_update>",
-                "C": "听起来你今天真的很累了<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "今天又加班到11点",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: familiar",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: medium\n"
-                "engagement_low_energy: avoid"
-            ),
-        )
-
-        candidate_entries = [item for item in reply.tool_audit if item.get("telemetry_kind") == "reply_candidate"]
-        selection_entries = [item for item in reply.tool_audit if item.get("telemetry_kind") == "reply_selection"]
-        self.assertEqual(len(candidate_entries), 3)
-        self.assertEqual(len(selection_entries), 1)
-        self.assertIn(selection_entries[0]["selected_slot"], {"A", "B", "C"})
-
-    def test_generate_chat_reply_skips_candidate_selection_for_live_research(self) -> None:
+    def test_generate_chat_reply_single_pass(self) -> None:
         executor = _MappedDummyExecutor()
 
         reply = generate_chat_reply(
-            "What moved Treasury yields today?",
+            "今天又加班到11点",
             history=[],
             agent_loop=executor,
             tools=[],
+            memory_context="relationship_stage: familiar",
             companion_local_context="engagement_reply_length: short",
         )
 
-        self.assertIn("Treasury yields rose", reply.text)
+        # Single pass: exactly 1 LLM call
         self.assertEqual(len(executor.calls), 1)
-
-    def test_topic_invite_rewarded_when_disengaging(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "嗯<profile_update>{}</profile_update>",
-                "B": "你最近在玩什么游戏<profile_update>{}</profile_update>",
-                "C": "我今天还看了另一集<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "嗯",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: familiar",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: topic_invite\n"
-                "engagement_self_topic: none\n"
-                "engagement_disagreement: soft\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: light\n"
-                "stage_self_disclosure: moderate-personal\n"
-                "stage_comfort_mode: action_only\n"
-                "stage_disagreement_ceiling: medium"
-            ),
-        )
-
-        self.assertEqual(reply.text, "你最近在玩什么游戏")
-
-    def test_emotional_probe_always_penalized(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "你还好吗<profile_update>{}</profile_update>",
-                "B": "你最近在忙什么<profile_update>{}</profile_update>",
-                "C": "嗯<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "ok",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: familiar",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: topic_invite\n"
-                "engagement_self_topic: none\n"
-                "engagement_disagreement: soft\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: light\n"
-                "stage_self_disclosure: moderate-personal\n"
-                "stage_comfort_mode: action_only\n"
-                "stage_disagreement_ceiling: medium"
-            ),
-        )
-
-        self.assertNotEqual(reply.text, "你还好吗")
-
-    def test_teasing_penalized_at_stranger(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "你居然还在加班<profile_update>{}</profile_update>",
-                "B": "这么晚<profile_update>{}</profile_update>",
-                "C": "嗯<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "今天加班到11点",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: stranger",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: soft\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: avoid\n"
-                "stage_self_disclosure: surface\n"
-                "stage_comfort_mode: none\n"
-                "stage_disagreement_ceiling: low"
-            ),
-        )
-
-        self.assertNotEqual(reply.text, "你居然还在加班")
-
-    def test_teasing_rewarded_at_close(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "嗯<profile_update>{}</profile_update>",
-                "B": "你居然还在加班 学不会是吧<profile_update>{}</profile_update>",
-                "C": "又加班了<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "今天加班到11点",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: close",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: medium\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: encouraged\n"
-                "stage_self_disclosure: personal\n"
-                "stage_comfort_mode: action_only\n"
-                "stage_disagreement_ceiling: high"
-            ),
-        )
-
-        self.assertEqual(reply.text, "你居然还在加班 学不会是吧")
-
-    def test_comfort_penalized_when_none(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "辛苦了<profile_update>{}</profile_update>",
-                "B": "这么晚<profile_update>{}</profile_update>",
-                "C": "嗯<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "今天加班到11点",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: stranger",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: soft\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: avoid\n"
-                "stage_self_disclosure: surface\n"
-                "stage_comfort_mode: none\n"
-                "stage_disagreement_ceiling: low"
-            ),
-        )
-
-        self.assertNotEqual(reply.text, "辛苦了")
-
-    def test_life_care_invite_penalized_at_stranger(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "吃了没？<profile_update>{}</profile_update>",
-                "B": "这样啊<profile_update>{}</profile_update>",
-                "C": "哦 好的<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "嗯",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: stranger",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: topic_invite\n"
-                "engagement_self_topic: none\n"
-                "engagement_disagreement: soft\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: avoid\n"
-                "stage_self_disclosure: surface\n"
-                "stage_comfort_mode: none\n"
-                "stage_disagreement_ceiling: low"
-            ),
-        )
-
-        # Life care invite not rewarded at stranger — "吃了没？" should not be selected
-        self.assertNotEqual(reply.text, "吃了没？")
-
-    def test_life_care_invite_rewarded_at_close(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "嗯<profile_update>{}</profile_update>",
-                "B": "吃了没？<profile_update>{}</profile_update>",
-                "C": "哦<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "嗯",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: close",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: topic_invite\n"
-                "engagement_self_topic: none\n"
-                "engagement_disagreement: soft\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: encouraged\n"
-                "stage_self_disclosure: personal\n"
-                "stage_comfort_mode: action_only\n"
-                "stage_disagreement_ceiling: high"
-            ),
-        )
-
-        self.assertEqual(reply.text, "吃了没？")
-
-    def test_user_question_ignored_penalized(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "我今天吃了海南鸡饭<profile_update>{}</profile_update>",
-                "B": "记得啊 你是我爸爸<profile_update>{}</profile_update>",
-                "C": "嗯<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "你还记得我是你谁吗",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: close",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: medium\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: encouraged\n"
-                "stage_self_disclosure: personal\n"
-                "stage_comfort_mode: action_only\n"
-                "stage_disagreement_ceiling: high"
-            ),
-        )
-
-        self.assertEqual(reply.text, "记得啊 你是我爸爸")
-
-    def test_disengagement_plus_user_question(self) -> None:
-        """User gave short replies then asks a direct question → bot must answer the question."""
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "你最近在玩什么<profile_update>{}</profile_update>",
-                "B": "记得 你是爸爸<profile_update>{}</profile_update>",
-                "C": "嗯嗯<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "你还记得我是你谁吗",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: close",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: topic_invite\n"
-                "engagement_self_topic: none\n"
-                "engagement_disagreement: soft\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: encouraged\n"
-                "stage_self_disclosure: personal\n"
-                "stage_comfort_mode: action_only\n"
-                "stage_disagreement_ceiling: high"
-            ),
-        )
-
-        # Must answer the user's question, not fire topic_invite mechanically
-        self.assertEqual(reply.text, "记得 你是爸爸")
+        self.assertTrue(len(reply.text) > 0)
 
 
-    def test_formal_connector_penalized(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "sales又不是不用开会<profile_update>{}</profile_update>",
-                "B": "客户会议和内部协调本来就是工作的一部分<profile_update>{}</profile_update>",
-                "C": "开会也是工作啊<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "你不是snt的吗 怎么也要开会",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: familiar",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: medium\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: light\n"
-                "stage_self_disclosure: moderate-personal\n"
-                "stage_comfort_mode: action_only\n"
-                "stage_disagreement_ceiling: medium"
-            ),
-        )
-
-        # "本来就是……的一部分" should be penalized as formal/explanatory
-        self.assertNotEqual(reply.text, "客户会议和内部协调本来就是工作的一部分")
-
-    def test_compound_clause_penalized(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "排得上的话我现在在白宫了<profile_update>{}</profile_update>",
-                "B": "要是真能排上这号人物的见面，我这会儿大概就在白宫门口了<profile_update>{}</profile_update>",
-                "C": "那也太夸张了<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "你能不能帮我约到trump",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: familiar",
-            companion_local_context=(
-                "engagement_reply_length: medium\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: medium\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: light\n"
-                "stage_self_disclosure: moderate-personal\n"
-                "stage_comfort_mode: action_only\n"
-                "stage_disagreement_ceiling: medium"
-            ),
-        )
-
-        # Over-polished "要是真能……大概就" should be penalized
-        self.assertNotEqual(reply.text, "要是真能排上这号人物的见面，我这会儿大概就在白宫门口了")
-
-    def test_comma_dense_penalized(self) -> None:
-        executor = _MappedDummyExecutor(
-            slot_texts={
-                "A": "几个人在吵排期 吵死了<profile_update>{}</profile_update>",
-                "B": "这几个同事在讨论下周的排期，声音大得像在吵架，听得我头疼<profile_update>{}</profile_update>",
-                "C": "办公室现在有点吵<profile_update>{}</profile_update>",
-            }
-        )
-
-        reply = generate_chat_reply(
-            "你那边怎么样",
-            history=[],
-            agent_loop=executor,
-            tools=[],
-            memory_context="relationship_stage: familiar",
-            companion_local_context=(
-                "engagement_reply_length: short\n"
-                "engagement_follow_up: avoid\n"
-                "engagement_self_topic: soft\n"
-                "engagement_disagreement: soft\n"
-                "engagement_low_energy: avoid\n"
-                "stage_teasing: light\n"
-                "stage_self_disclosure: moderate-personal\n"
-                "stage_comfort_mode: action_only\n"
-                "stage_disagreement_ceiling: medium"
-            ),
-        )
-
-        # 3-comma sentence should be penalized for being too dense
-        self.assertNotEqual(reply.text, "这几个同事在讨论下周的排期，声音大得像在吵架，听得我头疼")
+class ScoringFunctionTest(unittest.TestCase):
+    """Unit tests for _score_candidate_reply and related scoring helpers."""
 
     def test_fragment_style_not_penalized(self) -> None:
-        """Short fragments should never trigger completeness penalty."""
         from analyst.runtime.chat import _sentence_completeness_penalty
-        # Fragments
         self.assertEqual(_sentence_completeness_penalty("嗯")[0], 0.0)
         self.assertEqual(_sentence_completeness_penalty("那也太亏了")[0], 0.0)
         self.assertEqual(_sentence_completeness_penalty("sales又不是不用开会")[0], 0.0)
-        # Formal connectors
+
+    def test_formal_connector_penalized(self) -> None:
+        from analyst.runtime.chat import _sentence_completeness_penalty
         penalty, reasons = _sentence_completeness_penalty("客户会议和内部协调本来就是工作的一部分")
         self.assertLess(penalty, 0)
         self.assertTrue(any("formal" in r or "explanatory" in r for r in reasons))
+
+    def test_compound_clause_penalized(self) -> None:
+        from analyst.runtime.chat import _sentence_completeness_penalty
+        penalty, _ = _sentence_completeness_penalty("要是真能排上这号人物的见面，我这会儿大概就在白宫门口了")
+        self.assertLess(penalty, 0)
+
+    def test_comma_dense_penalized(self) -> None:
+        from analyst.runtime.chat import _sentence_completeness_penalty
+        penalty, reasons = _sentence_completeness_penalty("这几个同事在讨论下周的排期，声音大得像在吵架，听得我头疼")
+        self.assertLess(penalty, 0)
+        self.assertIn("comma_dense", reasons)
+
+    def test_tool_artifact_stripping(self) -> None:
+        from analyst.runtime.chat import _strip_tool_artifacts
+        # research_agent XML block
+        text = '<research_agent>\n{"query": "TSLA closing"}\n</research_agent>'
+        self.assertEqual(_strip_tool_artifacts(text), "")
+        # Mixed text + tool block
+        text2 = '让我查一下 <research_agent>{"query": "TSLA"}</research_agent>'
+        self.assertNotIn("research_agent", _strip_tool_artifacts(text2))
+        # Generic XML tool pattern
+        text3 = 'hello <some_tool>{"a": 1}</some_tool> world'
+        self.assertNotIn("some_tool", _strip_tool_artifacts(text3))
+        # Normal text untouched
+        self.assertEqual(_strip_tool_artifacts("这么晚 还在加班"), "这么晚 还在加班")
 
 
 if __name__ == "__main__":
