@@ -41,6 +41,12 @@ class TestClassifyQuery:
     def test_weather_temperature(self):
         assert classify_query("温度多少") == "weather"
 
+    def test_places_give_me_names(self):
+        assert classify_query("给我几个名字") == "places"
+
+    def test_places_location_nearby(self):
+        assert classify_query("bugis附近有什么") == "places"
+
     def test_fallback_holiday(self):
         assert classify_query("明天什么假期") == "web"
 

@@ -322,6 +322,33 @@ class UserDisengagementTest(unittest.TestCase):
             )
         self.assertEqual(stage_policy.comfort_mode, "action_proximity")
 
+    def test_practical_request_triggers_helpful_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            enrichment, _, policy, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1", channel_id="ch1", thread_id="t1",
+                user_text="推荐个咖啡馆",
+                history=[], memory_context="relationship_stage: familiar",
+                routine_state="afternoon",
+            )
+        self.assertEqual(policy.mode, "helpful")
+        self.assertIn("practical_request", policy.reasons)
+        self.assertIn("engagement_mode: helpful", enrichment)
+        self.assertIn("web_search", enrichment)
+
+    def test_practical_request_outranked_by_emotion(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            _, _, policy, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1", channel_id="ch1", thread_id="t1",
+                user_text="我好焦虑 推荐个地方放松",
+                history=[], memory_context="relationship_stage: familiar",
+                routine_state="afternoon",
+            )
+        self.assertEqual(policy.mode, "attentive")
+
     def test_generation_hint_appended_for_topic_invite(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             store = SQLiteEngineStore(db_path=Path(td) / "engine.db")

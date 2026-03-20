@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 _PLACES_KEYWORDS = frozenset({
     "推荐", "附近", "餐厅", "咖啡馆", "酒吧", "书店", "健身房",
-    "在哪", "去哪", "好吃", "好喝", "开门", "营业",
+    "在哪", "去哪", "好吃", "好喝", "开门", "营业", "名字",
     "cafe", "restaurant", "bar", "gym", "library", "recommend",
 })
 

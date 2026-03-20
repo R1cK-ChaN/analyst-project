@@ -39,6 +39,13 @@ _USER_EMOTION_MARKERS = (
     "cant sleep",
 )
 
+_PRACTICAL_REQUEST_MARKERS = (
+    "推荐", "有没有", "哪里", "哪个", "哪家", "怎么去", "几点",
+    "开不开门", "多少钱", "在哪", "去哪", "好吃", "好喝",
+    "附近", "名字", "具体", "地址", "营业",
+    "recommend", "where", "how to get", "which",
+)
+
 _ASSISTANTY_MARKERS = (
     "听起来",
     "我理解",
@@ -47,6 +54,11 @@ _ASSISTANTY_MARKERS = (
     "that sounds",
     "i understand",
 )
+
+
+def _is_practical_request(user_text: str) -> bool:
+    lowered = user_text.lower()
+    return any(marker in lowered for marker in _PRACTICAL_REQUEST_MARKERS)
 
 
 @dataclass(frozen=True)
@@ -468,6 +480,8 @@ def build_companion_turn_context_enrichment(
     # Generation hint for topic_invite
     if policy.follow_up_style == "topic_invite":
         lines.append("[GENERATION HINT] 这一轮你应该停止聊自己的事，把话题引向对方。问一个轻量的peer式问题。")
+    if policy.mode == "helpful":
+        lines.append("[GENERATION HINT] 用户在问一个具体问题。用 web_search 搜真实答案，不要给泛泛的建议。")
     return "\n".join(lines), self_state, policy, callbacks, stage_policy
 
 
@@ -659,6 +673,24 @@ def _derive_engagement_policy(
                 self_topic_style="none",
                 disagreement_style="avoid",
                 callback_style="soft" if callbacks else "none",
+                inference_scope=inference_scope,
+                allow_low_energy=False,
+                reasons=tuple(reasons),
+            ),
+            stage_policy,
+        )
+
+    # Practical request: user explicitly asking for help — override dry mode
+    if _is_practical_request(user_text):
+        reasons.append("practical_request")
+        return _apply_stage_ceiling(
+            CompanionEngagementPolicy(
+                mode="helpful",
+                target_reply_length="medium",
+                follow_up_style="avoid",
+                self_topic_style="none",
+                disagreement_style="soft",
+                callback_style="none",
                 inference_scope=inference_scope,
                 allow_low_energy=False,
                 reasons=tuple(reasons),
