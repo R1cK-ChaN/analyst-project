@@ -26,7 +26,6 @@ class CapabilityRegistryTest(unittest.TestCase):
             provider=MagicMock(),
         )
         tool_names = {tool.name for tool in tools}
-        # research_agent is now an optional HTTP delegate (depends on ANALYST_RESEARCH_BASE_URL)
         self.assertIn("generate_image", tool_names)
 
 
@@ -50,7 +49,7 @@ class NativeModeCapabilityTest(unittest.TestCase):
         self.assertIn("generate_live_photo", SHARED_MCP_TOOL_SPECS)
         self.assertIn("sync_portfolio_from_broker", SHARED_MCP_TOOL_SPECS)
 
-    def test_companion_surface_skips_research_agent_for_claude_code(self) -> None:
+    def test_companion_surface_skips_web_search_for_claude_code(self) -> None:
         cc_provider = self._make_cc_provider()
         tools = build_capability_tools(
             "companion",
@@ -58,7 +57,7 @@ class NativeModeCapabilityTest(unittest.TestCase):
             provider=cc_provider,
         )
         tool_names = {tool.name for tool in tools}
-        self.assertNotIn("research_agent", tool_names)
+        self.assertNotIn("web_search", tool_names)
 
 class MediaExtractionFromEventsTest(unittest.TestCase):
     """Tests for _extract_media_from_events (stream-json MCP tool results)."""

@@ -8,15 +8,9 @@ from analyst.delivery.soul import PromptAssemblyContext, assemble_persona_system
 
 from ..base import RolePromptContext
 
-_RESEARCH_DELEGATION_MODULE = """\
-Research delegation:
-- If the user asks for up-to-date markets, macro data, news, rates, portfolio risk, or why something moved, call `research_agent` before answering.
-- Do not call `research_agent` for casual life chat, emotional support, scheduling, reminders, or photo/media requests.
-- Give `research_agent` a crisp task plus only user-safe context. Never pass raw internal memory labels, profile dumps, or private notes.
-- After the tool returns, answer in your normal companion voice. Do not paste raw tool output or mention internal roles/tools.
-
+_WEB_SEARCH_MODULE = """\
 Web search:
-- 如果对方问了一个你不确定答案的事实性问题（天气、新闻、某件事是不是真的、某个人的最新动态），先用 web_search 搜一下再答，不要猜。
+- 如果对方问了一个你不确定答案的事实性问题（天气、新闻、某件事是不是真的、某个人的最新动态、市场行情），先用 web_search 搜一下再答，不要猜。
 - 不要为了闲聊去搜索。"今天好累"不需要搜索，"今天新加坡会不会下雨"需要。
 - 搜完之后用你正常的聊天语气回复，不要变成新闻播报员。简短、随意、像转述给朋友听。
 - 不要展示搜索结果的 URL 或来源标注，除非对方明确要链接。
@@ -68,4 +62,4 @@ def build_companion_system_prompt(context: RolePromptContext) -> str:
             group_autonomous=context.group_autonomous,
         )
     ).prompt
-    return f"{base_prompt}\n\n{_RESEARCH_DELEGATION_MODULE}"
+    return f"{base_prompt}\n\n{_WEB_SEARCH_MODULE}"

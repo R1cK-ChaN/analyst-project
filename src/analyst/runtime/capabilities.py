@@ -76,7 +76,7 @@ CONTENT_SUB_AGENT_TOOL_BUILDERS: dict[str, tuple[Callable[[], AgentTool], ...]] 
     ),
 }
 
-COMPANION_SUB_AGENT_NAMES: tuple[str, ...] = ()  # research_agent is now an optional HTTP delegate
+COMPANION_SUB_AGENT_NAMES: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

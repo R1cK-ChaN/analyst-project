@@ -4,7 +4,6 @@ import logging
 
 from analyst.engine.backends import ClaudeCodeProvider
 from analyst.engine.live_types import AgentTool
-from analyst.research.delegate import build_research_delegate_tool
 from analyst.tools import ToolKit, build_image_gen_tool, build_optional_live_photo_tool, build_web_search_tool
 
 from ..base import AgentRoleSpec, RoleDependencies
@@ -28,9 +27,6 @@ def _build_companion_tools(dependencies: RoleDependencies) -> list[AgentTool]:
     if live_photo_tool is not None:
         kit.add(live_photo_tool)
     if not isinstance(dependencies.provider, ClaudeCodeProvider):
-        research_tool = build_research_delegate_tool()
-        if research_tool is not None:
-            kit.add(research_tool)
         try:
             kit.add(build_web_search_tool())
         except Exception:

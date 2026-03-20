@@ -425,16 +425,16 @@ class TestBuildApplication(unittest.TestCase):
 
 
 class TestChatPersonaRouting(unittest.TestCase):
-    def test_companion_tools_only_expose_media_and_research_delegate(self) -> None:
+    def test_companion_tools_expose_media_and_web_search(self) -> None:
         from analyst.delivery.user_chat import ChatPersonaMode, build_chat_tools, build_companion_services, COMPANION_DEFAULT_MODEL
 
         image_tool = AgentTool(name="generate_image", description="", parameters={}, handler=lambda _: {})
         live_tool = AgentTool(name="generate_live_photo", description="", parameters={}, handler=lambda _: {})
-        research_tool = AgentTool(name="research_agent", description="", parameters={}, handler=lambda _: {})
+        search_tool = AgentTool(name="web_search", description="", parameters={}, handler=lambda _: {})
 
         with patch("analyst.agents.companion.companion_agent.build_image_gen_tool", return_value=image_tool), \
              patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool", return_value=live_tool), \
-             patch("analyst.agents.companion.companion_agent.build_research_delegate_tool", return_value=research_tool):
+             patch("analyst.agents.companion.companion_agent.build_web_search_tool", return_value=search_tool):
             tools = build_chat_tools(
                 engine=MagicMock(),
                 store=MagicMock(),
@@ -442,7 +442,7 @@ class TestChatPersonaRouting(unittest.TestCase):
                 persona_mode=ChatPersonaMode.COMPANION,
             )
 
-        self.assertEqual([tool.name for tool in tools], ["generate_image", "generate_live_photo", "research_agent"])
+        self.assertEqual([tool.name for tool in tools], ["generate_image", "generate_live_photo", "web_search"])
 
     def test_companion_services_use_companion_default_model(self) -> None:
         from analyst.delivery.user_chat import (
@@ -456,7 +456,7 @@ class TestChatPersonaRouting(unittest.TestCase):
         ) as provider_factory_mock, \
              patch("analyst.agents.companion.companion_agent.build_image_gen_tool", return_value=MagicMock()), \
              patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool", return_value=MagicMock()), \
-             patch("analyst.agents.companion.companion_agent.build_research_delegate_tool", return_value=MagicMock()):
+             patch("analyst.agents.companion.companion_agent.build_web_search_tool", return_value=MagicMock()):
             build_companion_services()
 
         kwargs = provider_factory_mock.call_args.kwargs
@@ -505,7 +505,7 @@ class TestUserChatClaudeCodeImages(unittest.TestCase):
         )
         tools = [
             AgentTool(name="generate_image", description="", parameters={}, handler=lambda _: {}),
-            AgentTool(name="research_agent", description="", parameters={}, handler=lambda _: {}),
+            AgentTool(name="web_search", description="", parameters={}, handler=lambda _: {}),
         ]
 
         reply = generate_chat_reply(
@@ -806,6 +806,7 @@ class TestGroupChat(unittest.IsolatedAsyncioTestCase):
             personal_facts=[],
             total_interactions=0,
             last_active_at="",
+            timezone_name="Asia/Singapore",
         )
         self.mock_store.list_group_messages.return_value = []
         self.mock_store.list_group_members.return_value = []

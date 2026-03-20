@@ -235,7 +235,6 @@ class TestToolsWiredInBuildChatTools(unittest.TestCase):
             store = SQLiteEngineStore(db_path=Path(tmpdir) / "test.db")
             tools = build_chat_tools(store=store, provider=MagicMock())
             tool_names = {t.name for t in tools}
-            # research_agent is now optional (HTTP delegate, depends on ANALYST_RESEARCH_BASE_URL)
             self.assertIn("generate_image", tool_names)
 
 
