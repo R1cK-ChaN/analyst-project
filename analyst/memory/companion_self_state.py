@@ -39,12 +39,22 @@ _USER_EMOTION_MARKERS = (
     "cant sleep",
 )
 
-_PRACTICAL_REQUEST_MARKERS = (
-    "推荐", "有没有", "哪里", "哪个", "哪家", "怎么去", "几点",
+# Strong markers: inherently imperative, trigger helpful on their own
+_PRACTICAL_STRONG_MARKERS = (
+    "推荐", "告诉我", "帮我", "给我",
+    "recommend", "tell me", "help me", "give me",
+)
+
+# Weak markers: need a second signal (question mark or strong marker)
+_PRACTICAL_WEAK_MARKERS = (
+    "有没有", "哪里", "哪个", "哪家", "怎么去", "几点",
     "开不开门", "多少钱", "在哪", "去哪", "好吃", "好喝",
     "附近", "名字", "具体", "地址", "营业",
-    "recommend", "where", "how to get", "which",
+    "where", "how to get", "which",
 )
+
+# Short follow-up cues that continue a previous helpful turn
+_FOLLOWUP_CUES = ("呢", "具体", "然后呢", "所以", "比如", "还有吗", "else", "more", "?", "？")
 
 _ASSISTANTY_MARKERS = (
     "听起来",
@@ -56,9 +66,22 @@ _ASSISTANTY_MARKERS = (
 )
 
 
-def _is_practical_request(user_text: str) -> bool:
+def _is_practical_request(user_text: str, *, last_engagement_mode: str = "") -> bool:
     lowered = user_text.lower()
-    return any(marker in lowered for marker in _PRACTICAL_REQUEST_MARKERS)
+    # Strong markers always trigger
+    if any(m in lowered for m in _PRACTICAL_STRONG_MARKERS):
+        return True
+    # Weak markers need question mark or co-occurring strong marker
+    has_weak = any(m in lowered for m in _PRACTICAL_WEAK_MARKERS)
+    if has_weak and ("?" in user_text or "？" in user_text):
+        return True
+    if has_weak and any(m in lowered for m in _PRACTICAL_STRONG_MARKERS):
+        return True
+    # Continue helpful mode on short follow-ups
+    if last_engagement_mode == "helpful" and len(user_text) < 15:
+        if any(cue in lowered for cue in _FOLLOWUP_CUES):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -681,7 +704,7 @@ def _derive_engagement_policy(
         )
 
     # Practical request: user explicitly asking for help — override dry mode
-    if _is_practical_request(user_text):
+    if _is_practical_request(user_text, last_engagement_mode=self_state.last_engagement_mode):
         reasons.append("practical_request")
         return _apply_stage_ceiling(
             CompanionEngagementPolicy(

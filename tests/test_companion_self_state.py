@@ -20,6 +20,7 @@ from analyst.memory.companion_self_state import (
     resolve_stage_policy,
     apply_tendency_modifier,
     _clamp_disagreement,
+    _is_practical_request,
 )
 from analyst.runtime.chat import generate_chat_reply
 from analyst.storage import SQLiteEngineStore
@@ -348,6 +349,40 @@ class UserDisengagementTest(unittest.TestCase):
                 routine_state="afternoon",
             )
         self.assertEqual(policy.mode, "attentive")
+
+    def test_practical_strong_marker_always_triggers(self) -> None:
+        self.assertTrue(_is_practical_request("推荐个地方"))
+        self.assertTrue(_is_practical_request("给我几个名字"))
+        self.assertTrue(_is_practical_request("帮我查一下"))
+        self.assertTrue(_is_practical_request("recommend a cafe"))
+
+    def test_practical_weak_marker_needs_question_mark(self) -> None:
+        # Weak marker without question mark → no trigger
+        self.assertFalse(_is_practical_request("好吃吗"))
+        self.assertFalse(_is_practical_request("你住哪里"))
+        # Weak marker with question mark → trigger
+        self.assertTrue(_is_practical_request("哪里好吃？"))
+        self.assertTrue(_is_practical_request("附近有什么？"))
+
+    def test_practical_casual_chat_no_trigger(self) -> None:
+        self.assertFalse(_is_practical_request("你中午吃的什么 好吃吗"))
+        self.assertFalse(_is_practical_request("附近是不是在施工"))
+        self.assertFalse(_is_practical_request("今天好累"))
+
+    def test_practical_followup_continues_helpful(self) -> None:
+        # Short follow-up with cue when previous mode was helpful
+        self.assertTrue(_is_practical_request("具体一点", last_engagement_mode="helpful"))
+        self.assertTrue(_is_practical_request("然后呢", last_engagement_mode="helpful"))
+        self.assertTrue(_is_practical_request("还有吗", last_engagement_mode="helpful"))
+        # Same text without previous helpful mode → no trigger
+        self.assertFalse(_is_practical_request("具体一点", last_engagement_mode="normal"))
+
+    def test_practical_followup_only_short_messages(self) -> None:
+        # Long message should not rely on follow-up cue alone
+        self.assertFalse(_is_practical_request(
+            "我今天去了一家店 具体来说就是想换个口味试试",
+            last_engagement_mode="helpful",
+        ))
 
     def test_generation_hint_appended_for_topic_invite(self) -> None:
         with tempfile.TemporaryDirectory() as td:
