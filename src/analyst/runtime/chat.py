@@ -804,12 +804,14 @@ def _strip_trailing_punctuation(text: str) -> str:
 
 def _strip_tool_artifacts(text: str) -> str:
     """Remove tool call artifacts that might leak into user-visible text."""
-    # Remove <tool_use>...</tool_use> XML blocks
-    cleaned = re.sub(r"<tool_use>.*?</tool_use>", "", text, flags=re.DOTALL)
-    # Remove <tool_result>...</tool_result> blocks
-    cleaned = re.sub(r"<tool_result>.*?</tool_result>", "", cleaned, flags=re.DOTALL)
-    # Remove <function_call>...</function_call> blocks
-    cleaned = re.sub(r"<function_call>.*?</function_call>", "", cleaned, flags=re.DOTALL)
+    # Remove any XML-style tool blocks: <tool_name>...</tool_name>
+    # Catches <tool_use>, <tool_result>, <function_call>, <research_agent>, etc.
+    cleaned = re.sub(
+        r"<(?:tool_use|tool_result|function_call|research_agent|web_search|generate_image|generate_live_photo)\b[^>]*>.*?</(?:tool_use|tool_result|function_call|research_agent|web_search|generate_image|generate_live_photo)>",
+        "", text, flags=re.DOTALL,
+    )
+    # Catch any remaining <word>{...}</word> patterns (model hallucinating tool XML)
+    cleaned = re.sub(r"<(\w+)>\s*\{.*?\}\s*</\1>", "", cleaned, flags=re.DOTALL)
     # Remove [tool_call: ...] markers
     cleaned = re.sub(r"\[tool_call:[^\]]*\]", "", cleaned)
     # Remove lines that look like raw tool invocations: tool_name({"key": ...})
