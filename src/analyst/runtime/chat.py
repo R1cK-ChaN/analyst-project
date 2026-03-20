@@ -1658,32 +1658,26 @@ def _looks_like_live_research_request(user_text: str) -> bool:
         return True
     has_temporal = any(
         token in lowered
-        for token in ("latest", "today", "right now", "最新", "今天", "现在", "刚刚")
+        for token in (
+            "latest", "today", "yesterday", "right now", "last night", "closing",
+            "最新", "今天", "昨天", "现在", "刚刚", "收盘", "开盘",
+        )
     )
     has_news = any(token in lowered for token in ("breaking", "news", "新闻"))
     has_market = any(
         token in lowered
         for token in (
-            "price",
-            "market",
-            "markets",
-            "treasury",
-            "cpi",
-            "fed",
-            "btc",
-            "bitcoin",
-            "yield",
-            "yields",
-            "价格",
-            "行情",
-            "市场",
-            "利率",
-            "美联储",
-            "比特币",
-            "收益率",
+            "price", "stock", "share", "ticker", "close", "closing",
+            "market", "markets", "treasury", "cpi", "fed",
+            "btc", "bitcoin", "eth", "ethereum",
+            "yield", "yields", "earnings", "dividend",
+            "价格", "股价", "收盘价", "开盘价", "涨", "跌", "多少钱",
+            "行情", "市场", "利率", "美联储", "比特币", "收益率",
         )
     )
-    if has_market and (has_temporal or has_news):
+    # Common stock ticker pattern: 2-5 uppercase letters
+    has_ticker = bool(re.search(r"\b[A-Z]{2,5}\b", user_text))
+    if has_market or (has_ticker and has_temporal):
         return True
     # Factual queries that likely need web search
     has_factual_query = any(
@@ -1692,12 +1686,13 @@ def _looks_like_live_research_request(user_text: str) -> bool:
             "天气", "weather", "气温", "temperature", "下雨", "rain",
             "比分", "score", "结果", "result",
             "汇率", "exchange rate",
+            "多少钱", "几点", "什么时候",
         )
     )
     if has_factual_query:
         return True
     # "What is X" / "X是什么" patterns
-    if re.search(r"(?:what is|who is|when is|where is|是什么|是谁|在哪)", lowered):
+    if re.search(r"(?:what is|who is|when is|where is|how much|是什么|是谁|在哪)", lowered):
         return True
     return False
 
