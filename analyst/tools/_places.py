@@ -88,13 +88,17 @@ class PlacesHandler:
                 display_name = place.get("displayName", {})
                 editorial = place.get("editorialSummary", {})
                 hours = place.get("currentOpeningHours", {})
-                results.append({
+                entry: dict[str, Any] = {
                     "name": display_name.get("text", ""),
                     "address": place.get("formattedAddress", ""),
                     "rating": place.get("rating"),
                     "open_now": hours.get("openNow"),
                     "summary": editorial.get("text", ""),
-                })
+                }
+                weekday_hours = hours.get("weekdayDescriptions")
+                if weekday_hours:
+                    entry["weekday_hours"] = weekday_hours
+                results.append(entry)
 
             return {
                 "summary": f"Found {len(results)} places for: {query}",

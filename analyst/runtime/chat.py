@@ -429,6 +429,29 @@ def _extract_tool_audit(messages: list[ConversationMessage]) -> list[dict[str, A
     return audit
 
 
+# ── Unsupported-specifics detector ─────────────────────────────────
+# If the reply contains concrete times/prices but no tool was called this
+# turn, the model almost certainly hallucinated.  Flag it so callers can
+# decide what to do (log, retry, etc.).
+
+_SPECIFIC_NUMBER_RE = re.compile(
+    r"(?:"
+    r"\d{1,2}\s*[点時时]\s*(?:半|[0-5]\d分?)?"  # 8点, 10点半, 3时30分
+    r"|\d{1,2}\s*(?:am|pm|AM|PM)"               # 8am, 10PM
+    r"|\d{1,2}:\d{2}"                            # 08:00, 22:30
+    r"|\$\d+|S?\$\d+"                            # $10, S$5
+    r"|\d+(?:\.\d+)?(?:元|块|刀|新币|SGD)"        # 5元, 3.5刀
+    r")"
+)
+
+
+def _has_unsupported_specifics(text: str, tool_audit: list[dict[str, Any]]) -> bool:
+    """Return True if *text* contains specific numbers but no tool call backs them."""
+    if tool_audit:
+        return False
+    return bool(_SPECIFIC_NUMBER_RE.search(text))
+
+
 def _build_engine_context(engine: Any) -> str:
     sections: list[str] = []
     try:
@@ -1759,6 +1782,11 @@ def _result_to_chat_reply(
             media = repaired_media
         if repaired_audit:
             tool_audit = [*tool_audit, *repaired_audit]
+    if _has_unsupported_specifics(response_text, tool_audit):
+        logger.warning(
+            "Reply contains specific numbers without tool support — possible hallucination: %.120s",
+            response_text,
+        )
     return ChatReply(
         text=response_text,
         profile_update=profile_update,

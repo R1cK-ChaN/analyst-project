@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 _PLACES_KEYWORDS = frozenset({
     "推荐", "附近", "餐厅", "咖啡馆", "酒吧", "书店", "健身房",
     "在哪", "去哪", "好吃", "好喝", "开门", "营业", "名字",
+    "关门", "几点开", "几点关", "开到几点", "营业时间", "几点营业",
+    "什么时候开", "什么时候关", "几号店", "哪家店",
     "cafe", "restaurant", "bar", "gym", "library", "recommend",
+    "opening hours", "what time", "open until", "close at",
 })
 
 _WEATHER_KEYWORDS = frozenset({

@@ -10,6 +10,7 @@ import pytest
 
 from analyst.tools._places import PlacesConfig, PlacesHandler
 from analyst.tools._search_router import SmartSearchHandler, classify_query
+from analyst.runtime.chat import _has_unsupported_specifics
 from analyst.tools._weather import WeatherConfig, WeatherHandler
 
 
@@ -46,6 +47,24 @@ class TestClassifyQuery:
 
     def test_places_location_nearby(self):
         assert classify_query("bugis附近有什么") == "places"
+
+    def test_places_opening_hours_chinese(self):
+        assert classify_query("星巴克营业时间") == "places"
+
+    def test_places_closing_time(self):
+        assert classify_query("星巴克几点关门") == "places"
+
+    def test_places_opening_hours_english(self):
+        assert classify_query("starbucks opening hours") == "places"
+
+    def test_places_what_time(self):
+        assert classify_query("starbucks what time close") == "places"
+
+    def test_places_when_open(self):
+        assert classify_query("starbucks什么时候开") == "places"
+
+    def test_places_open_until(self):
+        assert classify_query("开到几点") == "places"
 
     def test_fallback_holiday(self):
         assert classify_query("明天什么假期") == "web"
@@ -136,7 +155,13 @@ class TestPlacesHandler:
                     "displayName": {"text": "Common Man Coffee Roasters"},
                     "formattedAddress": "22 Martin Rd, Singapore",
                     "rating": 4.3,
-                    "currentOpeningHours": {"openNow": True},
+                    "currentOpeningHours": {
+                        "openNow": True,
+                        "weekdayDescriptions": [
+                            "星期一: 08:00–22:00",
+                            "星期二: 08:00–22:00",
+                        ],
+                    },
                     "editorialSummary": {"text": "Specialty coffee in the CBD"},
                 },
                 {
@@ -156,6 +181,11 @@ class TestPlacesHandler:
         assert result["result_count"] == 2
         assert result["results"][0]["name"] == "Common Man Coffee Roasters"
         assert result["results"][0]["open_now"] is True
+        assert result["results"][0]["weekday_hours"] == [
+            "星期一: 08:00–22:00",
+            "星期二: 08:00–22:00",
+        ]
+        assert "weekday_hours" not in result["results"][1]
         assert result["results"][1]["rating"] == 4.5
 
     def test_empty_query(self):
@@ -227,3 +257,33 @@ class TestWeatherHandler:
         handler({"query": "天气"})
 
         assert mock_session.get.call_count == 2
+
+
+# ── Unsupported-specifics detector ─────────────────────────────────
+
+
+class TestHasUnsupportedSpecifics:
+    def test_no_specifics(self):
+        assert _has_unsupported_specifics("那家店还不错", []) is False
+
+    def test_time_chinese_no_tool(self):
+        assert _has_unsupported_specifics("早上8点开门 晚上10点关", []) is True
+
+    def test_time_english_no_tool(self):
+        assert _has_unsupported_specifics("opens at 8am closes 10PM", []) is True
+
+    def test_time_colon_no_tool(self):
+        assert _has_unsupported_specifics("营业时间 08:00-22:00", []) is True
+
+    def test_price_no_tool(self):
+        assert _has_unsupported_specifics("大概$15左右", []) is True
+
+    def test_specifics_with_tool_ok(self):
+        audit = [{"tool_name": "web_search", "tool_call_id": "x", "arguments": {}, "status": ""}]
+        assert _has_unsupported_specifics("早上8点开门", audit) is False
+
+    def test_sgd_price_no_tool(self):
+        assert _has_unsupported_specifics("S$5一杯", []) is True
+
+    def test_yuan_price_no_tool(self):
+        assert _has_unsupported_specifics("差不多30元", []) is True
