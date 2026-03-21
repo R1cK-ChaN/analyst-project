@@ -899,10 +899,10 @@ def _split_oversized(text: str, limit: int = _MAX_BUBBLE_LENGTH) -> list[str]:
     return chunks or [text]
 
 
-_COMPANION_MAX_BUBBLE_CHARS = 42
+_COMPANION_MAX_BUBBLE_CHARS = 60
 """Hard cap for companion chat bubble length.  The model consistently
 ignores prompt-based length limits, so we enforce it in post-processing.
-42 chars keeps replies closer to natural one-thought texting."""
+60 chars allows slightly longer replies for enthusiastic energy."""
 
 
 def normalize_companion_reply(text: str) -> str:
@@ -1458,13 +1458,16 @@ _CANDIDATE_SLOT_HINTS: tuple[tuple[str, str], ...] = (
     ),
     (
         "B",
-        "这条候选允许带一点你自己的事或态度进去 但保持 medium edge 不要凶。像发消息一样写 可以省主语 说半句话 不用语法完整。",
+        "这条候选允许带你自己的事或好奇心进去 可以追问 可以兴奋 但不假。像发消息一样写 可以省主语 说半句话。",
     ),
     (
         "C",
-        "这条候选按正常模式回 自然 低压 不讨好 也不刻意表演个性。不要写完整句子 像打字一样随手发出来。",
+        "这条候选按正常模式回 自然 有能量 不讨好 也不刻意表演个性。不要写完整句子 像打字一样随手发出来。",
     ),
 )
+
+# Energy vocabulary — natural enthusiasm markers that signal genuine engagement
+_ENERGY_MARKERS = ("真的", "太", "绝了", "笑死", "居然", "真的吗", "天哪", "超", "疯了")
 
 # Formal connectors and compound clause patterns that make text sound written, not texted
 _FORMAL_CONNECTORS = (
@@ -1915,13 +1918,13 @@ def _score_candidate_reply(
             score -= 2.0
             reasons.append("too_long")
     elif reply_length_target == "short":
-        if 4 <= text_len <= 36:
+        if 4 <= text_len <= 50:
             score += 1.6
             reasons.append("short_fit")
-        elif text_len > 56:
+        elif text_len > 70:
             score -= 1.5
             reasons.append("too_long")
-    elif 8 <= text_len <= 68:
+    elif 8 <= text_len <= 80:
         score += 1.2
         reasons.append("medium_fit")
 
@@ -1931,6 +1934,10 @@ def _score_candidate_reply(
     if low_energy_style != "allowed" and text_len <= 2:
         score -= 1.0
         reasons.append("too_flat")
+
+    if any(marker in text for marker in _ENERGY_MARKERS):
+        score += 0.6
+        reasons.append("has_energy")
 
     if self_topic_style != "none" and ("我" in text or text.lower().startswith("i ")):
         score += 0.8

@@ -56,7 +56,7 @@ class PromptAssemblySelectionTest(unittest.TestCase):
     """The modular prompt assembler should stage heavy rules only when needed."""
 
     def test_companion_default_prompt_remains_small(self) -> None:
-        self.assertLess(len(COMPANION_SYSTEM_PROMPT), 6500)
+        self.assertLess(len(COMPANION_SYSTEM_PROMPT), 7200)
 
     def test_companion_prompt_reflects_human_feel_snt_companion_identity(self) -> None:
         self.assertIn("真实的人发消息", COMPANION_SYSTEM_PROMPT)

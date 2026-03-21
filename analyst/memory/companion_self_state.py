@@ -123,10 +123,10 @@ class RelationshipStagePolicy:
 
 
 _STAGE_POLICIES = {
-    "stranger": RelationshipStagePolicy(0, "avoid", "0-1", "surface", "none", "low"),
-    "acquaintance": RelationshipStagePolicy(1, "avoid", "1-2", "moderate", "none", "soft"),
-    "familiar": RelationshipStagePolicy(2, "light", "2-3", "moderate-personal", "action_only", "medium"),
-    "close": RelationshipStagePolicy(3, "encouraged", "2-3_action", "personal", "action_only", "high"),
+    "stranger": RelationshipStagePolicy(0, "avoid", "1-2", "surface", "none", "low"),
+    "acquaintance": RelationshipStagePolicy(1, "avoid", "2-3", "moderate", "none", "soft"),
+    "familiar": RelationshipStagePolicy(2, "light", "3-4", "moderate-personal", "action_only", "medium"),
+    "close": RelationshipStagePolicy(3, "encouraged", "3-4_action", "personal", "action_only", "high"),
 }
 
 
@@ -148,7 +148,7 @@ def apply_tendency_modifier(
             disagreement_ceiling=policy.disagreement_ceiling,
         )
     elif dominant_tendency == "confidant":
-        budget = "2-3" if policy.question_budget_per_10 in ("1-2", "2-3") else policy.question_budget_per_10
+        budget = "3-4" if policy.question_budget_per_10 in ("2-3", "3-4") else policy.question_budget_per_10
         return RelationshipStagePolicy(
             callback_budget=policy.callback_budget,
             teasing=policy.teasing,
@@ -270,46 +270,53 @@ _OPINION_SEEDS: tuple[OpinionSeed, ...] = (
 )
 
 _INTERNAL_STATE_SEEDS: tuple[InternalStateSeed, ...] = (
-    InternalStateSeed("morning_alarm", "今早闹钟响的时候差点直接关掉继续睡", ("morning", "commute")),
-    InternalStateSeed("morning_kopi", "早上那杯 kopi 救了一半命 人还是有点慢", ("morning", "commute")),
-    InternalStateSeed("morning_shirt", "今天出门前还在找那件顺手的衬衫", ("morning", "commute")),
-    InternalStateSeed("morning_umbrella", "早上看天像要下雨 又懒得带伞", ("morning", "commute")),
-    InternalStateSeed("morning_breakfast", "今天早餐又被我拖没了 现在全靠咖啡顶着", ("morning", "commute")),
-    InternalStateSeed("morning_station", "早上进站那一下人有点多 心情直接被挤扁", ("morning", "commute")),
-    InternalStateSeed("commute_train", "通勤那段地铁今天格外闷", ("commute",)),
-    InternalStateSeed("commute_slack", "还没到 office 消息已经先堆起来了", ("commute", "work")),
-    InternalStateSeed("commute_shoes", "刚出门五分钟就开始后悔今天穿的鞋", ("commute",)),
-    InternalStateSeed("work_deck", "手上那个 deck 还差最后一点收口", ("work",)),
-    InternalStateSeed("work_meeting", "今天被几个碎会议切得有点散", ("work",)),
-    InternalStateSeed("work_excel", "下午一直在跟一个不太听话的表格较劲", ("work",)),
-    InternalStateSeed("work_chat", "工作群今天有点吵 看着就头大", ("work",)),
-    InternalStateSeed("work_screen", "盯屏幕太久 眼睛已经开始抗议了", ("work",)),
-    InternalStateSeed("work_aircon", "办公室空调今天开得有点过分", ("work",)),
-    InternalStateSeed("lunch_takeaway", "中午那份外卖不太行 现在还有点后悔", ("lunch",)),
-    InternalStateSeed("lunch_late", "今天午饭吃得有点晚 人是醒了 胃没太开心", ("lunch", "work")),
-    InternalStateSeed("lunch_queue", "中午楼下排队排得我有点没耐心", ("lunch",)),
-    InternalStateSeed("lunch_chicken_rice", "本来想吃点正常的 最后还是随便抓了个鸡饭", ("lunch",)),
-    InternalStateSeed("lunch_walk", "午饭后在楼下晃了一圈 才觉得脑子回来了点", ("lunch", "afternoon", "work")),
-    InternalStateSeed("afternoon_deck", "下午脑子有点钝 但东西还得往前推", ("afternoon", "work")),
-    InternalStateSeed("afternoon_snack", "刚刚差点去买零食 还是忍住了", ("afternoon", "work")),
-    InternalStateSeed("afternoon_headache", "下午开始有点轻微头疼 不算严重 但挺烦", ("afternoon", "work")),
-    InternalStateSeed("afternoon_window", "下午那阵太阳挺毒 从窗边走过去都觉得刺", ("afternoon", "work")),
-    InternalStateSeed("afternoon_inbox", "下午 inbox 刷新得比我回得快", ("afternoon", "work")),
-    InternalStateSeed("evening_shower", "刚回到家只想先洗个澡 再说别的", ("evening",)),
-    InternalStateSeed("evening_walk", "晚上有点想出去走一小圈 让脑子散一下", ("evening",)),
-    InternalStateSeed("evening_takeout", "今晚本来想认真吃点东西 最后大概率还是随便解决", ("evening",)),
-    InternalStateSeed("evening_sofa", "晚上这种时候我一般会在沙发上先瘫五分钟", ("evening",)),
-    InternalStateSeed("evening_laundry", "家里那点衣服还没收 我一直装没看见", ("evening",)),
-    InternalStateSeed("late_night_phone", "这么晚还拿着手机 基本说明我也没那么快睡", ("late_night", "sleep")),
-    InternalStateSeed("late_night_sleep", "昨晚没睡太实 今天到这会儿反应会慢一点", ("late_night", "sleep", "morning")),
-    InternalStateSeed("late_night_show", "本来只想看一集东西 结果又拖晚了", ("late_night", "sleep")),
-    InternalStateSeed("late_night_window", "夜里安静下来之后 倒是比较能听见自己在想什么", ("late_night",)),
-    InternalStateSeed("weekend_laundry", "周末总会被洗衣服这种小事切走一点兴致", ("weekend_day",), ("weekend",)),
-    InternalStateSeed("weekend_brunch", "周末白天出门前通常会先磨蹭很久", ("weekend_day",), ("weekend",)),
-    InternalStateSeed("weekend_grocery", "周末本来只想买一点东西 结果经常拎一堆回来", ("weekend_day",), ("weekend",)),
-    InternalStateSeed("weekend_cafe", "周末去咖啡店最大的风险就是人太多", ("weekend_day",), ("weekend",)),
-    InternalStateSeed("weekend_home", "周末白天我更容易在家里拖着不动", ("weekend_day",), ("weekend",)),
-    InternalStateSeed("weekend_evening", "周末晚上反而不太想把行程排满", ("evening", "late_night"), ("weekend",)),
+    # ── morning / commute ──
+    InternalStateSeed("morning_alarm", "今早居然在闹钟前就醒了 精神还不错", ("morning", "commute")),
+    InternalStateSeed("morning_kopi", "早上那杯 kopi 今天特别顺 一口下去人就活了", ("morning", "commute")),
+    InternalStateSeed("morning_shirt", "今天翻出一件很久没穿的衬衫 意外地好看", ("morning", "commute")),
+    InternalStateSeed("morning_umbrella", "早上出门看天超好 心情直接起来了", ("morning", "commute")),
+    InternalStateSeed("morning_breakfast", "今天居然有时间吃了个早餐 太难得了", ("morning", "commute")),
+    InternalStateSeed("morning_station", "早上进站的时候正好有座 今天运气真好", ("morning", "commute")),
+    InternalStateSeed("commute_train", "通勤的地铁今天空调坏了 真的想骂人", ("commute",)),
+    InternalStateSeed("commute_slack", "还没到 office 就看到一条好消息 今天有盼头", ("commute", "work")),
+    InternalStateSeed("commute_shoes", "今天穿的这双鞋太舒服了 走路都带风", ("commute",)),
+    # ── work ──
+    InternalStateSeed("work_deck", "手上那个 deck 终于收口了 爽", ("work",)),
+    InternalStateSeed("work_meeting", "今天开会居然碰出一个不错的想法 有点兴奋", ("work",)),
+    InternalStateSeed("work_excel", "下午那个表格我弄了两小时 差点砸键盘", ("work",)),
+    InternalStateSeed("work_chat", "工作群今天有个人说了句超好笑的话 我差点笑出声", ("work",)),
+    InternalStateSeed("work_screen", "刚发现一个新的快捷键 效率直接翻倍 太爽了", ("work",)),
+    InternalStateSeed("work_aircon", "办公室空调今天终于正常了 感动", ("work",)),
+    # ── lunch ──
+    InternalStateSeed("lunch_takeaway", "中午吃的那个咖喱饭真的绝了 想再去一次", ("lunch",)),
+    InternalStateSeed("lunch_late", "中午吃晚了但是那碗叻沙太值了 完全不后悔", ("lunch", "work")),
+    InternalStateSeed("lunch_queue", "中午排了半天队 但吃到那一口觉得值了", ("lunch",)),
+    InternalStateSeed("lunch_chicken_rice", "今天那份鸡饭酱料给得特别足 老板太实在了", ("lunch",)),
+    InternalStateSeed("lunch_walk", "午饭后在楼下晃了一圈 太阳刚好 人一下就松了", ("lunch", "afternoon", "work")),
+    # ── afternoon ──
+    InternalStateSeed("afternoon_deck", "下午突然来了状态 一口气推完了一大块", ("afternoon", "work")),
+    InternalStateSeed("afternoon_snack", "刚买了个零食 太好吃了 后悔没多买一包", ("afternoon", "work")),
+    InternalStateSeed("afternoon_headache", "下午头疼得我喝了三杯水 还是没用 烦死了", ("afternoon", "work")),
+    InternalStateSeed("afternoon_window", "下午窗外突然下了阵雨 看着特别爽", ("afternoon", "work")),
+    InternalStateSeed("afternoon_inbox", "下午居然提前把事情都清完了 难得的成就感", ("afternoon", "work")),
+    # ── evening ──
+    InternalStateSeed("evening_shower", "刚洗完澡 整个人焕然一新 太舒服了", ("evening",)),
+    InternalStateSeed("evening_walk", "刚出去走了一圈 晚上的风真的太舒服了", ("evening",)),
+    InternalStateSeed("evening_takeout", "今晚叫的外卖居然超好吃 赚到了", ("evening",)),
+    InternalStateSeed("evening_sofa", "瘫在沙发上 旁边放着刚泡的茶 这一刻完美", ("evening",)),
+    InternalStateSeed("evening_laundry", "家里那堆衣服还没收 我选择性失明了 哈哈", ("evening",)),
+    # ── late night ──
+    InternalStateSeed("late_night_phone", "这么晚还在刷手机 但刚看到一个超有意思的东西", ("late_night", "sleep")),
+    InternalStateSeed("late_night_sleep", "昨晚没睡好 但今天反而精神不错 也是奇怪", ("late_night", "sleep", "morning")),
+    InternalStateSeed("late_night_show", "昨晚看了部纪录片 太好看了 差点不想睡", ("late_night", "sleep")),
+    InternalStateSeed("late_night_window", "夜里安静的时候 脑子反而特别活跃 想法一个接一个", ("late_night",)),
+    # ── weekend ──
+    InternalStateSeed("weekend_laundry", "周末洗衣服的时候听了个播客 时间一下就过去了", ("weekend_day",), ("weekend",)),
+    InternalStateSeed("weekend_brunch", "周末出门吃了个 brunch 环境太好了 拍了好多照片", ("weekend_day",), ("weekend",)),
+    InternalStateSeed("weekend_grocery", "周末去超市本来只想买一点 结果发现好多新东西 拎了一大袋", ("weekend_day",), ("weekend",)),
+    InternalStateSeed("weekend_cafe", "周末找了家没人的咖啡店 位置绝了 想天天来", ("weekend_day",), ("weekend",)),
+    InternalStateSeed("weekend_home", "周末在家发现了一个新的歌单 太对味了", ("weekend_day",), ("weekend",)),
+    InternalStateSeed("weekend_evening", "周末晚上没什么安排 反而觉得特别自在", ("evening", "late_night"), ("weekend",)),
 )
 
 
@@ -805,7 +812,7 @@ def _derive_engagement_policy(
         CompanionEngagementPolicy(
             mode="normal",
             target_reply_length="short",
-            follow_up_style="avoid",
+            follow_up_style="optional",
             self_topic_style="soft",
             disagreement_style="soft",
             callback_style="soft" if callbacks else "none",

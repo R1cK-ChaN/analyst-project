@@ -66,7 +66,7 @@ class StagePolicyTest(unittest.TestCase):
     def test_apply_tendency_modifier_confidant(self) -> None:
         acquaintance = resolve_stage_policy("acquaintance")
         modified = apply_tendency_modifier(acquaintance, "confidant")
-        self.assertEqual(modified.question_budget_per_10, "2-3")
+        self.assertEqual(modified.question_budget_per_10, "3-4")
         # Other fields unchanged
         self.assertEqual(modified.teasing, acquaintance.teasing)
 

@@ -231,6 +231,10 @@ def evaluate_relationship_checkin_kind(
     if _should_warm_up_share(relationship, outreach_metrics, last_outreach_sent_at, now):
         return "warm_up_share"
 
+    # Spontaneous share: probabilistic, not tied to relationship health
+    if _should_spontaneous_share(relationship, last_outreach_sent_at, now):
+        return "spontaneous_share"
+
     return ""
 
 
@@ -280,6 +284,33 @@ def _should_warm_up_share(
             pass
 
     return True
+
+
+def _should_spontaneous_share(
+    relationship: Any,
+    last_outreach_sent_at: str | None,
+    now: Any,
+) -> bool:
+    """Probabilistic trigger for spontaneous sharing outreach.
+
+    Conditions: stage >= acquaintance, last outreach >= 4h ago, 30% chance.
+    Frequency is further capped by the outreach throttle in the caller.
+    """
+    if relationship is None or now is None:
+        return False
+    stage = str(getattr(relationship, "relationship_stage", "stranger") or "stranger")
+    if stage == "stranger":
+        return False
+    if last_outreach_sent_at:
+        try:
+            last_dt = datetime.fromisoformat(last_outreach_sent_at)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=now.tzinfo)
+            if (now - last_dt).total_seconds() / 3600 < 4:
+                return False
+        except (ValueError, TypeError):
+            pass
+    return random.random() < 0.30
 
 
 def _needs_emotional_follow_up(text: str, profile: Any) -> bool:
