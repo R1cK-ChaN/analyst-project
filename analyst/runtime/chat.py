@@ -740,6 +740,9 @@ def _trim_overwritten_reply(text: str) -> str:
     stripped = text.strip()
     if len(stripped) <= 26:
         return stripped
+    # Never trim messages containing URLs — the "?" in URLs is not punctuation
+    if _URL_RE.search(stripped):
+        return stripped
 
     sentence_parts = [part.strip() for part in re.split(r"(?<=[。！？!?])", stripped) if part.strip()]
     if len(sentence_parts) >= 2 and len(stripped) > 34:
