@@ -155,6 +155,11 @@ class TestPlacesHandler:
                     "displayName": {"text": "Common Man Coffee Roasters"},
                     "formattedAddress": "22 Martin Rd, Singapore",
                     "rating": 4.3,
+                    "userRatingCount": 287,
+                    "priceRange": {
+                        "startPrice": {"currencyCode": "SGD", "units": "15"},
+                        "endPrice": {"currencyCode": "SGD", "units": "30"},
+                    },
                     "currentOpeningHours": {
                         "openNow": True,
                         "weekdayDescriptions": [
@@ -163,11 +168,14 @@ class TestPlacesHandler:
                         ],
                     },
                     "editorialSummary": {"text": "Specialty coffee in the CBD"},
+                    "websiteUri": "https://commonmancoffee.com",
+                    "googleMapsUri": "https://maps.google.com/?cid=123",
                 },
                 {
                     "displayName": {"text": "Nylon Coffee Roasters"},
                     "formattedAddress": "4 Everton Park, Singapore",
                     "rating": 4.5,
+                    "priceLevel": "PRICE_LEVEL_MODERATE",
                     "currentOpeningHours": {"openNow": False},
                     "editorialSummary": {},
                 },
@@ -179,14 +187,21 @@ class TestPlacesHandler:
         result = handler({"query": "quiet cafe near Tanjong Pagar"})
 
         assert result["result_count"] == 2
-        assert result["results"][0]["name"] == "Common Man Coffee Roasters"
-        assert result["results"][0]["open_now"] is True
-        assert result["results"][0]["weekday_hours"] == [
-            "星期一: 08:00–22:00",
-            "星期二: 08:00–22:00",
-        ]
-        assert "weekday_hours" not in result["results"][1]
-        assert result["results"][1]["rating"] == 4.5
+        # Results are now formatted text strings
+        r0 = result["results"][0]
+        assert "Common Man Coffee Roasters" in r0
+        assert "评分: 4.3 (287条评价)" in r0
+        assert "人均: SGD 15-30" in r0
+        assert "营业中" in r0
+        assert "星期一: 08:00–22:00" in r0
+        assert "https://commonmancoffee.com" in r0
+        assert "maps.google.com" in r0
+
+        r1 = result["results"][1]
+        assert "Nylon Coffee Roasters" in r1
+        assert "评分: 4.5" in r1
+        assert "价位: $$" in r1
+        assert "已打烊" in r1
 
     def test_empty_query(self):
         config = PlacesConfig(api_key="fake-key")

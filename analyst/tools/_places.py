@@ -33,9 +33,95 @@ _FIELD_MASK = (
     "places.displayName,"
     "places.formattedAddress,"
     "places.rating,"
+    "places.userRatingCount,"
+    "places.priceLevel,"
+    "places.priceRange,"
     "places.currentOpeningHours,"
-    "places.editorialSummary"
+    "places.editorialSummary,"
+    "places.websiteUri,"
+    "places.googleMapsUri"
 )
+
+
+_PRICE_LEVEL_LABELS: dict[str, str] = {
+    "PRICE_LEVEL_FREE": "免费",
+    "PRICE_LEVEL_INEXPENSIVE": "$",
+    "PRICE_LEVEL_MODERATE": "$$",
+    "PRICE_LEVEL_EXPENSIVE": "$$$",
+    "PRICE_LEVEL_VERY_EXPENSIVE": "$$$$",
+}
+
+
+def _format_price_range(price_range: dict[str, Any]) -> str:
+    """Format priceRange into 'SGD 80-120' style string."""
+    start = price_range.get("startPrice", {})
+    end = price_range.get("endPrice", {})
+    currency = start.get("currencyCode") or end.get("currencyCode") or ""
+    start_units = start.get("units", "")
+    end_units = end.get("units", "")
+    if start_units and end_units:
+        return f"{currency} {start_units}-{end_units}"
+    if start_units:
+        return f"{currency} {start_units}+"
+    if end_units:
+        return f"{currency} ≤{end_units}"
+    return ""
+
+
+def _format_place(place: dict[str, Any]) -> str:
+    """Format a single place into a structured text block for the model."""
+    display_name = place.get("displayName", {})
+    editorial = place.get("editorialSummary", {})
+    hours = place.get("currentOpeningHours", {})
+
+    lines: list[str] = []
+    name = display_name.get("text", "")
+    if name:
+        lines.append(f"店名: {name}")
+
+    address = place.get("formattedAddress", "")
+    if address:
+        lines.append(f"地址: {address}")
+
+    rating = place.get("rating")
+    rating_count = place.get("userRatingCount")
+    if rating is not None:
+        if rating_count:
+            lines.append(f"评分: {rating} ({rating_count}条评价)")
+        else:
+            lines.append(f"评分: {rating}")
+
+    # Price: prefer priceRange (structured), fall back to priceLevel (tier)
+    price_range = place.get("priceRange")
+    price_level = place.get("priceLevel")
+    if price_range:
+        formatted = _format_price_range(price_range)
+        if formatted:
+            lines.append(f"人均: {formatted}")
+    elif price_level and price_level in _PRICE_LEVEL_LABELS:
+        lines.append(f"价位: {_PRICE_LEVEL_LABELS[price_level]}")
+
+    summary = editorial.get("text", "")
+    if summary:
+        lines.append(f"简介: {summary}")
+
+    open_now = hours.get("openNow")
+    weekday_hours = hours.get("weekdayDescriptions")
+    if open_now is not None:
+        status = "营业中" if open_now else "已打烊"
+        lines.append(f"状态: {status}")
+    if weekday_hours:
+        lines.append(f"营业时间: {'; '.join(weekday_hours)}")
+
+    website = place.get("websiteUri")
+    if website:
+        lines.append(f"网站: {website}")
+
+    maps_uri = place.get("googleMapsUri")
+    if maps_uri:
+        lines.append(f"地图: {maps_uri}")
+
+    return "\n".join(lines)
 
 
 class PlacesHandler:
@@ -85,20 +171,7 @@ class PlacesHandler:
             places = data.get("places", [])
             results = []
             for place in places[:3]:
-                display_name = place.get("displayName", {})
-                editorial = place.get("editorialSummary", {})
-                hours = place.get("currentOpeningHours", {})
-                entry: dict[str, Any] = {
-                    "name": display_name.get("text", ""),
-                    "address": place.get("formattedAddress", ""),
-                    "rating": place.get("rating"),
-                    "open_now": hours.get("openNow"),
-                    "summary": editorial.get("text", ""),
-                }
-                weekday_hours = hours.get("weekdayDescriptions")
-                if weekday_hours:
-                    entry["weekday_hours"] = weekday_hours
-                results.append(entry)
+                results.append(_format_place(place))
 
             return {
                 "summary": f"Found {len(results)} places for: {query}",
