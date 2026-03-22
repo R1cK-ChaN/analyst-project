@@ -203,15 +203,30 @@ def _is_low_engagement(text: str) -> bool:
 
 
 def _detect_user_disengagement(history: list[dict[str, str]]) -> bool:
-    user_msgs = [
-        msg.get("content", "")
-        for msg in history[-6:]
-        if str(msg.get("role", "")).strip() == "user"
-    ]
-    last_three = user_msgs[-3:] if len(user_msgs) >= 3 else user_msgs
+    recent = history[-6:]
+    # Build (preceding_assistant, user_text) pairs
+    pairs: list[tuple[str, str]] = []
+    for i, msg in enumerate(recent):
+        if str(msg.get("role", "")).strip() != "user":
+            continue
+        prev_assistant = ""
+        for j in range(i - 1, -1, -1):
+            if str(recent[j].get("role", "")).strip() == "assistant":
+                prev_assistant = recent[j].get("content", "")
+                break
+        pairs.append((prev_assistant, msg.get("content", "")))
+    last_three = pairs[-3:] if len(pairs) >= 3 else pairs
     if len(last_three) < 2:
         return False
-    low_count = sum(1 for msg in last_three if _is_low_engagement(msg))
+    low_count = 0
+    for prev_asst, user_text in last_three:
+        if not _is_low_engagement(user_text):
+            continue
+        # Brief answer to a direct question is normal, not disengagement
+        stripped = prev_asst.rstrip()
+        if stripped.endswith("？") or stripped.endswith("?"):
+            continue
+        low_count += 1
     return low_count >= 2
 
 
@@ -509,7 +524,17 @@ def build_companion_turn_context_enrichment(
         lines.append(f"last_callback_fact: {self_state.last_callback_fact}")
     # Generation hint for topic_invite
     if policy.follow_up_style == "topic_invite":
-        lines.append("[GENERATION HINT] 这一轮你应该停止聊自己的事，把话题引向对方。问一个轻量的peer式问题。")
+        # If last assistant message already ended with a question, don't ask another
+        last_asst_was_question = False
+        for msg in reversed(history or []):
+            if str(msg.get("role", "")).strip() == "assistant":
+                content = msg.get("content", "").rstrip()
+                last_asst_was_question = content.endswith("？") or content.endswith("?")
+                break
+        if last_asst_was_question:
+            lines.append("[GENERATION HINT] 这一轮你应该停止聊自己的事，把话题引向对方——说一个跟对方有关的观察或想法，但这轮不要用问句。")
+        else:
+            lines.append("[GENERATION HINT] 这一轮你应该停止聊自己的事，把话题引向对方。问一个轻量的peer式问题。")
     if policy.mode == "helpful":
         lines.append("[GENERATION HINT] 用户在问一个具体问题。用 web_search 搜真实答案，不要给泛泛的建议。")
     return "\n".join(lines), self_state, policy, callbacks, stage_policy

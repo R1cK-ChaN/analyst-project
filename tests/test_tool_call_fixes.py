@@ -380,7 +380,8 @@ class StyleHintsTest(unittest.TestCase):
             {"role": "assistant", "content": "确实"},
         ]
         result = _build_style_hints(history)
-        self.assertIn("不要用问句结尾", result)
+        # With 2+ recent questions, escalated hint triggers
+        self.assertIn("连着问了好几轮", result)
 
     def test_haha_suppression_when_recent_haha(self) -> None:
         from analyst.runtime.chat import _build_style_hints
@@ -400,7 +401,8 @@ class StyleHintsTest(unittest.TestCase):
             {"role": "assistant", "content": "哈哈好吧 你吃了吗？"},
         ]
         result = _build_style_hints(history)
-        self.assertIn("不要用问句结尾", result)
+        # 2 question-ending messages → escalated hint
+        self.assertIn("连着问了好几轮", result)
         self.assertIn("不要用哈哈", result)
 
     def test_written_style_suppression_when_recent_reply_is_too_polished(self) -> None:
@@ -471,6 +473,72 @@ class StyleHintsTest(unittest.TestCase):
         self.assertTrue(_starts_with_haha("haha nice"))
         self.assertFalse(_starts_with_haha("确实好笑"))
         self.assertFalse(_starts_with_haha("嗯"))
+
+    def test_single_question_still_triggers_mild_hint(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "assistant", "content": "你吃了吗？"},
+            {"role": "user", "content": "吃了"},
+            {"role": "assistant", "content": "我也刚吃完"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("不要用问句结尾", result)
+        self.assertNotIn("连着问了好几轮", result)
+
+    def test_escalated_question_hint_for_3_consecutive(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "assistant", "content": "你在哪？"},
+            {"role": "user", "content": "图书馆"},
+            {"role": "assistant", "content": "人多吗？"},
+            {"role": "user", "content": "还行"},
+            {"role": "assistant", "content": "待到晚上吗？"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("连着问了好几轮", result)
+
+    def test_validation_suppression_hint(self) -> None:
+        from analyst.runtime.chat import _build_style_hints
+        history = [
+            {"role": "assistant", "content": "完全理解 宅在家里确实舒服"},
+            {"role": "user", "content": "是啊"},
+        ]
+        result = _build_style_hints(history)
+        self.assertIn("不要用'完全理解'", result)
+
+    def test_strip_validation_starter_basic(self) -> None:
+        from analyst.runtime.chat import _strip_validation_starter
+        self.assertEqual(
+            _strip_validation_starter("完全理解 宅在家里确实比出门舒服多了"),
+            "宅在家里确实比出门舒服多了",
+        )
+        self.assertEqual(
+            _strip_validation_starter("可以理解，这种事确实烦"),
+            "这种事确实烦",
+        )
+
+    def test_strip_validation_starter_preserves_short_remainder(self) -> None:
+        from analyst.runtime.chat import _strip_validation_starter
+        # Remainder < 4 chars → don't strip
+        self.assertEqual(_strip_validation_starter("完全理解 是的"), "完全理解 是的")
+        self.assertEqual(_strip_validation_starter("你说得对"), "你说得对")
+
+    def test_strip_validation_starter_no_match(self) -> None:
+        from analyst.runtime.chat import _strip_validation_starter
+        self.assertEqual(_strip_validation_starter("我也是 周末不想动"), "我也是 周末不想动")
+
+    def test_normalize_companion_reply_strips_validation(self) -> None:
+        from analyst.runtime.chat import normalize_companion_reply
+        result = normalize_companion_reply("完全理解 我也是一整天不想动弹")
+        self.assertFalse(result.startswith("完全理解"))
+
+    def test_starts_with_validation(self) -> None:
+        from analyst.runtime.chat import _starts_with_validation
+        self.assertTrue(_starts_with_validation("完全理解 宅在家里舒服"))
+        self.assertTrue(_starts_with_validation("可以理解 确实"))
+        self.assertTrue(_starts_with_validation("这很正常的"))
+        self.assertFalse(_starts_with_validation("我也是 不想动"))
+        self.assertFalse(_starts_with_validation("嗯"))
 
 
 # ------------------------------------------------------------------ #

@@ -198,6 +198,80 @@ class UserDisengagementTest(unittest.TestCase):
         self.assertIn("user_disengaging", policy.reasons)
         self.assertEqual(policy.follow_up_style, "topic_invite")
 
+    def test_disengagement_skips_brief_answers_to_questions(self) -> None:
+        """User answering a bot question briefly is not disengagement."""
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            history = [
+                {"role": "assistant", "content": "你在哪？"},
+                {"role": "user", "content": "图书馆"},
+                {"role": "assistant", "content": "人多吗？"},
+                {"role": "user", "content": "还行"},
+                {"role": "assistant", "content": "待到晚上吗？"},
+                {"role": "user", "content": "嗯"},
+            ]
+            _, _, policy, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="嗯",
+                history=history,
+                memory_context="relationship_stage: familiar\nactive_topic: general",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        self.assertNotIn("user_disengaging", policy.reasons)
+
+    def test_disengagement_fires_when_bot_not_asking(self) -> None:
+        """Short replies to non-question statements are disengagement."""
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            history = [
+                {"role": "assistant", "content": "我今天看了一部电影"},
+                {"role": "user", "content": "嗯"},
+                {"role": "assistant", "content": "里面的角色还蛮有意思"},
+                {"role": "user", "content": "ok"},
+                {"role": "assistant", "content": "我觉得结局出乎意料"},
+                {"role": "user", "content": "好"},
+            ]
+            _, _, policy, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="好",
+                history=history,
+                memory_context="relationship_stage: familiar\nactive_topic: general",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        self.assertIn("user_disengaging", policy.reasons)
+
+    def test_topic_invite_hint_no_question_when_bot_just_asked(self) -> None:
+        """When disengagement fires AND last bot msg was a question, hint avoids question."""
+        with tempfile.TemporaryDirectory() as td:
+            store = SQLiteEngineStore(db_path=Path(td) / "engine.db")
+            # Bot statement → user "嗯" x2 (disengagement), but last bot msg is a question
+            history = [
+                {"role": "assistant", "content": "我今天开了个会"},
+                {"role": "user", "content": "嗯"},
+                {"role": "assistant", "content": "挺无聊的"},
+                {"role": "user", "content": "嗯"},
+                {"role": "assistant", "content": "你今天干嘛了？"},
+                {"role": "user", "content": "没"},
+            ]
+            context, _, policy, _, _ = build_companion_turn_context_enrichment(
+                store,
+                client_id="u1",
+                channel_id="telegram:1",
+                thread_id="main",
+                user_text="没",
+                history=history,
+                memory_context="relationship_stage: familiar\nactive_topic: general",
+                now=datetime(2026, 3, 19, 4, 0, tzinfo=timezone.utc),
+            )
+        if "user_disengaging" in policy.reasons or "reciprocity_redirect" in policy.reasons:
+            self.assertIn("不要用问句", context)
+
     def test_single_self_focus_plus_low_engagement_triggers(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             store = SQLiteEngineStore(db_path=Path(td) / "engine.db")

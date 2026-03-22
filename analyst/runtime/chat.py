@@ -580,6 +580,38 @@ _WRAP_UP_MARKERS = (
     "这么想也顺",
 )
 
+_VALIDATION_STARTERS: tuple[str, ...] = (
+    "完全理解",
+    "可以理解",
+    "理解你",
+    "这很正常",
+    "确实是这样",
+    "说的是",
+    "能想象",
+    "你说得对",
+    "没毛病",
+    "很理解",
+    "特别理解",
+    "太理解了",
+    "很能理解",
+)
+
+
+def _starts_with_validation(text: str) -> bool:
+    stripped = text.lstrip()[:8]
+    return any(stripped.startswith(v) for v in _VALIDATION_STARTERS)
+
+
+def _strip_validation_starter(text: str) -> str:
+    stripped = text.lstrip()
+    for v in _VALIDATION_STARTERS:
+        if stripped.startswith(v):
+            rest = stripped[len(v):].lstrip("，, 、 ")
+            if len(rest) >= 4:
+                return rest
+            return text
+    return text
+
 
 def _replace_queshi(text: str) -> str:
     """Hard post-process: replace 确实 openers since the model ignores prompt rules."""
@@ -909,6 +941,7 @@ def normalize_companion_reply(text: str) -> str:
     """Apply deterministic style cleanup after model generation."""
     normalized = _strip_leading_punctuation(text.strip())
     normalized = _strip_lazy_agreement_fillers(normalized)
+    normalized = _strip_validation_starter(normalized)
     normalized = _flatten_written_phrases(normalized)
     normalized = _flatten_managerial_phrases(normalized)
     normalized = _soften_that_starter(normalized)
@@ -1395,9 +1428,11 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
 
     hints: list[str] = []
 
-    # Question-ending suppression — trigger if ANY recent reply ended with ?
+    # Question-ending suppression — escalate for consecutive questions
     question_count = sum(1 for text in recent_assistant if _ends_with_question(text))
-    if question_count >= 1:
+    if question_count >= 2:
+        hints.append("你已经连着问了好几轮了 这轮必须说陈述句 说完就停。")
+    elif question_count >= 1:
         hints.append("这轮不要用问句结尾 说完就停 不要寻求对方回应。")
 
     # 哈哈 opener dedup
@@ -1441,6 +1476,10 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
 
     if any(("还是" in text and _ends_with_question(text)) or text.count("？") + text.count("?") >= 2 for text in recent_assistant[:2]):
         hints.append("这轮别连问 也别用二选一问题。")
+
+    # Validation-first opener suppression
+    if any(_starts_with_validation(text) for text in recent_assistant[:2]):
+        hints.append("不要用'完全理解''可以理解''这很正常'这种开头。同意就直接接话 不要先确认再展开。")
 
     # Over-complete sentence detection
     if any(_sentence_completeness_penalty(text)[0] < -0.5 for text in recent_assistant[:2]):
@@ -1978,6 +2017,10 @@ def _score_candidate_reply(
     ):
         score -= 1.2
         reasons.append("projection")
+
+    if _starts_with_validation(text):
+        score -= 2.0
+        reasons.append("validation_first")
 
     # Sentence completeness penalty — penalize over-polished, grammatically complete replies
     completeness_penalty, completeness_reasons = _sentence_completeness_penalty(text)
