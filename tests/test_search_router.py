@@ -307,3 +307,23 @@ class TestHasUnsupportedSpecifics:
 
     def test_yuan_price_no_tool(self):
         assert _has_unsupported_specifics("差不多30元", []) is True
+
+
+class TestRepairBrokenMapsUrl:
+    def test_repairs_broken_url(self):
+        from analyst.runtime.chat import _repair_broken_maps_url
+        audit = [{"result_summary": '地图: https://maps.google.com/?cid=8642648875183264056'}]
+        text = "这是链接：https://maps.google.com/?"
+        result = _repair_broken_maps_url(text, audit)
+        assert "cid=8642648875183264056" in result
+
+    def test_leaves_correct_url_alone(self):
+        from analyst.runtime.chat import _repair_broken_maps_url
+        audit = [{"result_summary": '地图: https://maps.google.com/?cid=123'}]
+        text = "链接：https://maps.google.com/?cid=123"
+        assert _repair_broken_maps_url(text, audit) == text
+
+    def test_no_maps_url_passthrough(self):
+        from analyst.runtime.chat import _repair_broken_maps_url
+        text = "没有链接的普通回复"
+        assert _repair_broken_maps_url(text, []) == text

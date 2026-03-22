@@ -806,6 +806,26 @@ def _flatten_follow_up_question(text: str) -> str:
 
 
 _URL_RE = re.compile(r"https?://\S{10,}")
+_BROKEN_MAPS_RE = re.compile(r"https?://(?:www\.)?(?:maps\.)?google\.com/?\??\S{0,10}(?=\s|$)")
+_FULL_MAPS_RE = re.compile(r"https?://(?:www\.)?(?:maps\.)?google\.com/?\?cid=\d+\S*")
+
+
+def _repair_broken_maps_url(text: str, tool_audit: list[dict[str, Any]]) -> str:
+    """Replace broken/partial Google Maps URLs with the real one from tool results."""
+    match = _BROKEN_MAPS_RE.search(text)
+    if not match:
+        return text
+    broken = match.group()
+    # If the URL already has a cid, it's not broken
+    if "cid=" in broken:
+        return text
+    # Find the real URL from tool results
+    for entry in tool_audit:
+        rs = entry.get("result_summary", "")
+        full_match = _FULL_MAPS_RE.search(rs)
+        if full_match:
+            return text.replace(broken, full_match.group())
+    return text
 
 
 def _truncate_bubble(text: str, max_len: int = 50) -> str:
@@ -1840,6 +1860,7 @@ def _result_to_chat_reply(
             media = repaired_media
         if repaired_audit:
             tool_audit = [*tool_audit, *repaired_audit]
+    response_text = _repair_broken_maps_url(response_text, tool_audit)
     if _has_unsupported_specifics(response_text, tool_audit):
         logger.warning(
             "Reply contains specific numbers without tool support — possible hallucination: %.120s",

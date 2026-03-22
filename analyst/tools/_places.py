@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -118,9 +119,12 @@ def _format_place(place: dict[str, Any]) -> str:
     if website:
         lines.append(f"网站: {website}")
 
-    maps_uri = place.get("googleMapsUri")
+    maps_uri = place.get("googleMapsUri", "")
     if maps_uri:
-        lines.append(f"地图: {maps_uri}")
+        # Strip g_mp= tracking parameter — keeps URL short so the model can
+        # reproduce it faithfully (cid= alone is sufficient for navigation)
+        short_uri = re.sub(r"&g_mp=[^&]*", "", maps_uri)
+        lines.append(f"地图: {short_uri}")
 
     return "\n".join(lines)
 
