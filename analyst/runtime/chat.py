@@ -820,9 +820,14 @@ def _repair_broken_maps_url(text: str, tool_audit: list[dict[str, Any]]) -> str:
     if "cid=" in broken:
         cleaned = broken.rstrip('"\'」）) 。，,')
         return text.replace(broken, cleaned) if cleaned != broken else text
-    # Find the real URL from tool results
+    # Find the real URL from tool results — check structured maps_url field first
     for entry in tool_audit:
         rs = entry.get("result_summary", "")
+        # Look for maps_url in structured JSON result
+        maps_match = re.search(r'"maps_url":\s*"(https?://[^"]+)"', rs)
+        if maps_match:
+            return text.replace(broken, maps_match.group(1))
+        # Fallback: regex search for full URL
         full_match = _FULL_MAPS_RE.search(rs)
         if full_match:
             real_url = full_match.group().rstrip('"\'」）) 。，,')

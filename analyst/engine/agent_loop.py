@@ -64,7 +64,7 @@ class PythonAgentLoop:
                     )
                 )
                 result = tool.handler(tool_call.arguments)
-                tool_content = json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2)
+                tool_content = json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2)
                 tool_message = ConversationMessage(
                     role="tool",
                     content=tool_content,

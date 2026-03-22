@@ -70,62 +70,60 @@ def _format_price_range(price_range: dict[str, Any]) -> str:
     return ""
 
 
-def _format_place(place: dict[str, Any]) -> str:
-    """Format a single place into a structured text block for the model."""
+def _format_place(place: dict[str, Any]) -> dict[str, Any]:
+    """Extract a clean structured dict from a raw Google Places API result."""
     display_name = place.get("displayName", {})
     editorial = place.get("editorialSummary", {})
     hours = place.get("currentOpeningHours", {})
 
-    lines: list[str] = []
+    entry: dict[str, Any] = {}
+
     name = display_name.get("text", "")
     if name:
-        lines.append(f"店名: {name}")
+        entry["name"] = name
 
     address = place.get("formattedAddress", "")
     if address:
-        lines.append(f"地址: {address}")
+        entry["address"] = address
 
     rating = place.get("rating")
     rating_count = place.get("userRatingCount")
     if rating is not None:
-        if rating_count:
-            lines.append(f"评分: {rating} ({rating_count}条评价)")
-        else:
-            lines.append(f"评分: {rating}")
+        entry["rating"] = rating
+    if rating_count:
+        entry["rating_count"] = rating_count
 
-    # Price: prefer priceRange (structured), fall back to priceLevel (tier)
+    # Price: prefer priceRange, fall back to priceLevel
     price_range = place.get("priceRange")
     price_level = place.get("priceLevel")
     if price_range:
         formatted = _format_price_range(price_range)
         if formatted:
-            lines.append(f"人均: {formatted}")
+            entry["price_range"] = formatted
     elif price_level and price_level in _PRICE_LEVEL_LABELS:
-        lines.append(f"价位: {_PRICE_LEVEL_LABELS[price_level]}")
+        entry["price_level"] = _PRICE_LEVEL_LABELS[price_level]
 
-    # Maps link early — most actionable field, must not get truncated
     maps_uri = place.get("googleMapsUri", "")
     if maps_uri:
-        short_uri = re.sub(r"&g_mp=[^&]*", "", maps_uri)
-        lines.append(f"地图: {short_uri}")
+        entry["maps_url"] = re.sub(r"&g_mp=[^&]*", "", maps_uri)
 
     website = place.get("websiteUri")
     if website:
-        lines.append(f"网站: {website}")
+        entry["website"] = website
 
     open_now = hours.get("openNow")
-    weekday_hours = hours.get("weekdayDescriptions")
     if open_now is not None:
-        status = "营业中" if open_now else "已打烊"
-        lines.append(f"状态: {status}")
+        entry["open_now"] = open_now
+
+    weekday_hours = hours.get("weekdayDescriptions")
     if weekday_hours:
-        lines.append(f"营业时间: {'; '.join(weekday_hours)}")
+        entry["hours"] = weekday_hours
 
     summary = editorial.get("text", "")
     if summary:
-        lines.append(f"简介: {summary}")
+        entry["summary"] = summary
 
-    return "\n".join(lines)
+    return entry
 
 
 class PlacesHandler:

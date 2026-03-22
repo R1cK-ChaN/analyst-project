@@ -187,21 +187,22 @@ class TestPlacesHandler:
         result = handler({"query": "quiet cafe near Tanjong Pagar"})
 
         assert result["result_count"] == 2
-        # Results are now formatted text strings
+        # Results are structured dicts — sorted by rating_count desc
+        # Common Man has 287 reviews, Nylon has none → Common Man first
         r0 = result["results"][0]
-        assert "Common Man Coffee Roasters" in r0
-        assert "评分: 4.3 (287条评价)" in r0
-        assert "人均: SGD 15-30" in r0
-        assert "营业中" in r0
-        assert "星期一: 08:00–22:00" in r0
-        assert "https://commonmancoffee.com" in r0
-        assert "maps.google.com" in r0
+        assert r0["name"] == "Common Man Coffee Roasters"
+        assert r0["rating"] == 4.3
+        assert r0["rating_count"] == 287
+        assert r0["price_range"] == "SGD 15-30"
+        assert r0["open_now"] is True
+        assert r0["website"] == "https://commonmancoffee.com"
+        assert "cid=123" in r0["maps_url"]
 
         r1 = result["results"][1]
-        assert "Nylon Coffee Roasters" in r1
-        assert "评分: 4.5" in r1
-        assert "价位: $$" in r1
-        assert "已打烊" in r1
+        assert r1["name"] == "Nylon Coffee Roasters"
+        assert r1["rating"] == 4.5
+        assert r1["price_level"] == "$$"
+        assert r1["open_now"] is False
 
     def test_empty_query(self):
         config = PlacesConfig(api_key="fake-key")
@@ -310,9 +311,16 @@ class TestHasUnsupportedSpecifics:
 
 
 class TestRepairBrokenMapsUrl:
-    def test_repairs_broken_url(self):
+    def test_repairs_broken_url_from_structured(self):
         from analyst.runtime.chat import _repair_broken_maps_url
-        audit = [{"result_summary": '地图: https://maps.google.com/?cid=8642648875183264056'}]
+        audit = [{"result_summary": '{"maps_url": "https://maps.google.com/?cid=8642648875183264056"}'}]
+        text = "这是链接：https://maps.google.com/?"
+        result = _repair_broken_maps_url(text, audit)
+        assert "cid=8642648875183264056" in result
+
+    def test_repairs_broken_url_from_regex_fallback(self):
+        from analyst.runtime.chat import _repair_broken_maps_url
+        audit = [{"result_summary": "地图: https://maps.google.com/?cid=8642648875183264056"}]
         text = "这是链接：https://maps.google.com/?"
         result = _repair_broken_maps_url(text, audit)
         assert "cid=8642648875183264056" in result
