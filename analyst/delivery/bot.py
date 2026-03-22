@@ -1129,6 +1129,20 @@ def _make_message_handler(
         if in_group:
             sender_name = _get_user_display_name(update)
             group_id = str(update.effective_chat.id)
+
+            # Seed new threads with the replied-to message so the model
+            # knows what this thread is about.  Without this, a reply like
+            # "gmap 链接" in thread=1534 has no context about "胖哥兩" which
+            # lives in thread=main.
+            if thread_id != "main" and reply_context:
+                thread_history = _get_history(context, is_group=True, thread_id=thread_id)
+                if not thread_history:
+                    # Figure out if the replied-to message is from the bot or a user
+                    reply_user_id = _extract_reply_user_id(update)
+                    bot_id = str(context.bot.id) if context.bot else ""
+                    reply_role = "assistant" if reply_user_id == bot_id else "user"
+                    _append_history(context, reply_role, reply_context, is_group=True, thread_id=thread_id)
+
             _append_group_buffer(context, thread_id, sender_name, history_user_text)
 
             # Persist group message and track member
