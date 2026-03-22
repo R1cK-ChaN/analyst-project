@@ -805,6 +805,9 @@ def _flatten_follow_up_question(text: str) -> str:
     return stripped
 
 
+_URL_RE = re.compile(r"https?://\S{10,}")
+
+
 def _truncate_bubble(text: str, max_len: int = 50) -> str:
     """Hard truncate a bubble to *max_len* chars at the nearest sentence boundary.
 
@@ -812,6 +815,9 @@ def _truncate_bubble(text: str, max_len: int = 50) -> str:
     before max_len and cuts there.  Falls back to hard cut + ellipsis.
     """
     if len(text) <= max_len:
+        return text
+    # Never truncate messages containing URLs — cutting a link makes it useless
+    if _URL_RE.search(text):
         return text
     # Look for a natural break point
     for sep in ("。", "！", "？", "，", " "):
