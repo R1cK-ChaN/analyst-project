@@ -426,7 +426,7 @@ def _extract_tool_audit(messages: list[ConversationMessage]) -> list[dict[str, A
             if value:
                 entry[key] = value
         # Store truncated result for debugging and hallucination detection
-        result_text = (msg.content or "")[:800]
+        result_text = (msg.content or "")[:2000]
         if result_text:
             entry["result_summary"] = result_text
         audit.append(entry)

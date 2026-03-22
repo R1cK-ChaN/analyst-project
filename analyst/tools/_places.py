@@ -103,9 +103,15 @@ def _format_place(place: dict[str, Any]) -> str:
     elif price_level and price_level in _PRICE_LEVEL_LABELS:
         lines.append(f"价位: {_PRICE_LEVEL_LABELS[price_level]}")
 
-    summary = editorial.get("text", "")
-    if summary:
-        lines.append(f"简介: {summary}")
+    # Maps link early — most actionable field, must not get truncated
+    maps_uri = place.get("googleMapsUri", "")
+    if maps_uri:
+        short_uri = re.sub(r"&g_mp=[^&]*", "", maps_uri)
+        lines.append(f"地图: {short_uri}")
+
+    website = place.get("websiteUri")
+    if website:
+        lines.append(f"网站: {website}")
 
     open_now = hours.get("openNow")
     weekday_hours = hours.get("weekdayDescriptions")
@@ -115,16 +121,9 @@ def _format_place(place: dict[str, Any]) -> str:
     if weekday_hours:
         lines.append(f"营业时间: {'; '.join(weekday_hours)}")
 
-    website = place.get("websiteUri")
-    if website:
-        lines.append(f"网站: {website}")
-
-    maps_uri = place.get("googleMapsUri", "")
-    if maps_uri:
-        # Strip g_mp= tracking parameter — keeps URL short so the model can
-        # reproduce it faithfully (cid= alone is sufficient for navigation)
-        short_uri = re.sub(r"&g_mp=[^&]*", "", maps_uri)
-        lines.append(f"地图: {short_uri}")
+    summary = editorial.get("text", "")
+    if summary:
+        lines.append(f"简介: {summary}")
 
     return "\n".join(lines)
 
