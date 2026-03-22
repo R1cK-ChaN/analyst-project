@@ -174,6 +174,8 @@ class PlacesHandler:
 
             data = resp.json()
             places = data.get("places", [])
+            # Sort by review count descending — most authoritative result first
+            places.sort(key=lambda p: p.get("userRatingCount", 0), reverse=True)
             results = []
             for place in places[:3]:
                 results.append(_format_place(place))
