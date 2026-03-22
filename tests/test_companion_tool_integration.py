@@ -100,11 +100,13 @@ class TestBuildCompanionTools(unittest.TestCase):
     """Test _build_companion_tools tool list composition."""
 
     @patch("analyst.agents.companion.companion_agent.build_web_search_tool")
+    @patch("analyst.agents.companion.companion_agent.build_places_search_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
-    def test_contains_generate_image(self, mock_img, mock_live, mock_search):
+    def test_contains_generate_image(self, mock_img, mock_live, mock_places, mock_search):
         mock_img.return_value = _make_agent_tool("generate_image")
         mock_live.return_value = None
+        mock_places.return_value = _make_agent_tool("search_places")
         mock_search.return_value = _make_agent_tool("web_search")
         deps = RoleDependencies(provider=_make_mock_provider())
         tools = _build_companion_tools(deps)
@@ -112,11 +114,13 @@ class TestBuildCompanionTools(unittest.TestCase):
         self.assertIn("generate_image", tool_names)
 
     @patch("analyst.agents.companion.companion_agent.build_web_search_tool")
+    @patch("analyst.agents.companion.companion_agent.build_places_search_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
-    def test_may_contain_live_photo(self, mock_img, mock_live, mock_search):
+    def test_may_contain_live_photo(self, mock_img, mock_live, mock_places, mock_search):
         mock_img.return_value = _make_agent_tool("generate_image")
         mock_live.return_value = _make_agent_tool("generate_live_photo")
+        mock_places.return_value = _make_agent_tool("search_places")
         mock_search.return_value = _make_agent_tool("web_search")
         deps = RoleDependencies(provider=_make_mock_provider())
         tools = _build_companion_tools(deps)
@@ -124,35 +128,43 @@ class TestBuildCompanionTools(unittest.TestCase):
         self.assertIn("generate_live_photo", tool_names)
 
     @patch("analyst.agents.companion.companion_agent.build_web_search_tool")
+    @patch("analyst.agents.companion.companion_agent.build_places_search_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
-    def test_contains_web_search_for_non_claudecode(self, mock_img, mock_live, mock_search):
+    def test_contains_search_tools_for_non_claudecode(self, mock_img, mock_live, mock_places, mock_search):
         mock_img.return_value = _make_agent_tool("generate_image")
         mock_live.return_value = None
+        mock_places.return_value = _make_agent_tool("search_places")
         mock_search.return_value = _make_agent_tool("web_search")
         deps = RoleDependencies(provider=_make_mock_provider())
         tools = _build_companion_tools(deps)
         tool_names = [t.name for t in tools]
         self.assertIn("web_search", tool_names)
+        self.assertIn("search_places", tool_names)
 
     @patch("analyst.agents.companion.companion_agent.build_web_search_tool")
+    @patch("analyst.agents.companion.companion_agent.build_places_search_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
-    def test_excludes_web_search_for_claudecode(self, mock_img, mock_live, mock_search):
+    def test_excludes_search_tools_for_claudecode(self, mock_img, mock_live, mock_places, mock_search):
         mock_img.return_value = _make_agent_tool("generate_image")
         mock_live.return_value = None
+        mock_places.return_value = _make_agent_tool("search_places")
         mock_search.return_value = _make_agent_tool("web_search")
         deps = RoleDependencies(provider=_make_claude_code_provider())
         tools = _build_companion_tools(deps)
         tool_names = [t.name for t in tools]
         self.assertNotIn("web_search", tool_names)
+        self.assertNotIn("search_places", tool_names)
 
     @patch("analyst.agents.companion.companion_agent.build_web_search_tool")
+    @patch("analyst.agents.companion.companion_agent.build_places_search_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
-    def test_no_live_photo_when_unavailable(self, mock_img, mock_live, mock_search):
+    def test_no_live_photo_when_unavailable(self, mock_img, mock_live, mock_places, mock_search):
         mock_img.return_value = _make_agent_tool("generate_image")
         mock_live.return_value = None
+        mock_places.return_value = _make_agent_tool("search_places")
         mock_search.return_value = _make_agent_tool("web_search")
         deps = RoleDependencies(provider=_make_mock_provider())
         tools = _build_companion_tools(deps)
@@ -177,11 +189,11 @@ class TestBuildCompanionSystemPrompt(unittest.TestCase):
         self.assertIn("cheerful", prompt)
 
     @patch("analyst.agents.companion.companion_prompts.assemble_persona_system_prompt")
-    def test_prompt_contains_web_search_module(self, mock_assemble):
+    def test_prompt_contains_tool_use_module(self, mock_assemble):
         mock_assemble.return_value = MagicMock(prompt="Base persona prompt.")
         ctx = RolePromptContext(user_text="hello")
         prompt = build_companion_system_prompt(ctx)
-        self.assertIn("Web search:", prompt)
+        self.assertIn("search_places", prompt)
         self.assertIn("web_search", prompt)
 
     @patch("analyst.agents.companion.companion_prompts.assemble_persona_system_prompt")
@@ -210,11 +222,13 @@ class TestCapabilityToolsCompanion(unittest.TestCase):
     """Test build_capability_tools for the companion surface."""
 
     @patch("analyst.agents.companion.companion_agent.build_web_search_tool")
+    @patch("analyst.agents.companion.companion_agent.build_places_search_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
-    def test_build_capability_tools_companion(self, mock_img, mock_live, mock_search):
+    def test_build_capability_tools_companion(self, mock_img, mock_live, mock_places, mock_search):
         mock_img.return_value = _make_agent_tool("generate_image")
         mock_live.return_value = None
+        mock_places.return_value = _make_agent_tool("search_places")
         mock_search.return_value = _make_agent_tool("web_search")
         provider = _make_mock_provider()
         store = _make_mock_store()
@@ -519,13 +533,15 @@ class TestCapabilitySurfaceValidation(unittest.TestCase):
             get_capability_surface("nonexistent_surface")
 
     @patch("analyst.agents.companion.companion_agent.build_web_search_tool")
+    @patch("analyst.agents.companion.companion_agent.build_places_search_tool")
     @patch("analyst.agents.companion.companion_agent.build_optional_live_photo_tool")
     @patch("analyst.agents.companion.companion_agent.build_image_gen_tool")
     def test_sub_agent_validation_skipped_for_claudecode(
-        self, mock_img, mock_live, mock_search
+        self, mock_img, mock_live, mock_places, mock_search
     ):
         mock_img.return_value = _make_agent_tool("generate_image")
         mock_live.return_value = None
+        mock_places.return_value = _make_agent_tool("search_places")
         provider = _make_claude_code_provider()
         tools = build_capability_tools("companion", provider=provider)
         tool_names = [t.name for t in tools]

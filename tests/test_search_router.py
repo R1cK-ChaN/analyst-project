@@ -293,9 +293,14 @@ class TestHasUnsupportedSpecifics:
     def test_price_no_tool(self):
         assert _has_unsupported_specifics("大概$15左右", []) is True
 
-    def test_specifics_with_tool_ok(self):
-        audit = [{"tool_name": "web_search", "tool_call_id": "x", "arguments": {}, "status": ""}]
+    def test_specifics_with_tool_and_result_ok(self):
+        audit = [{"tool_name": "web_search", "tool_call_id": "x", "arguments": {}, "status": "",
+                  "result_summary": '{"summary": "Opening hours: 08:00-22:00", "results": [{"title": "Example"}]}'}]
         assert _has_unsupported_specifics("早上8点开门", audit) is False
+
+    def test_specifics_with_tool_but_empty_result(self):
+        audit = [{"tool_name": "web_search", "tool_call_id": "x", "arguments": {}, "status": ""}]
+        assert _has_unsupported_specifics("早上8点开门", audit) is True
 
     def test_sgd_price_no_tool(self):
         assert _has_unsupported_specifics("S$5一杯", []) is True

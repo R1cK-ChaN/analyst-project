@@ -4,7 +4,13 @@ import logging
 
 from analyst.engine.backends import ClaudeCodeProvider
 from analyst.engine.live_types import AgentTool
-from analyst.tools import ToolKit, build_image_gen_tool, build_optional_live_photo_tool, build_smart_search_tool
+from analyst.tools import (
+    ToolKit,
+    build_image_gen_tool,
+    build_optional_live_photo_tool,
+    build_places_search_tool,
+    build_web_search_tool,
+)
 
 from ..base import AgentRoleSpec, RoleDependencies
 from .companion_prompts import build_companion_system_prompt
@@ -27,8 +33,11 @@ def _build_companion_tools(dependencies: RoleDependencies) -> list[AgentTool]:
     if live_photo_tool is not None:
         kit.add(live_photo_tool)
     if not isinstance(dependencies.provider, ClaudeCodeProvider):
+        places_tool = build_places_search_tool()
+        if places_tool is not None:
+            kit.add(places_tool)
         try:
-            kit.add(build_smart_search_tool())
+            kit.add(build_web_search_tool())
         except Exception:
             logger.debug("web_search tool not available (missing API key)")
     return kit.to_list()

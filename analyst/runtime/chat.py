@@ -425,6 +425,10 @@ def _extract_tool_audit(messages: list[ConversationMessage]) -> list[dict[str, A
             value = payload.get(key)
             if value:
                 entry[key] = value
+        # Store truncated result for debugging and hallucination detection
+        result_text = (msg.content or "")[:800]
+        if result_text:
+            entry["result_summary"] = result_text
         audit.append(entry)
     return audit
 
@@ -447,9 +451,15 @@ _SPECIFIC_NUMBER_RE = re.compile(
 
 def _has_unsupported_specifics(text: str, tool_audit: list[dict[str, Any]]) -> bool:
     """Return True if *text* contains specific numbers but no tool call backs them."""
-    if tool_audit:
+    if not _SPECIFIC_NUMBER_RE.search(text):
         return False
-    return bool(_SPECIFIC_NUMBER_RE.search(text))
+    # Tool was called AND returned substantial data → trust it
+    if tool_audit:
+        for entry in tool_audit:
+            result = entry.get("result_summary", "")
+            if len(result) > 50:
+                return False
+    return True
 
 
 def _build_engine_context(engine: Any) -> str:
@@ -861,7 +871,7 @@ def _strip_tool_artifacts(text: str) -> str:
     # Remove any XML-style tool blocks: <tool_name>...</tool_name>
     # Catches <tool_use>, <tool_result>, <function_call>, <research_agent>, etc.
     cleaned = re.sub(
-        r"<(?:tool_use|tool_result|function_call|research_agent|web_search|generate_image|generate_live_photo)\b[^>]*>.*?</(?:tool_use|tool_result|function_call|research_agent|web_search|generate_image|generate_live_photo)>",
+        r"<(?:tool_use|tool_result|function_call|research_agent|web_search|search_places|generate_image|generate_live_photo)\b[^>]*>.*?</(?:tool_use|tool_result|function_call|research_agent|web_search|search_places|generate_image|generate_live_photo)>",
         "", text, flags=re.DOTALL,
     )
     # Catch any remaining <word>{...}</word> patterns (model hallucinating tool XML)

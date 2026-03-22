@@ -6,6 +6,7 @@ from typing import Any
 
 import requests
 
+from analyst.engine.live_types import AgentTool
 from analyst.env import get_env_value
 
 logger = logging.getLogger(__name__)
@@ -182,3 +183,42 @@ class PlacesHandler:
         except requests.RequestException as exc:
             logger.warning("Places API request failed: %s", exc)
             return {"error": str(exc), "results": []}
+
+
+def build_places_search_tool(
+    config: PlacesConfig | None = None,
+    session: requests.Session | None = None,
+) -> AgentTool | None:
+    """Factory: create a search_places AgentTool backed by Google Places API.
+
+    Returns None if GOOGLE_PLACES_API_KEY is not set.
+    """
+    resolved = config or PlacesConfig.from_env()
+    if resolved is None:
+        return None
+    handler = PlacesHandler(resolved, session=session)
+    return AgentTool(
+        name="search_places",
+        description=(
+            "Search for nearby places: restaurants, cafes, supermarkets, shops, "
+            "gyms, libraries, etc. Returns structured data for each place: "
+            "name, address, rating (with review count), price range, opening "
+            "hours, website, and Google Maps link. Use this for any "
+            "location-based query or place recommendation."
+        ),
+        parameters={
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Describe what you're looking for, including location context. "
+                        "Example: 'Japanese restaurant near Bugis Singapore', "
+                        "'supermarket near Tiong Bahru'."
+                    ),
+                },
+            },
+        },
+        handler=handler,
+    )
