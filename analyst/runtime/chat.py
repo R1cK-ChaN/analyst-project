@@ -1531,6 +1531,11 @@ def _build_style_hints(history: list[dict[str, str]] | None) -> str:
     if any(_sentence_completeness_penalty(text)[0] < -0.5 for text in recent_assistant[:2]):
         hints.append("这轮像发消息不像写文章 可以省主语 说半句话 不用每句都语法完整。")
 
+    # Content repetition prevention — remind model what it just said
+    if recent_assistant:
+        last_msg = recent_assistant[0][:40]
+        hints.append(f"你上一条说的是：\"{last_msg}\" 这轮换个说法 不要重复类似的内容。")
+
     if not hints:
         return ""
     return "[STYLE CORRECTION] " + " ".join(hints)

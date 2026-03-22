@@ -360,7 +360,7 @@ class StyleHintsTest(unittest.TestCase):
         self.assertEqual(_build_style_hints(None), "")
         self.assertEqual(_build_style_hints([]), "")
 
-    def test_no_hints_when_no_pattern(self) -> None:
+    def test_only_repetition_hint_when_no_bad_pattern(self) -> None:
         from analyst.runtime.chat import _build_style_hints
         history = [
             {"role": "user", "content": "你好"},
@@ -368,7 +368,13 @@ class StyleHintsTest(unittest.TestCase):
             {"role": "user", "content": "吃了吗"},
             {"role": "assistant", "content": "吃了"},
         ]
-        self.assertEqual(_build_style_hints(history), "")
+        result = _build_style_hints(history)
+        # Content repetition hint always fires (contains last msg)
+        self.assertIn("你上一条说的是", result)
+        self.assertIn("吃了", result)
+        # But no other pattern hints
+        self.assertNotIn("问句", result)
+        self.assertNotIn("哈哈", result)
 
     def test_question_suppression_when_2_of_3_end_with_question(self) -> None:
         from analyst.runtime.chat import _build_style_hints
