@@ -317,7 +317,14 @@ class TestRepairBrokenMapsUrl:
         result = _repair_broken_maps_url(text, audit)
         assert "cid=8642648875183264056" in result
 
-    def test_leaves_correct_url_alone(self):
+    def test_strips_trailing_quote_from_correct_url(self):
+        from analyst.runtime.chat import _repair_broken_maps_url
+        audit = [{"result_summary": '地图: https://maps.google.com/?cid=123'}]
+        text = '链接：https://maps.google.com/?cid=123"'
+        result = _repair_broken_maps_url(text, audit)
+        assert result == "链接：https://maps.google.com/?cid=123"
+
+    def test_leaves_clean_correct_url_alone(self):
         from analyst.runtime.chat import _repair_broken_maps_url
         audit = [{"result_summary": '地图: https://maps.google.com/?cid=123'}]
         text = "链接：https://maps.google.com/?cid=123"

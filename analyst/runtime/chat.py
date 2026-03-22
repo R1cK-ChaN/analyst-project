@@ -816,15 +816,17 @@ def _repair_broken_maps_url(text: str, tool_audit: list[dict[str, Any]]) -> str:
     if not match:
         return text
     broken = match.group()
-    # If the URL already has a cid, it's not broken
+    # If the URL already has a cid, just clean trailing junk
     if "cid=" in broken:
-        return text
+        cleaned = broken.rstrip('"\'」）) 。，,')
+        return text.replace(broken, cleaned) if cleaned != broken else text
     # Find the real URL from tool results
     for entry in tool_audit:
         rs = entry.get("result_summary", "")
         full_match = _FULL_MAPS_RE.search(rs)
         if full_match:
-            return text.replace(broken, full_match.group())
+            real_url = full_match.group().rstrip('"\'」）) 。，,')
+            return text.replace(broken, real_url)
     return text
 
 
