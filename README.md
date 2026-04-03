@@ -1,4 +1,4 @@
-# Analyst — Companion Agent (陈襄/Shawn Chan)
+# Companion Agent (陈襄/Shawn Chan)
 
 Self-contained Telegram chatbot with two persona modes: COMPANION (emotional support, daily chat) and SALES (content/research).
 
