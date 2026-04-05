@@ -54,7 +54,7 @@ analyst-telegram
 - **Memory**: Conversation history (20 turns) + client profile (20+ dimensions) + relationship state (intimacy, stages, tendencies)
 - **Social awareness**: Disengagement detection, self-focus drift, question taxonomy, reciprocity enforcement
 
-## Related Services
+## Related Services (in other repo)
 
 | Service | Location | Purpose |
 |---------|----------|---------|
