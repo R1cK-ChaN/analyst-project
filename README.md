@@ -69,6 +69,7 @@ Production server: `rick@vl`, service: `analyst-telegram.service`
 ssh rick@vl "cd ~/analyst-project && git pull && sudo systemctl restart analyst-telegram.service"
 ```
 
+
 ## Tests
 
 ```bash
