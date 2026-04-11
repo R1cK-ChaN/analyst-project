@@ -70,6 +70,7 @@ ssh rick@vl "cd ~/analyst-project && git pull && sudo systemctl restart analyst-
 ```
 
 
+
 ## Tests
 
 ```bash
